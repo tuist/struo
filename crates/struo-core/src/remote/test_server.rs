@@ -78,13 +78,24 @@ pub(super) struct Request {
 pub(super) async fn spawn(
     responses: Vec<Response>,
 ) -> (String, tokio::task::JoinHandle<Vec<Request>>) {
+    let count = responses.len();
+    let mut responses = responses.into_iter();
+    spawn_with_handler(count, move |_| responses.next().unwrap()).await
+}
+
+pub(super) async fn spawn_with_handler(
+    count: usize,
+    mut respond: impl FnMut(&Request) -> Response + Send + 'static,
+) -> (String, tokio::task::JoinHandle<Vec<Request>>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move {
         let mut requests = Vec::new();
-        for mut response in responses {
+        for _ in 0..count {
             let (mut stream, _) = listener.accept().await.unwrap();
-            requests.push(read_request(&mut stream).await);
+            let request = read_request(&mut stream).await;
+            let mut response = respond(&request);
+            requests.push(request);
             if let Some(hold) = response.hold.take() {
                 let _ = hold.arrived.send(());
                 let _ = hold.release.await;

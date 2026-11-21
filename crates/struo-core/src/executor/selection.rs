@@ -17,6 +17,7 @@ pub enum Executor {
     Microsandbox,
     E2b,
     Daytona,
+    Together,
     Docker,
     /// A Tuist project's Remote Execution API service.
     Tuist,
@@ -67,6 +68,7 @@ impl Executor {
             "microsandbox" => Ok(Self::Microsandbox),
             "e2b" => Ok(Self::E2b),
             "daytona" => Ok(Self::Daytona),
+            "together" => Ok(Self::Together),
             "docker" => Ok(Self::Docker),
             "tuist" => Ok(Self::Tuist),
             adapter => Err(Error::UnsupportedRemoteProvider {
@@ -114,7 +116,7 @@ impl Executor {
         let variable = match executor {
             Self::E2b => Some("STRUO_E2B_TEMPLATE"),
             Self::Microsandbox => Some("STRUO_MICROSANDBOX_IMAGE"),
-            Self::Local | Self::Daytona | Self::Docker | Self::Tuist => None,
+            Self::Local | Self::Daytona | Self::Together | Self::Docker | Self::Tuist => None,
         };
         if binding.environment.is_none() && variable.is_some_and(overridden) {
             return Err(Error::RemoteProviderConfig {
@@ -128,7 +130,7 @@ impl Executor {
     pub fn resource_domain(self) -> ResourceDomain {
         match self {
             Self::Local | Self::Microsandbox | Self::Docker => ResourceDomain::Host,
-            Self::E2b | Self::Daytona | Self::Tuist => ResourceDomain::Remote,
+            Self::E2b | Self::Daytona | Self::Together | Self::Tuist => ResourceDomain::Remote,
         }
     }
 
@@ -138,6 +140,7 @@ impl Executor {
             Self::Microsandbox => "microsandbox",
             Self::E2b => "e2b",
             Self::Daytona => "daytona",
+            Self::Together => "together",
             Self::Docker => "docker",
             Self::Tuist => "tuist",
         }
@@ -164,11 +167,12 @@ mod tests {
         );
         assert_eq!(Executor::E2b.resource_domain(), ResourceDomain::Remote);
         assert_eq!(Executor::Daytona.resource_domain(), ResourceDomain::Remote);
+        assert_eq!(Executor::Together.resource_domain(), ResourceDomain::Remote);
     }
 
     #[test]
     fn unenforced_tenant_requirements_fail_closed() {
-        for adapter in ["local", "microsandbox", "e2b", "daytona"] {
+        for adapter in ["local", "microsandbox", "e2b", "daytona", "together"] {
             for project in [false, true] {
                 let mut binding = RemoteExecution::provider(adapter);
                 if project {

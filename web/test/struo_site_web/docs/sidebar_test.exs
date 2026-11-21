@@ -63,6 +63,7 @@ defmodule StruoSiteWeb.Docs.SidebarTest do
              "Object Storage" => nil,
              "Overview" => nil,
              "Remote Execution" => nil,
+             "Together" => nil,
              "Triggers (Experimental)" => nil,
              "Tuist" => "tuist"
            }

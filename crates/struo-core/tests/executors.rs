@@ -61,24 +61,26 @@ async fn seed_cache(cache: &CacheProvider, action: &Action) {
 #[tokio::test]
 async fn cached_remote_results_do_not_wait_for_remote_capacity() {
     let (_workspace, cache, resources, runner) = setup();
-    let action = command(Some(RemoteExecution::provider("e2b")));
-    seed_cache(&cache, &action).await;
     let _held = resources
         .acquire(Executor::E2b, &ResourceRequest::default())
         .await;
-    for streaming in [false, true] {
-        let outcome = tokio::time::timeout(Duration::from_secs(1), async {
-            if streaming {
-                runner.run_streaming(&action).await
-            } else {
-                runner.run(&action).await
-            }
-        })
-        .await
-        .expect("cache hit waited for a remote slot")
-        .unwrap();
-        assert_eq!(outcome.cache, CacheState::Hit);
-        assert_eq!(outcome.action, action.digest());
+    for provider in ["e2b", "together"] {
+        let action = command(Some(RemoteExecution::provider(provider)));
+        seed_cache(&cache, &action).await;
+        for streaming in [false, true] {
+            let outcome = tokio::time::timeout(Duration::from_secs(1), async {
+                if streaming {
+                    runner.run_streaming(&action).await
+                } else {
+                    runner.run(&action).await
+                }
+            })
+            .await
+            .expect("cache hit waited for a remote slot")
+            .unwrap();
+            assert_eq!(outcome.cache, CacheState::Hit);
+            assert_eq!(outcome.action, action.digest());
+        }
     }
 }
 
@@ -179,7 +181,7 @@ async fn unsupported_requirements_fail_before_admission_or_provider_access() {
         .host()
         .acquire(ResourceRequest::new(1, 1_000))
         .await;
-    for adapter in ["microsandbox", "e2b", "daytona"] {
+    for adapter in ["microsandbox", "e2b", "daytona", "together"] {
         for redirect in [false, true] {
             let mut action = command(Some(RemoteExecution::provider(adapter)));
             let Action::RunCommand {

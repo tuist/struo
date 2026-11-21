@@ -18,6 +18,7 @@ mod path;
 mod phase;
 #[cfg(test)]
 mod test_server;
+mod together;
 #[cfg(any(target_os = "linux", target_vendor = "apple"))]
 mod tuist;
 
@@ -109,6 +110,16 @@ pub(crate) async fn execute_command(
         }
         Executor::Daytona => {
             Box::pin(daytona::execute_command(
+                remote,
+                command,
+                workspace_root,
+                cache,
+                stream_to_parent,
+            ))
+            .await
+        }
+        Executor::Together => {
+            Box::pin(together::execute_command(
                 remote,
                 command,
                 workspace_root,

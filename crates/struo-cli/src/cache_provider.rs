@@ -346,6 +346,7 @@ fn resolve_named_workspace_provider(
         InfrastructureProviderConfig::Microsandbox(_)
         | InfrastructureProviderConfig::E2b(_)
         | InfrastructureProviderConfig::Daytona(_)
+        | InfrastructureProviderConfig::Together(_)
         | InfrastructureProviderConfig::Docker(_) => {
             bail!("infrastructure `{name}` provides execution but not shared caching")
         }
@@ -462,6 +463,14 @@ fn remote_from_workspace_provider(
             account: binding_account,
             project: binding_project,
         },
+        InfrastructureProviderConfig::Together(config) => RemoteExecution {
+            provider: name,
+            properties,
+            executor: Some("together".to_string()),
+            environment: Some(config.snapshot),
+            account: binding_account,
+            project: binding_project,
+        },
         InfrastructureProviderConfig::Docker(config) => RemoteExecution {
             provider: name,
             properties,
@@ -524,7 +533,10 @@ fn remote_from_binding(binding: ExecutionProviderConfig) -> RemoteExecution {
 }
 
 fn is_builtin_execution_provider(name: &str) -> bool {
-    matches!(name, "microsandbox" | "e2b" | "daytona" | "docker")
+    matches!(
+        name,
+        "microsandbox" | "e2b" | "daytona" | "together" | "docker"
+    )
 }
 
 fn default_tuist_config(
@@ -1334,6 +1346,35 @@ image = "node:22-bookworm"
                 properties: BTreeMap::new(),
             }
         );
+    }
+
+    #[test]
+    fn resolve_execution_uses_named_together_snapshot() {
+        let tmp = TempDir::new().unwrap();
+        let xdg = xdg_under(tmp.path());
+        write_workspace(
+            tmp.path(),
+            r#"
+[infrastructures.remote_tests]
+kind = "together"
+snapshot = "12d5c7bb-dab3-46da-a795-445644447243"
+[infrastructure.execution]
+provider = "remote_tests"
+"#,
+        );
+        let remote = resolve_execution(tmp.path(), &xdg, None).unwrap();
+        assert_eq!(remote.provider, "remote_tests");
+        assert_eq!(remote.executor.as_deref(), Some("together"));
+        assert_eq!(
+            remote.environment.as_deref(),
+            Some("12d5c7bb-dab3-46da-a795-445644447243")
+        );
+        assert!(struo_core::Executor::from_binding(&remote).is_ok());
+        write_workspace(
+            tmp.path(),
+            "[infrastructures.remote_tests]\nkind = \"together\"\nsnapshot = \" \"\n",
+        );
+        assert!(resolve_execution(tmp.path(), &xdg, Some("remote_tests")).is_err());
     }
 
     #[test]

@@ -111,13 +111,20 @@ template = "vitest-node-22"
 [infrastructures.daytona_tests]
 kind = "daytona"
 image = "node:22.18.0-bookworm"
+
+[infrastructures.together_tests]
+kind = "together"
+snapshot = "<snapshot-id>"
 ```
 
 Docker execution requires an already available, full immutable image ID in
 `image`, not a tag. See [Docker execution](/guide/infrastructure/docker) for
 image preparation and coordinator requirements.
 
-Docker, E2B, Daytona, and Microsandbox provide execution only. Tuist provides shared
+Together requires an existing snapshot ID and organization sandbox access. See
+[Together Code Sandbox](/guide/infrastructure/together) for setup and lifecycle.
+
+Docker, E2B, Daytona, Together, and Microsandbox provide execution only. Tuist provides shared
 caching. Bind each capability independently when a workspace uses both.
 
 ## Targets

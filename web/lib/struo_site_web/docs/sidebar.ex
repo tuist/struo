@@ -181,6 +181,7 @@ defmodule StruoSiteWeb.Docs.Sidebar do
             slug: "/docs/guide/infrastructure/daytona",
             icon: "daytona"
           },
+          %Item{label: "Together", slug: "/docs/guide/infrastructure/together"},
           %Item{label: "Tuist", slug: "/docs/guide/infrastructure/tuist", icon: "tuist"}
         ]
       },

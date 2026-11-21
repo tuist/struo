@@ -34,6 +34,8 @@ fn provider_environment_and_tenant_boundaries_remain_in_cache_identity() {
         r#"{"provider":"fleet-a","executor":"e2b","environment":"template-v1"}"#,
         r#"{"provider":"fleet-b","executor":"e2b","environment":"template-v1"}"#,
         r#"{"provider":"fleet-a","executor":"daytona","environment":"template-v1"}"#,
+        r#"{"provider":"fleet-a","executor":"together","environment":"snapshot-v1"}"#,
+        r#"{"provider":"fleet-a","executor":"together","environment":"snapshot-v2"}"#,
         r#"{"provider":"fleet-a","executor":"e2b","environment":"template-v2"}"#,
         r#"{"provider":"fleet-a","executor":"e2b","environment":"template-v1","account":"other"}"#,
         r#"{"provider":"fleet-a","executor":"e2b","environment":"template-v1","project":"other"}"#,

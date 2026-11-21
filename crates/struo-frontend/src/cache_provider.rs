@@ -106,6 +106,11 @@ pub struct DaytonaExecutionProviderConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TogetherExecutionProviderConfig {
+    pub snapshot: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DockerExecutionProviderConfig {
     pub image: String,
 }
@@ -116,6 +121,7 @@ pub enum InfrastructureProviderConfig {
     Microsandbox(MicrosandboxExecutionProviderConfig),
     E2b(E2bExecutionProviderConfig),
     Daytona(DaytonaExecutionProviderConfig),
+    Together(TogetherExecutionProviderConfig),
     Docker(DockerExecutionProviderConfig),
     Tuist(TuistCacheProviderConfig),
     ObjectStore(ObjectStoreCacheProviderConfig),
@@ -205,6 +211,9 @@ pub(crate) enum InfrastructureProviderToml {
     },
     Daytona {
         image: String,
+    },
+    Together {
+        snapshot: String,
     },
     Docker {
         image: String,
@@ -304,6 +313,16 @@ impl InfrastructureProviderToml {
                 let image =
                     required_value(display_name, provider_name, "daytona", "image", &image)?;
                 InfrastructureProviderConfig::Daytona(DaytonaExecutionProviderConfig { image })
+            }
+            Self::Together { snapshot } => {
+                let snapshot = required_value(
+                    display_name,
+                    provider_name,
+                    "together",
+                    "snapshot",
+                    &snapshot,
+                )?;
+                InfrastructureProviderConfig::Together(TogetherExecutionProviderConfig { snapshot })
             }
             Self::Docker { image } => {
                 let image = required_value(display_name, provider_name, "docker", "image", &image)?;

@@ -271,6 +271,22 @@ SH
     The file "$WORKSPACE/daytona_deleted" should be exist
   End
 
+  It 'resolves Together infrastructure and reports missing sandbox credentials'
+    cat > "$WORKSPACE/struo.toml" <<'TOML'
+[infrastructures.remote_tests]
+kind = "together"
+snapshot = "12d5c7bb-dab3-46da-a795-445644447243"
+[infrastructure.execution]
+provider = "remote_tests"
+TOML
+    unset TOGETHER_API_KEY STRUO_TOGETHER_API_KEY
+    When call struo exec --remote --compute remote_tests -- node --version
+    The status should be failure
+    The stderr should include 'set STRUO_TOGETHER_API_KEY or TOGETHER_API_KEY'
+    The stderr should include 'organization must have Together Code Sandbox access enabled'
+    The stdout should equal ''
+  End
+
   It 'propagates the underlying exit code'
     When call struo exec -e PATH=/usr/bin:/bin -- /bin/sh -c 'exit 7'
     The status should equal 7
