@@ -115,7 +115,15 @@ image = "node:22.18.0-bookworm"
 [infrastructures.together_tests]
 kind = "together"
 snapshot = "<snapshot-id>"
+
+[infrastructures.northflank_tests]
+kind = "northflank"
+image = "node:22.18.0-bookworm"
+deployment_plan = "nf-compute-200"
 ```
+
+Northflank also requires a `project` in the execution binding. For team-scoped
+tokens, set `account` to the team ID. See [Northflank execution](/guide/infrastructure/northflank).
 
 Docker execution requires an already available, full immutable image ID in
 `image`, not a tag. See [Docker execution](/guide/infrastructure/docker) for
@@ -124,7 +132,7 @@ image preparation and coordinator requirements.
 Together requires an existing snapshot ID and organization sandbox access. See
 [Together Code Sandbox](/guide/infrastructure/together) for setup and lifecycle.
 
-Docker, E2B, Daytona, Together, and Microsandbox provide execution only. Tuist provides shared
+Docker, E2B, Daytona, Together, Northflank, and Microsandbox provide execution only. Tuist provides shared
 caching. Bind each capability independently when a workspace uses both.
 
 ## Targets

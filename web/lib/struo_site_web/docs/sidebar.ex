@@ -182,6 +182,7 @@ defmodule StruoSiteWeb.Docs.Sidebar do
             icon: "daytona"
           },
           %Item{label: "Together", slug: "/docs/guide/infrastructure/together"},
+          %Item{label: "Northflank", slug: "/docs/guide/infrastructure/northflank"},
           %Item{label: "Tuist", slug: "/docs/guide/infrastructure/tuist", icon: "tuist"}
         ]
       },

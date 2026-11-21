@@ -12,6 +12,7 @@ mod e2b;
 mod http;
 mod lifecycle;
 mod microsandbox;
+mod northflank;
 mod output_install;
 pub(crate) use output_install::restore_output_snapshots;
 mod path;
@@ -130,6 +131,16 @@ pub(crate) async fn execute_command(
         }
         Executor::E2b => {
             Box::pin(e2b::execute_command(
+                remote,
+                command,
+                workspace_root,
+                cache,
+                stream_to_parent,
+            ))
+            .await
+        }
+        Executor::Northflank => {
+            Box::pin(northflank::execute_command(
                 remote,
                 command,
                 workspace_root,

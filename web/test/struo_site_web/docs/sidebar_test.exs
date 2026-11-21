@@ -60,6 +60,7 @@ defmodule StruoSiteWeb.Docs.SidebarTest do
              "E2B" => "e2b",
              "HTTP Cache" => nil,
              "Microsandbox" => "microsandbox",
+             "Northflank" => nil,
              "Object Storage" => nil,
              "Overview" => nil,
              "Remote Execution" => nil,

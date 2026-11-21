@@ -453,6 +453,7 @@ async fn execute_command(
             | Executor::E2b
             | Executor::Daytona
             | Executor::Together
+            | Executor::Northflank
             | Executor::Docker
             | Executor::Tuist,
             _,

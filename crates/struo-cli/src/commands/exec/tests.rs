@@ -192,6 +192,57 @@ image = "node:22.18.0-alpine"
 }
 
 #[tokio::test]
+async fn northflank_annotation_preserves_configured_project_and_team() {
+    let tmp = TempDir::new().unwrap();
+    let xdg = xdg_under(tmp.path());
+    fs::write(
+        tmp.path().join("struo.toml"),
+        r#"
+[infrastructures.remote_tests]
+kind = "northflank"
+image = "node:22"
+deployment_plan = "nf-compute-200"
+
+[infrastructure.execution]
+provider = "remote_tests"
+account = "team"
+project = "tests"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("test.sh"),
+        "#!/bin/sh\n# struo remote \"remote_tests\"\ntrue\n",
+    )
+    .unwrap();
+    let invocation = script_invocation(
+        tmp.path(),
+        BTreeMap::new(),
+        None,
+        None,
+        None,
+        SandboxMode::Off,
+        Some(&xdg),
+        &["/bin/sh".to_string(), "test.sh".to_string()],
+    )
+    .await
+    .unwrap();
+    let action = action_from_script_invocation(&invocation, None, &[])
+        .await
+        .unwrap();
+    let remote = action_remote(&action).unwrap();
+    assert_eq!(remote.provider, "remote_tests");
+    assert_eq!(remote.account.as_deref(), Some("team"));
+    assert_eq!(remote.project.as_deref(), Some("tests"));
+    assert_eq!(remote.environment.as_deref(), Some("node:22"));
+    assert_eq!(remote.properties["deployment_plan"], "nf-compute-200");
+    assert_eq!(
+        Executor::from_binding(remote).unwrap(),
+        Executor::Northflank
+    );
+}
+
+#[tokio::test]
 async fn script_annotation_sets_output_symlink_mode() {
     let tmp = TempDir::new().unwrap();
     let script = tmp.path().join("scripts").join("build.sh");

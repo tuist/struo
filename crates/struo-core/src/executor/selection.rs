@@ -18,6 +18,7 @@ pub enum Executor {
     E2b,
     Daytona,
     Together,
+    Northflank,
     Docker,
     /// A Tuist project's Remote Execution API service.
     Tuist,
@@ -69,15 +70,39 @@ impl Executor {
             "e2b" => Ok(Self::E2b),
             "daytona" => Ok(Self::Daytona),
             "together" => Ok(Self::Together),
+            "northflank" => Ok(Self::Northflank),
             "docker" => Ok(Self::Docker),
             "tuist" => Ok(Self::Tuist),
             adapter => Err(Error::UnsupportedRemoteProvider {
                 provider: adapter.to_string(),
             }),
         }?;
-        // Tuist scopes execution to the project its credential is granted.
-        if executor != Self::Tuist && (binding.account.is_some() || binding.project.is_some()) {
+        if !matches!(executor, Self::Tuist | Self::Northflank)
+            && (binding.account.is_some() || binding.project.is_some())
+        {
             return Err(executor.unsupported("explicit account/project execution scoping"));
+        }
+        if executor == Self::Northflank
+            && (binding
+                .environment
+                .as_deref()
+                .is_none_or(|image| image.trim().is_empty())
+                || binding
+                    .project
+                    .as_deref()
+                    .is_none_or(|project| project.trim().is_empty())
+                || binding
+                    .properties
+                    .get("deployment_plan")
+                    .and_then(serde_json::Value::as_str)
+                    .is_none_or(|plan| plan.trim().is_empty()))
+        {
+            return Err(Error::RemoteProviderConfig {
+                provider: binding.provider.clone(),
+                message:
+                    "Northflank requires an explicit image, project, and properties.deployment_plan"
+                        .into(),
+            });
         }
         if executor == Self::Docker
             && !binding.environment.as_deref().is_some_and(|image| {
@@ -116,7 +141,12 @@ impl Executor {
         let variable = match executor {
             Self::E2b => Some("STRUO_E2B_TEMPLATE"),
             Self::Microsandbox => Some("STRUO_MICROSANDBOX_IMAGE"),
-            Self::Local | Self::Daytona | Self::Together | Self::Docker | Self::Tuist => None,
+            Self::Local
+            | Self::Daytona
+            | Self::Together
+            | Self::Northflank
+            | Self::Docker
+            | Self::Tuist => None,
         };
         if binding.environment.is_none() && variable.is_some_and(overridden) {
             return Err(Error::RemoteProviderConfig {
@@ -130,7 +160,9 @@ impl Executor {
     pub fn resource_domain(self) -> ResourceDomain {
         match self {
             Self::Local | Self::Microsandbox | Self::Docker => ResourceDomain::Host,
-            Self::E2b | Self::Daytona | Self::Together | Self::Tuist => ResourceDomain::Remote,
+            Self::E2b | Self::Daytona | Self::Together | Self::Northflank | Self::Tuist => {
+                ResourceDomain::Remote
+            }
         }
     }
 
@@ -141,6 +173,7 @@ impl Executor {
             Self::E2b => "e2b",
             Self::Daytona => "daytona",
             Self::Together => "together",
+            Self::Northflank => "northflank",
             Self::Docker => "docker",
             Self::Tuist => "tuist",
         }
@@ -224,5 +257,30 @@ mod tests {
                 Err(Error::UnsupportedRemoteProvider { .. })
             ));
         }
+    }
+
+    #[test]
+    fn northflank_requires_scoped_configuration_and_roundtrips_at_runtime() {
+        let mut binding = RemoteExecution::provider("tests");
+        binding.executor = Some("northflank".into());
+        assert!(Executor::from_binding(&binding).is_err());
+        binding.environment = Some("node:22".into());
+        binding.project = Some("project".into());
+        assert!(Executor::from_binding(&binding).is_err());
+        binding.account = Some("team".into());
+        binding
+            .properties
+            .insert("deployment_plan".into(), "nf-compute-200".into());
+        let encoded = serde_json::to_vec(&binding).unwrap();
+        let decoded: RemoteExecution = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded, binding);
+        assert_eq!(
+            Executor::from_binding(&decoded).unwrap(),
+            Executor::Northflank
+        );
+        assert_eq!(
+            Executor::Northflank.resource_domain(),
+            ResourceDomain::Remote
+        );
     }
 }

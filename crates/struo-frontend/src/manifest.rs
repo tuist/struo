@@ -716,6 +716,25 @@ image = "node:22-bookworm"
     }
 
     #[test]
+    fn northflank_requires_image_and_deployment_plan() {
+        for fields in [
+            "",
+            "image = 'node:22'",
+            "deployment_plan = 'plan'",
+            "image = ''\ndeployment_plan = 'plan'",
+            "image = 'node:22'\ndeployment_plan = ' '",
+        ] {
+            let manifest = format!("[infrastructures.tests]\nkind = 'northflank'\n{fields}");
+            assert!(load_infrastructure_toml_str("struo.toml", &manifest).is_err());
+        }
+        let config = load_infrastructure_toml_str("struo.toml", "[infrastructures.tests]\nkind = 'northflank'\nimage = 'node:22'\ndeployment_plan = 'plan'").unwrap();
+        assert!(matches!(
+            config.providers["tests"],
+            crate::InfrastructureProviderConfig::Northflank(_)
+        ));
+    }
+
+    #[test]
     fn loads_hosted_execution_providers() {
         let config = load_infrastructure_toml_str(
             "struo.toml",

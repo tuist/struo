@@ -40,8 +40,8 @@ pub use cache_provider::{
     CacheProviderConfig, DaytonaExecutionProviderConfig, DockerExecutionProviderConfig,
     E2bExecutionProviderConfig, ExecutionProviderConfig, HttpCacheProviderConfig,
     InfrastructureConfig, InfrastructureProviderConfig, MicrosandboxExecutionProviderConfig,
-    NamedCacheProviderConfig, ObjectStoreCacheProviderConfig, TogetherExecutionProviderConfig,
-    TuistCacheProviderConfig, DEFAULT_TUIST_URL,
+    NamedCacheProviderConfig, NorthflankExecutionProviderConfig, ObjectStoreCacheProviderConfig,
+    TogetherExecutionProviderConfig, TuistCacheProviderConfig, DEFAULT_TUIST_URL,
 };
 pub use cache_resolution::{
     resolve_cache_provider, ResolvedCacheProviderConfig, ResolvedHttpCacheProviderConfig,

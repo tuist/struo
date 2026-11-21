@@ -100,21 +100,15 @@ fn resolve_execution_unresolved(
                 .and_then(|infrastructure| infrastructure.execution)
                 .map(UserExecutionProviderBinding::into_execution),
         };
-        let properties = configured
-            .as_ref()
+        let binding = configured
             .filter(|binding| binding.name == provider)
-            .map(|binding| binding.properties.clone())
-            .unwrap_or_default();
-        return resolve_execution_binding(
-            xdg,
-            &workspace_config,
-            ExecutionProviderConfig {
+            .unwrap_or_else(|| ExecutionProviderConfig {
                 name: provider.to_string(),
                 account: None,
                 project: None,
-                properties,
-            },
-        );
+                properties: BTreeMap::new(),
+            });
+        return resolve_execution_binding(xdg, &workspace_config, binding);
     }
     if let Some(binding) = workspace_config.execution.clone() {
         return resolve_execution_binding(xdg, &workspace_config, binding);
@@ -347,6 +341,7 @@ fn resolve_named_workspace_provider(
         | InfrastructureProviderConfig::E2b(_)
         | InfrastructureProviderConfig::Daytona(_)
         | InfrastructureProviderConfig::Together(_)
+        | InfrastructureProviderConfig::Northflank(_)
         | InfrastructureProviderConfig::Docker(_) => {
             bail!("infrastructure `{name}` provides execution but not shared caching")
         }
@@ -471,6 +466,20 @@ fn remote_from_workspace_provider(
             account: binding_account,
             project: binding_project,
         },
+        InfrastructureProviderConfig::Northflank(config) => {
+            let mut properties = properties;
+            properties
+                .entry("deployment_plan".into())
+                .or_insert(config.deployment_plan.into());
+            RemoteExecution {
+                provider: name,
+                properties,
+                executor: Some("northflank".into()),
+                environment: Some(config.image),
+                account: binding_account,
+                project: binding_project,
+            }
+        }
         InfrastructureProviderConfig::Docker(config) => RemoteExecution {
             provider: name,
             properties,
@@ -535,7 +544,7 @@ fn remote_from_binding(binding: ExecutionProviderConfig) -> RemoteExecution {
 fn is_builtin_execution_provider(name: &str) -> bool {
     matches!(
         name,
-        "microsandbox" | "e2b" | "daytona" | "together" | "docker"
+        "microsandbox" | "e2b" | "daytona" | "together" | "northflank" | "docker"
     )
 }
 
@@ -1236,30 +1245,33 @@ kind = "local"
     }
 
     #[test]
-    fn execution_properties_follow_only_the_selected_user_provider() {
+    fn execution_binding_follows_only_the_selected_user_provider() {
         let tmp = TempDir::new().unwrap();
         let xdg = xdg_under(tmp.path());
         write_user_config(
             &xdg,
             r#"
 [infrastructure.execution]
-provider = "e2b"
+provider = "tuist"
+account = "team"
+project = "tests"
 properties = { program = "/worker/tool", version = 1 }
+
+[infrastructures.tuist]
+kind = "tuist"
 "#,
         );
         let configured = resolve_execution_unresolved(tmp.path(), &xdg, None).unwrap();
         assert_eq!(configured.properties["version"], serde_json::json!(1));
+        assert_eq!(configured.account.as_deref(), Some("team"));
+        assert_eq!(configured.project.as_deref(), Some("tests"));
         assert_eq!(
-            configured.properties,
-            resolve_execution_unresolved(tmp.path(), &xdg, Some("e2b"))
-                .unwrap()
-                .properties
+            configured,
+            resolve_execution_unresolved(tmp.path(), &xdg, Some("tuist")).unwrap()
         );
-        assert!(
-            resolve_execution_unresolved(tmp.path(), &xdg, Some("daytona"))
-                .unwrap()
-                .properties
-                .is_empty()
+        assert_eq!(
+            resolve_execution_unresolved(tmp.path(), &xdg, Some("daytona")).unwrap(),
+            RemoteExecution::provider("daytona")
         );
         assert!(resolve_config(tmp.path(), &xdg).is_ok());
     }
@@ -1378,6 +1390,42 @@ provider = "remote_tests"
     }
 
     #[test]
+    fn resolve_execution_uses_northflank_project_and_plan() {
+        let tmp = TempDir::new().unwrap();
+        let xdg = xdg_under(tmp.path());
+        write_workspace(
+            tmp.path(),
+            r#"
+[infrastructures.remote_tests]
+kind = "northflank"
+image = "node:22"
+deployment_plan = "nf-compute-200"
+
+[infrastructure.execution]
+provider = "remote_tests"
+account = "team"
+project = "tests"
+"#,
+        );
+        for selected in [None, Some("remote_tests")] {
+            let remote = resolve_execution(tmp.path(), &xdg, selected).unwrap();
+            assert_eq!(remote.executor.as_deref(), Some("northflank"));
+            assert_eq!(remote.environment.as_deref(), Some("node:22"));
+            assert_eq!(remote.account.as_deref(), Some("team"));
+            assert_eq!(remote.project.as_deref(), Some("tests"));
+            assert_eq!(remote.properties["deployment_plan"], "nf-compute-200");
+            assert_eq!(
+                struo_core::Executor::from_binding(&remote).unwrap(),
+                struo_core::Executor::Northflank
+            );
+        }
+        assert_eq!(
+            resolve_execution(tmp.path(), &xdg, Some("daytona")).unwrap(),
+            RemoteExecution::provider("daytona")
+        );
+    }
+
+    #[test]
     fn resolve_execution_uses_named_docker_image() {
         let tmp = TempDir::new().unwrap();
         let xdg = xdg_under(tmp.path());
@@ -1408,10 +1456,7 @@ image = "node:22-bookworm"
             }
         );
         let explicit = resolve_execution(tmp.path(), &xdg, Some("container_tests")).unwrap();
-        assert_eq!(explicit.executor, remote.executor);
-        assert_eq!(explicit.environment, remote.environment);
-        assert_eq!(explicit.account, None);
-        assert_eq!(explicit.project, None);
+        assert_eq!(explicit, remote);
     }
 
     #[test]

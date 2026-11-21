@@ -5,7 +5,8 @@ repository while the process runs in a fresh environment supplied by an
 infrastructure provider.
 
 The important boundary is the action, not the test framework. Vitest is the
-program being run. Docker, Microsandbox, E2B, and Daytona are execution providers.
+program being run. Docker, Microsandbox, E2B, Daytona, and
+[Northflank](/guide/infrastructure/northflank) are execution providers.
 
 Declared build graphs can also dispatch command actions with
 `struo build --remote --compute <provider>`. Struo keeps dependency scheduling and
