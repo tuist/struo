@@ -561,6 +561,19 @@ TOML
     return 0
   }
 
+  run_apple_tests() {
+    struo --format json test "$@"
+    status=$?
+    if [ "$status" -ne 0 ]; then
+      for log in "$WORKSPACE"/.struo/out/*/test/xctest.log; do
+        [ -f "$log" ] || continue
+        printf '\n--- %s ---\n' "$log" >&2
+        tail -c 32768 "$log" >&2
+      done
+    fi
+    return "$status"
+  }
+
   It 'runs the cache-substituted style test bundle on a simulator'
     Skip if 'apple toolchain unavailable on this host' apple_toolchain_unavailable
     Skip if 'no iOS simulator available on this host' ios_simulator_unavailable
@@ -575,7 +588,7 @@ srcs = ["Client.xcodeproj/project.pbxproj"]
 project = "Client.xcodeproj"
 TOML
 
-    When call struo --format json test ClientTests
+    When call run_apple_tests ClientTests
     The status should be success
     The stdout should include '"target":"ClientTests"'
     The stdout should include '"status":"completed"'
@@ -605,7 +618,7 @@ TOML
     Skip if 'no iOS simulator available on this host' ios_simulator_unavailable
     copy_xcode_modular_workspace_fixture
 
-    When call struo --format json test
+    When call run_apple_tests
     The status should be success
     The stdout should include '"target":"CatalogFeatureTests"'
     The stdout should include '"target":"HarborTests"'
