@@ -6657,6 +6657,7 @@ status_file={status_file}
 ) 2>&1 | tee "$log" >/dev/null
 status=$(cat "$status_file")
 cp "$log" "$native_results"
+if [ "$status" -ne 0 ]; then cat "$log" >&2; fi
 {report_script}
 exit "$status"
 """.format(

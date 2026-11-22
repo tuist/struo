@@ -9174,6 +9174,56 @@ fn apple_test_bundle_store() -> (AnalysisStore, TempDir) {
     (store, workspace)
 }
 
+#[cfg(unix)]
+#[test]
+fn prelude_apple_test_bundle_exposes_native_failure_output() {
+    for status in [149, 0] {
+        let (store, workspace) = apple_test_bundle_store();
+        let native_runner = workspace.path().join("native-runner");
+        write_executable(
+            &native_runner,
+            &format!(
+                "#!/bin/sh\nprintf 'runner stdout\\n'\nprintf 'runner stderr\\n' >&2\nexit {status}\n"
+            ),
+        );
+        let source = apple_test_bundle_source("test", "").replace(
+            "return \"/usr/bin/xcodebuild\"",
+            &format!(
+                "return {}",
+                starlark_string_literal(&native_runner.display().to_string())
+            ),
+        );
+        let (store, result) = with_active_store(store, || eval_prelude_source_to_repr(source));
+        result.unwrap();
+        let runner = action_by_identifier(&store, "apple_xctest:tests/PluginTests");
+        let test_dir = workspace.path().join(".struo/out/tests/PluginTests/test");
+        std::fs::create_dir_all(&test_dir).unwrap();
+        let output = Command::new(&runner.argv[0])
+            .args(&runner.argv[1..])
+            .current_dir(workspace.path())
+            .env("HOME", workspace.path().join("home"))
+            .output()
+            .unwrap();
+
+        assert_eq!(output.status.code(), Some(status), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        let expected = b"runner stdout\nrunner stderr\n";
+        assert_eq!(
+            std::fs::read(test_dir.join("xctest.log")).unwrap(),
+            expected
+        );
+        assert_eq!(
+            std::fs::read(test_dir.join("native_results.txt")).unwrap(),
+            expected
+        );
+        if status == 0 {
+            assert!(output.stderr.is_empty(), "{output:?}");
+        } else {
+            assert_eq!(output.stderr, expected, "native failure output was hidden");
+        }
+    }
+}
+
 #[test]
 fn prelude_apple_test_bundle_manifest_advertises_case_sharding() {
     let (store, _workspace) = apple_test_bundle_store();
