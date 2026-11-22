@@ -17,6 +17,7 @@
 
 mod actions;
 mod analysis_memo;
+mod cache_record;
 mod graph_tools;
 mod materialization;
 mod output_state;
@@ -1096,20 +1097,23 @@ fn analyze_with_memo(
     } else {
         None
     };
-    if let Some((analysis, observations)) = key.as_deref().and_then(|key| memo.read(key)) {
-        if analyzer.observations_hold(workspace, &observations, CommandPolicy::Rerun, unchanged) {
-            tracing::trace!(target = %target.label.id, capability, "reused a stored analysis");
-            return Ok(analysis);
-        }
+    if let Some(analysis) = key.as_deref().and_then(|key| memo.read(key)) {
+        let stale = match analyzer.validate_observations(
+            workspace,
+            &analysis.observations,
+            CommandPolicy::Rerun,
+            unchanged,
+        ) {
+            Ok(()) => {
+                tracing::trace!(target = %target.label.id, capability, "reused a stored analysis");
+                return Ok(analysis);
+            }
+            Err(stale) => stale,
+        };
         tracing::debug!(
             target = %target.label.id,
             capability,
-            stale = ?analyzer.first_stale_observation(
-                workspace,
-                &observations,
-                CommandPolicy::Rerun,
-                unchanged,
-            ),
+            stale = %stale,
             "stored analysis no longer describes the host"
         );
     }

@@ -39,6 +39,15 @@ struct Record {
     observations: AnalysisObservations,
 }
 
+#[derive(Serialize)]
+struct RecordRef<'a> {
+    schema: &'static str,
+    actions: &'a [DeclaredAction],
+    provider: &'a JsonValue,
+    declared_outputs: &'a [String],
+    observations: &'a AnalysisObservations,
+}
+
 #[derive(Clone)]
 pub struct AnalysisMemo {
     workspace: PathBuf,
@@ -75,7 +84,7 @@ impl AnalysisMemo {
     }
 
     /// The stored analysis under `key`, if there is one and it parses.
-    pub fn read(&self, key: &str) -> Option<(AnalysisResult, AnalysisObservations)> {
+    pub fn read(&self, key: &str) -> Option<AnalysisResult> {
         if !self.enabled {
             return None;
         }
@@ -95,17 +104,12 @@ impl AnalysisMemo {
         for action in &mut record.actions {
             self.sets.resolve_action(&self.workspace, action).ok()?;
         }
-        Some((
-            AnalysisResult {
-                actions: record.actions,
-                provider: record.provider,
-                declared_outputs: record.declared_outputs,
-                // Target outcomes must retain the same validation obligations
-                // even when the analysis itself came from a memo.
-                observations: record.observations.clone(),
-            },
-            record.observations,
-        ))
+        Some(AnalysisResult {
+            actions: record.actions,
+            provider: record.provider,
+            declared_outputs: record.declared_outputs,
+            observations: record.observations,
+        })
     }
 
     /// Remember `analysis` under `key`.
@@ -117,29 +121,19 @@ impl AnalysisMemo {
         if !self.enabled || !analysis.observations.is_complete() {
             return;
         }
-        let record = Record {
-            schema: SCHEMA.to_string(),
-            actions: analysis.actions.clone(),
-            provider: analysis.provider.clone(),
-            declared_outputs: analysis.declared_outputs.clone(),
-            observations: analysis.observations.clone(),
-        };
-        let Ok(raw) = serde_json::to_vec(&record) else {
-            return;
+        let record = RecordRef {
+            schema: SCHEMA,
+            actions: &analysis.actions,
+            provider: &analysis.provider,
+            declared_outputs: &analysis.declared_outputs,
+            observations: &analysis.observations,
         };
         let path = self.path(key);
         let Some(parent) = path.parent() else {
             return;
         };
-        if std::fs::create_dir_all(parent).is_err() {
-            return;
-        }
-        // Named by process so two builds writing the same record concurrently
-        // cannot read each other's half-written file. Either rename wins and
-        // both hold the same bytes.
-        let temporary = path.with_extension(format!("json.tmp-{}", std::process::id()));
-        if std::fs::write(&temporary, raw).is_ok() && std::fs::rename(&temporary, &path).is_err() {
-            let _ = std::fs::remove_file(&temporary);
+        if let Ok(temporary) = super::cache_record::stage_json(parent, &record) {
+            let _ = temporary.persist(path);
         }
     }
 

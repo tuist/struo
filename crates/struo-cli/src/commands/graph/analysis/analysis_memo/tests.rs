@@ -43,18 +43,19 @@ fn a_stored_analysis_comes_back_with_the_answers_it_recorded() {
         value: Some("/sdk".to_string()),
     }]);
 
-    memo.write("abcdef", &analysis(observations.clone()));
-    let (result, read_back) = memo.read("abcdef").expect("a record was written");
+    let mut original = analysis(observations.clone());
+    original.provider = json!({"binary": "app", "metadata": "λ\n\"".repeat(3_000)});
+    memo.write("abcdef", &original);
+    let result = memo.read("abcdef").expect("a record was written");
 
     assert_eq!(
         result.declared_outputs,
         vec![".struo/out/app/app".to_string()]
     );
-    assert_eq!(result.provider, json!({"binary": "app"}));
-    assert_eq!(read_back, observations);
+    assert_eq!(result.provider, original.provider);
     assert_eq!(result.observations, observations);
     memo.write("abcdef", &result);
-    assert_eq!(memo.read("abcdef").unwrap().1, observations);
+    assert_eq!(memo.read("abcdef").unwrap().observations, observations);
 }
 
 #[test]
@@ -172,11 +173,11 @@ fn records_are_kept_apart_by_name() {
     memo.write("bbbbbb", &other);
 
     assert_eq!(
-        memo.read("aaaaaa").unwrap().0.declared_outputs,
+        memo.read("aaaaaa").unwrap().declared_outputs,
         vec![".struo/out/app/app".to_string()]
     );
     assert_eq!(
-        memo.read("bbbbbb").unwrap().0.declared_outputs,
+        memo.read("bbbbbb").unwrap().declared_outputs,
         vec![".struo/out/other/other".to_string()]
     );
 }

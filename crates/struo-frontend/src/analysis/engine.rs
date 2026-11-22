@@ -518,7 +518,19 @@ impl AnalysisEngine {
         policy: CommandPolicy,
         unchanged: &UnchangedWorkspace,
     ) -> bool {
-        super::globals::observations_hold(
+        self.validate_observations(workspace_root, observations, policy, unchanged)
+            .is_ok()
+    }
+
+    /// Validate replay once, returning a borrowed reason without formatting it.
+    pub fn validate_observations<'a>(
+        &self,
+        workspace_root: &Path,
+        observations: &'a AnalysisObservations,
+        policy: CommandPolicy,
+        unchanged: &UnchangedWorkspace,
+    ) -> std::result::Result<(), super::StaleObservation<'a>> {
+        super::globals::validate_observations(
             workspace_root,
             &self.host_cache,
             observations,
@@ -528,7 +540,8 @@ impl AnalysisEngine {
     }
 
     /// The first recorded answer that no longer matches, for diagnosing why a
-    /// stored analysis was not reused.
+    /// stored analysis was not reused. Use `validate_observations` when the
+    /// caller also needs the replay decision.
     pub fn first_stale_observation(
         &self,
         workspace_root: &Path,
@@ -536,13 +549,9 @@ impl AnalysisEngine {
         policy: CommandPolicy,
         unchanged: &UnchangedWorkspace,
     ) -> Option<String> {
-        super::globals::first_stale_observation(
-            workspace_root,
-            &self.host_cache,
-            observations,
-            policy,
-            unchanged,
-        )
+        self.validate_observations(workspace_root, observations, policy, unchanged)
+            .err()
+            .map(|stale| stale.to_string())
     }
 
     fn analyze_target_capability_with_provider_refs(

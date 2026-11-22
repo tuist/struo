@@ -43,6 +43,15 @@ struct Stored {
     record: ResolutionRecord,
 }
 
+#[derive(Serialize)]
+struct StoredRef<'a> {
+    schema: &'static str,
+    key: &'a str,
+    position: &'a ChangePosition,
+    graph: &'a [GraphTarget],
+    record: &'a ResolutionRecord,
+}
+
 pub struct ResolutionCache {
     path: PathBuf,
     enabled: bool,
@@ -82,19 +91,14 @@ impl ResolutionCache {
         }
         // Re-running the resolver's own commands is the entire cost this
         // avoids, so they are settled by the program rather than by the answer.
-        if !analyzer.observations_hold(
+        if let Err(stale) = analyzer.validate_observations(
             workspace,
             &stored.record.observations,
             CommandPolicy::TrustDeclaredInputs,
             &struo_frontend::analysis::UnchangedWorkspace::Unknown,
         ) {
             tracing::debug!(
-                stale = ?analyzer.first_stale_observation(
-                    workspace,
-                    &stored.record.observations,
-                    CommandPolicy::TrustDeclaredInputs,
-                    &struo_frontend::analysis::UnchangedWorkspace::Unknown,
-                ),
+                stale = %stale,
                 "graph derivation no longer describes the host"
             );
             return None;
@@ -120,28 +124,18 @@ impl ResolutionCache {
         if !record.observations.is_complete() {
             return;
         }
-        let stored = Stored {
-            schema: SCHEMA.to_string(),
-            key: key.to_string(),
-            position: position.clone(),
-            graph: graph.to_vec(),
-            record: record.clone(),
+        let stored = StoredRef {
+            schema: SCHEMA,
+            key,
+            position,
+            graph,
+            record,
         };
-        let Ok(raw) = serde_json::to_vec(&stored) else {
+        let Some(parent) = self.path.parent() else {
             return;
         };
-        if let Some(parent) = self.path.parent() {
-            if std::fs::create_dir_all(parent).is_err() {
-                return;
-            }
-        }
-        let temporary = self
-            .path
-            .with_extension(format!("json.tmp-{}", std::process::id()));
-        if std::fs::write(&temporary, raw).is_ok()
-            && std::fs::rename(&temporary, &self.path).is_err()
-        {
-            let _ = std::fs::remove_file(&temporary);
+        if let Ok(temporary) = super::cache_record::stage_json(parent, &stored) {
+            let _ = temporary.persist(&self.path);
         }
     }
 }

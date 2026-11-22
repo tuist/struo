@@ -25,8 +25,8 @@ mod host;
 mod observation;
 mod paths;
 
-pub use observation::{expansion_could_differ, UnchangedWorkspace};
-pub(super) use observation::{first_stale_observation, observations_hold};
+pub(super) use observation::validate_observations;
+pub use observation::{expansion_could_differ, StaleObservation, UnchangedWorkspace};
 use observation::{observe_absent_link_target, observe_host_path, observed_which};
 
 pub use expansion::expand_globs_with_excludes;

@@ -22,6 +22,7 @@
 //! actions declined to be cached, is never recorded at all.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -85,6 +86,35 @@ struct Record {
     #[serde(default)]
     intermediate_outputs: BTreeSet<String>,
     per_action_outcomes: Vec<super::PerActionOutcome>,
+}
+
+#[derive(Serialize)]
+struct RecordRef<'a> {
+    key: String,
+    sources: &'a DeclaredInputs,
+    observations: &'a AnalysisObservations,
+    expansions: Vec<ExpansionRef<'a>>,
+    outputs: &'a [String],
+    provider: &'a JsonValue,
+    action_digest: Digest,
+    input_digest: Option<Digest>,
+    input_fingerprint: Option<JsonValue>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    added_inputs: BTreeMap<&'a str, &'a AvailableInput>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    removed_inputs: Vec<&'a str>,
+    cache_state: EvidenceCacheState,
+    result: &'a ActionResult,
+    cached_results: &'a [ActionResult],
+    intermediate_outputs: &'a BTreeSet<String>,
+    per_action_outcomes: &'a [super::PerActionOutcome],
+}
+
+#[derive(Serialize)]
+struct ExpansionRef<'a> {
+    kind: &'a str,
+    package: &'a str,
+    patterns: &'a [String],
 }
 
 /// Which record each target's outcome is stored under, as of one watcher
@@ -326,10 +356,10 @@ impl TargetOutcomes {
                 return;
             }
         };
-        let record = Record {
+        let record = RecordRef {
             key,
-            observations: observations.clone(),
-            sources: declared_inputs.clone(),
+            observations,
+            sources: declared_inputs,
             expansions: observations
                 .entries()
                 .iter()
@@ -339,16 +369,16 @@ impl TargetOutcomes {
                         package,
                         patterns,
                         ..
-                    } => Some(Expansion {
-                        kind: expansion.clone(),
-                        package: package.clone(),
-                        patterns: patterns.clone(),
+                    } => Some(ExpansionRef {
+                        kind: expansion,
+                        package,
+                        patterns,
                     }),
                     _ => None,
                 })
                 .collect(),
-            outputs: outcome.outputs.clone(),
-            provider: outcome.provider.as_ref().clone(),
+            outputs: &outcome.outputs,
+            provider: &outcome.provider,
             action_digest: outcome.action_digest,
             input_digest: outcome.input_digest,
             input_fingerprint,
@@ -360,18 +390,18 @@ impl TargetOutcomes {
                         .get(*path)
                         .is_none_or(|base| !same(base, input))
                 })
-                .map(|(path, input)| (path.clone(), *input))
+                .map(|(path, input)| (path.as_str(), input))
                 .collect(),
             removed_inputs: dependency_inputs
                 .keys()
                 .filter(|path| !outcome.available_inputs.contains_key(*path))
-                .cloned()
+                .map(String::as_str)
                 .collect(),
             cache_state: outcome.cache_state,
-            result: outcome.result.clone(),
-            cached_results: outcome.cached_results.clone(),
-            intermediate_outputs: outcome.intermediate_outputs.clone(),
-            per_action_outcomes: outcome.per_action_outcomes.clone(),
+            result: &outcome.result,
+            cached_results: &outcome.cached_results,
+            intermediate_outputs: &outcome.intermediate_outputs,
+            per_action_outcomes: &outcome.per_action_outcomes,
         };
         let Some(name) = self.write_record(&record) else {
             return;
@@ -385,22 +415,18 @@ impl TargetOutcomes {
     /// Write `record` under the name of its contents and return that name, so
     /// the build holds a name rather than the record until it saves. An
     /// unchanged record is already on disk and is not written again.
-    fn write_record(&self, record: &Record) -> Option<String> {
+    fn write_record(&self, record: &RecordRef<'_>) -> Option<String> {
         let raw = serde_json::to_vec(record).ok()?;
         let name = Digest::of_bytes(&raw).to_hex();
         let path = self.record_path(&name);
-        if path.is_file() {
-            return Some(name);
+        if !path.is_file() {
+            let directory = path.parent()?;
+            std::fs::create_dir_all(directory).ok()?;
+            let mut temporary = tempfile::NamedTempFile::new_in(directory).ok()?;
+            temporary.write_all(&raw).ok()?;
+            temporary.persist(path).ok()?;
         }
-        std::fs::create_dir_all(path.parent()?).ok()?;
-        // Named by process so two builds writing the same record concurrently
-        // cannot read each other's half-written file.
-        let temporary = path.with_extension(format!("json.tmp-{}", std::process::id()));
-        if std::fs::write(&temporary, raw).is_ok() && std::fs::rename(&temporary, &path).is_ok() {
-            return Some(name);
-        }
-        let _ = std::fs::remove_file(&temporary);
-        None
+        Some(name)
     }
 
     /// Carry a record this invocation reused into what gets written back, so a

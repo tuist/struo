@@ -595,12 +595,13 @@ impl<K: Ord + Clone, V: Clone> SingleFlight<K, V> {
         Ok(value)
     }
 
-    /// Every answer given so far, for callers that persist what was learned.
-    fn answers(&self) -> Vec<(K, V)> {
+    /// Selected answers given so far, for callers that persist what was learned.
+    fn answers(&self, include: impl Fn(&K) -> bool) -> Vec<(K, V)> {
         self.slots
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
+            .filter(|(key, _)| include(key))
             .filter_map(|(key, slot)| {
                 let answer = slot
                     .lock()
@@ -1040,13 +1041,12 @@ impl HostCache {
 
     pub(super) fn cacheable_tool_commands(&self) -> Vec<CachedToolCommand> {
         self.commands
-            .answers()
-            .into_iter()
-            .filter(|(key, _)| {
+            .answers(|key| {
                 key.check
                     && key.max_output_bytes == HOST_COMMAND_OUTPUT_LIMIT
                     && self.is_cacheable_tool_command(key)
             })
+            .into_iter()
             .map(|(key, output)| CachedToolCommand {
                 argv: key.argv,
                 env: key.env,

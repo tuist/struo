@@ -132,6 +132,9 @@ fn a_record_stores_only_what_the_target_changed_on_top_of_its_dependencies() {
         ("deps/tree/child".to_string(), available(b"child")),
     ]);
     let mut built = outcome(&[]);
+    built.provider = std::sync::Arc::new(serde_json::json!({
+        "metadata": "λ\n\"".repeat(3_000),
+    }));
     built.available_inputs = BTreeMap::from([
         ("deps/untouched".to_string(), available(b"untouched")),
         ("deps/replaced".to_string(), own(b"replaced after")),
@@ -151,6 +154,13 @@ fn a_record_stores_only_what_the_target_changed_on_top_of_its_dependencies() {
     });
     let raw = std::fs::read(reopened.record_path(&reopened.stored[&target.label.id])).unwrap();
     assert!(!String::from_utf8_lossy(&raw).contains("deps/untouched"));
+    let record: super::super::Record = serde_json::from_slice(&raw).unwrap();
+    let legacy_bytes = serde_json::to_vec(&record).unwrap();
+    assert_eq!(raw, legacy_bytes);
+    assert_eq!(
+        reopened.stored[&target.label.id],
+        Digest::of_bytes(&legacy_bytes).to_hex()
+    );
 
     let reused = reopened
         .reuse_with_inputs(

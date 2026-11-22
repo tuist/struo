@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use struo_frontend::{ResolutionRecord, ResolverInputs};
 
@@ -18,6 +18,67 @@ fn record(package: &str, patterns: &[&str], paths: &[&str]) -> ResolutionRecord 
 
 fn changed(paths: &[&str]) -> BTreeSet<String> {
     paths.iter().map(|value| (*value).to_string()).collect()
+}
+
+#[test]
+fn a_stored_graph_round_trips_and_is_invalidated_by_manifest_changes() {
+    let workspace = tempfile::TempDir::new().unwrap();
+    let cache = super::ResolutionCache {
+        path: workspace.path().join(".struo/resolution.json"),
+        enabled: true,
+    };
+    let position = crate::commands::change_tracker::ChangePosition {
+        instance_id: "tracker".to_string(),
+        source_generation: 3,
+        output_generation: 7,
+    };
+    let graph = struo_frontend::graph_from_targets(&[struo_frontend::Target {
+        package: "app".to_string(),
+        kind: "script".to_string(),
+        name: "build".to_string(),
+        deps: Vec::new(),
+        dependency_edges: BTreeMap::new(),
+        srcs: vec!["src/**".to_string()],
+        visibility: Vec::new(),
+        attrs: BTreeMap::new(),
+        typed_attrs: BTreeMap::from([(
+            "metadata".to_string(),
+            struo_frontend::AttrValue::String("λ\n\"".repeat(3_000)),
+        )]),
+        resolver_input_exclude: Vec::new(),
+    }]);
+    let record = record("", &["project.lock"], &["project.lock"]);
+    cache.store("graph-key", Some(&position), &graph, &record);
+    let analyzer = struo_frontend::analysis::AnalysisEngine::from_source("").unwrap();
+    let changes = |sources| super::KnownChanges::Since {
+        sources,
+        outputs: BTreeSet::new(),
+    };
+    assert_eq!(
+        cache.reuse(
+            &analyzer,
+            workspace.path(),
+            "graph-key",
+            &changes(changed(&["app/src/main"]))
+        ),
+        Some(graph)
+    );
+    assert!(cache
+        .reuse(
+            &analyzer,
+            workspace.path(),
+            "other-key",
+            &changes(BTreeSet::new())
+        )
+        .is_none());
+    assert!(cache
+        .reuse(
+            &analyzer,
+            workspace.path(),
+            "graph-key",
+            &changes(changed(&["project.lock"]))
+        )
+        .is_none());
 }
 
 #[test]

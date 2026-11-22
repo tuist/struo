@@ -165,26 +165,6 @@ pub(super) fn expand_observed_paths(
     }
 }
 
-/// Whether every answer in `observations` is still the answer the host gives.
-///
-/// This is the whole of the replay decision. Anything it cannot check, it
-/// reports as changed, so a record that mentions a channel this function does
-/// not understand can never be reused.
-pub(in crate::analysis) fn observations_hold(
-    workspace_root: &Path,
-    host_cache: &HostCache,
-    observations: &AnalysisObservations,
-    policy: CommandPolicy,
-    unchanged: &UnchangedWorkspace,
-) -> bool {
-    if !observations.is_complete() {
-        return false;
-    }
-    observations.entries().iter().all(|observation| {
-        observation_holds(workspace_root, host_cache, observation, policy, unchanged)
-    })
-}
-
 /// What a caller already knows about which workspace paths cannot have moved.
 ///
 /// Re-expanding a path pattern is the most expensive kind of check here: it
@@ -275,25 +255,40 @@ pub fn expansion_could_differ(
     })
 }
 
-/// Name the first recorded answer that no longer matches, or `None` when they
-/// all still do. Only for reporting: the decision is `observations_hold`.
-pub(in crate::analysis) fn first_stale_observation(
+/// Why a stored analysis cannot be replayed.
+#[derive(Debug)]
+pub enum StaleObservation<'a> {
+    Incomplete,
+    Changed(&'a Observation),
+}
+
+impl std::fmt::Display for StaleObservation<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Incomplete => {
+                formatter.write_str("analysis read something the ledger cannot describe")
+            }
+            Self::Changed(observation) => write!(formatter, "{observation:?}"),
+        }
+    }
+}
+
+pub(in crate::analysis) fn validate_observations<'a>(
     workspace_root: &Path,
     host_cache: &HostCache,
-    observations: &AnalysisObservations,
+    observations: &'a AnalysisObservations,
     policy: CommandPolicy,
     unchanged: &UnchangedWorkspace,
-) -> Option<String> {
+) -> std::result::Result<(), StaleObservation<'a>> {
     if !observations.is_complete() {
-        return Some("analysis read something the ledger cannot describe".to_string());
+        return Err(StaleObservation::Incomplete);
     }
-    observations
-        .entries()
-        .iter()
-        .find(|observation| {
-            !observation_holds(workspace_root, host_cache, observation, policy, unchanged)
-        })
-        .map(|observation| format!("{observation:?}"))
+    match observations.entries().iter().find(|observation| {
+        !observation_holds(workspace_root, host_cache, observation, policy, unchanged)
+    }) {
+        Some(observation) => Err(StaleObservation::Changed(observation)),
+        None => Ok(()),
+    }
 }
 
 /// Replay a recorded answer about one host file's size or link destination.

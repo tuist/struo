@@ -129,6 +129,88 @@ fn host_env_reads_active_analysis_environment_only() {
 }
 
 #[test]
+fn replay_validation_retains_the_first_stale_answer_and_rejects_incomplete_ledgers() {
+    let workspace = TempDir::new().unwrap();
+    let engine = AnalysisEngine::from_source("").unwrap();
+    for policy in [CommandPolicy::Rerun, CommandPolicy::TrustDeclaredInputs] {
+        let root = workspace.path();
+        let path = root.join("answer");
+        std::fs::write(&path, b"valid").unwrap();
+        let path = path.to_str().unwrap().to_string();
+        let mut observations = AnalysisObservations::default();
+        assert!(engine
+            .validate_observations(root, &observations, policy, &UnchangedWorkspace::Unknown)
+            .is_ok());
+        observations.push_for_test(Observation::FileSize {
+            path: path.clone(),
+            bytes: 5,
+        });
+        assert!(engine
+            .validate_observations(root, &observations, policy, &UnchangedWorkspace::Unknown)
+            .is_ok());
+        observations.push_for_test(Observation::FileSize {
+            path: path.clone(),
+            bytes: 3,
+        });
+        observations.push_for_test(Observation::FileSize {
+            path: path.clone(),
+            bytes: 7,
+        });
+        let stale = engine
+            .validate_observations(root, &observations, policy, &UnchangedWorkspace::Unknown)
+            .unwrap_err();
+        assert!(matches!(
+            &stale,
+            StaleObservation::Changed(observation) if **observation == observations.entries()[1]
+        ));
+        std::fs::write(&path, b"new").unwrap();
+        assert_eq!(
+            stale.to_string(),
+            format!("{:?}", observations.entries()[1])
+        );
+        assert!(!engine.observations_hold(
+            root,
+            &observations,
+            policy,
+            &UnchangedWorkspace::Unknown
+        ));
+        assert_eq!(
+            engine.first_stale_observation(
+                root,
+                &observations,
+                policy,
+                &UnchangedWorkspace::Unknown
+            ),
+            Some(format!("{:?}", observations.entries()[0]))
+        );
+        observations.mark_incomplete_for_test();
+        let stale = engine
+            .validate_observations(root, &observations, policy, &UnchangedWorkspace::Unknown)
+            .unwrap_err();
+        assert!(matches!(stale, StaleObservation::Incomplete));
+        assert_eq!(
+            stale.to_string(),
+            "analysis read something the ledger cannot describe"
+        );
+        assert!(!engine.observations_hold(
+            root,
+            &observations,
+            policy,
+            &UnchangedWorkspace::Unknown
+        ));
+        assert_eq!(
+            engine.first_stale_observation(
+                root,
+                &observations,
+                policy,
+                &UnchangedWorkspace::Unknown
+            ),
+            Some(stale.to_string())
+        );
+    }
+}
+
+#[test]
 fn inherited_environment_invalidates_observations() {
     if let Some(path) = std::env::var_os("STRUO_ENV_OBSERVATION_PATH") {
         let path = std::path::PathBuf::from(path);
@@ -830,11 +912,22 @@ fn tool_version_commands_can_seed_a_later_analysis_engine() {
     let paths = BTreeMap::from([("demo".to_string(), tool.display().to_string())]);
     let argv = vec!["demo".to_string(), "--version".to_string()];
     let env = BTreeMap::new();
-    let first = HostCache::with_tool_cache(paths.clone(), Vec::new());
+    let first = HostCache::with_tool_cache(
+        paths.clone(),
+        vec![CachedToolCommand {
+            argv: vec!["demo".to_string(), "discover".to_string()],
+            env: BTreeMap::new(),
+            cwd: None,
+            merge_stderr: false,
+            output: "discovery output".repeat(100_000),
+        }],
+    );
 
     assert_eq!(first.command(&argv, &env, None, false).unwrap(), "demo 1.0");
     let commands = first.cacheable_tool_commands();
     assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].argv, argv);
+    assert_eq!(commands[0].output, "demo 1.0");
 
     let seeded = HostCache::with_tool_cache(paths, commands);
     assert_eq!(
@@ -2586,9 +2679,8 @@ fn host_symlink_target_rejects_non_utf8_targets_and_invalidates_replay() {
     let target = std::ffi::OsString::from_vec(b"file-\xff".to_vec());
     std::fs::remove_file(root.join("link")).unwrap();
     std::os::unix::fs::symlink(target, root.join("link")).unwrap();
-    assert!(!globals::observations_hold(
+    assert!(!AnalysisEngine::from_source("").unwrap().observations_hold(
         root,
-        &HostCache::default(),
         &observations,
         CommandPolicy::Rerun,
         &globals::UnchangedWorkspace::Unknown,
