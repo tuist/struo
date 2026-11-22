@@ -6,6 +6,7 @@ use struo_cas::{ActionResult, CacheProvider};
 use crate::{ExecutionPermit, Executor, RemoteExecution, ResourceRequest, Result, WorkspacePath};
 
 mod archive;
+mod cloudflare;
 mod daytona;
 mod docker;
 mod e2b;
@@ -94,6 +95,16 @@ pub(crate) async fn execute_command(
         "dispatching remote command"
     );
     match executor {
+        Executor::Cloudflare => {
+            Box::pin(cloudflare::execute_command(
+                remote,
+                command,
+                workspace_root,
+                cache,
+                stream_to_parent,
+            ))
+            .await
+        }
         Executor::Docker => {
             Box::pin(docker::execute_command(
                 remote,

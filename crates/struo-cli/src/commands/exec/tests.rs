@@ -43,7 +43,7 @@ fn local_aliases_use_native_runtime_and_environment_resolution() {
     let mut binding = RemoteExecution::provider("native-alias");
     binding.executor = Some("local".to_string());
     assert!(!uses_provider_environment(Some(&binding)).unwrap());
-    for name in ["e2b", "daytona", "together", "microsandbox"] {
+    for name in ["e2b", "daytona", "together", "microsandbox", "cloudflare"] {
         assert!(uses_provider_environment(Some(&RemoteExecution::provider(name))).unwrap());
     }
 }

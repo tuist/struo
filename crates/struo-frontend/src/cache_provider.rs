@@ -117,6 +117,11 @@ pub struct NorthflankExecutionProviderConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloudflareExecutionProviderConfig {
+    pub image: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DockerExecutionProviderConfig {
     pub image: String,
 }
@@ -129,6 +134,7 @@ pub enum InfrastructureProviderConfig {
     Daytona(DaytonaExecutionProviderConfig),
     Together(TogetherExecutionProviderConfig),
     Northflank(NorthflankExecutionProviderConfig),
+    Cloudflare(CloudflareExecutionProviderConfig),
     Docker(DockerExecutionProviderConfig),
     Tuist(TuistCacheProviderConfig),
     ObjectStore(ObjectStoreCacheProviderConfig),
@@ -225,6 +231,9 @@ pub(crate) enum InfrastructureProviderToml {
     Northflank {
         image: String,
         deployment_plan: String,
+    },
+    Cloudflare {
+        image: String,
     },
     Docker {
         image: String,
@@ -353,6 +362,13 @@ impl InfrastructureProviderToml {
                     deployment_plan,
                 })
             }
+            Self::Cloudflare { image } => {
+                let image =
+                    required_value(display_name, provider_name, "cloudflare", "image", &image)?;
+                InfrastructureProviderConfig::Cloudflare(CloudflareExecutionProviderConfig {
+                    image,
+                })
+            }
             Self::Docker { image } => {
                 let image = required_value(display_name, provider_name, "docker", "image", &image)?;
                 InfrastructureProviderConfig::Docker(DockerExecutionProviderConfig { image })
@@ -407,6 +423,26 @@ fn non_empty(value: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cloudflare_requires_an_explicit_nonempty_image() {
+        assert!(
+            InfrastructureProviderToml::Cloudflare { image: "  ".into() }
+                .into_config("struo.toml", "remote_tests")
+                .is_err()
+        );
+        let config = InfrastructureProviderToml::Cloudflare {
+            image: " pinned-v1 ".into(),
+        }
+        .into_config("struo.toml", "remote_tests")
+        .unwrap();
+        assert_eq!(
+            config,
+            InfrastructureProviderConfig::Cloudflare(CloudflareExecutionProviderConfig {
+                image: "pinned-v1".into()
+            })
+        );
+    }
 
     #[test]
     fn tuist_config_defaults_url() {

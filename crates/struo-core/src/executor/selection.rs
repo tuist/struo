@@ -19,6 +19,7 @@ pub enum Executor {
     Daytona,
     Together,
     Northflank,
+    Cloudflare,
     Docker,
     /// A Tuist project's Remote Execution API service.
     Tuist,
@@ -71,6 +72,7 @@ impl Executor {
             "daytona" => Ok(Self::Daytona),
             "together" => Ok(Self::Together),
             "northflank" => Ok(Self::Northflank),
+            "cloudflare" => Ok(Self::Cloudflare),
             "docker" => Ok(Self::Docker),
             "tuist" => Ok(Self::Tuist),
             adapter => Err(Error::UnsupportedRemoteProvider {
@@ -145,6 +147,7 @@ impl Executor {
             | Self::Daytona
             | Self::Together
             | Self::Northflank
+            | Self::Cloudflare
             | Self::Docker
             | Self::Tuist => None,
         };
@@ -160,9 +163,12 @@ impl Executor {
     pub fn resource_domain(self) -> ResourceDomain {
         match self {
             Self::Local | Self::Microsandbox | Self::Docker => ResourceDomain::Host,
-            Self::E2b | Self::Daytona | Self::Together | Self::Northflank | Self::Tuist => {
-                ResourceDomain::Remote
-            }
+            Self::E2b
+            | Self::Daytona
+            | Self::Together
+            | Self::Northflank
+            | Self::Cloudflare
+            | Self::Tuist => ResourceDomain::Remote,
         }
     }
 
@@ -174,6 +180,7 @@ impl Executor {
             Self::Daytona => "daytona",
             Self::Together => "together",
             Self::Northflank => "northflank",
+            Self::Cloudflare => "cloudflare",
             Self::Docker => "docker",
             Self::Tuist => "tuist",
         }
@@ -201,11 +208,22 @@ mod tests {
         assert_eq!(Executor::E2b.resource_domain(), ResourceDomain::Remote);
         assert_eq!(Executor::Daytona.resource_domain(), ResourceDomain::Remote);
         assert_eq!(Executor::Together.resource_domain(), ResourceDomain::Remote);
+        assert_eq!(
+            Executor::Cloudflare.resource_domain(),
+            ResourceDomain::Remote
+        );
     }
 
     #[test]
     fn unenforced_tenant_requirements_fail_closed() {
-        for adapter in ["local", "microsandbox", "e2b", "daytona", "together"] {
+        for adapter in [
+            "local",
+            "microsandbox",
+            "e2b",
+            "daytona",
+            "together",
+            "cloudflare",
+        ] {
             for project in [false, true] {
                 let mut binding = RemoteExecution::provider(adapter);
                 if project {

@@ -192,6 +192,11 @@ defmodule StruoSiteWeb.Docs.Sidebar do
             label: "Northflank",
             slug: "/docs/guide/infrastructure/northflank",
             icon: "northflank"
+          },
+          %Item{
+            label: "Cloudflare",
+            slug: "/docs/guide/infrastructure/cloudflare",
+            icon: "cloudflare"
           }
         ]
       },

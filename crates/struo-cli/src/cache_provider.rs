@@ -342,6 +342,7 @@ fn resolve_named_workspace_provider(
         | InfrastructureProviderConfig::Daytona(_)
         | InfrastructureProviderConfig::Together(_)
         | InfrastructureProviderConfig::Northflank(_)
+        | InfrastructureProviderConfig::Cloudflare(_)
         | InfrastructureProviderConfig::Docker(_) => {
             bail!("infrastructure `{name}` provides execution but not shared caching")
         }
@@ -480,6 +481,14 @@ fn remote_from_workspace_provider(
                 project: binding_project,
             }
         }
+        InfrastructureProviderConfig::Cloudflare(config) => RemoteExecution {
+            provider: name,
+            properties,
+            executor: Some("cloudflare".to_string()),
+            environment: Some(config.image),
+            account: binding_account,
+            project: binding_project,
+        },
         InfrastructureProviderConfig::Docker(config) => RemoteExecution {
             provider: name,
             properties,
@@ -544,7 +553,7 @@ fn remote_from_binding(binding: ExecutionProviderConfig) -> RemoteExecution {
 fn is_builtin_execution_provider(name: &str) -> bool {
     matches!(
         name,
-        "microsandbox" | "e2b" | "daytona" | "together" | "northflank" | "docker"
+        "microsandbox" | "e2b" | "daytona" | "together" | "northflank" | "cloudflare" | "docker"
     )
 }
 
@@ -1423,6 +1432,24 @@ project = "tests"
             resolve_execution(tmp.path(), &xdg, Some("daytona")).unwrap(),
             RemoteExecution::provider("daytona")
         );
+    }
+
+    #[test]
+    fn resolve_execution_uses_named_cloudflare_image() {
+        let tmp = TempDir::new().unwrap();
+        let xdg = xdg_under(tmp.path());
+        write_workspace(
+            tmp.path(),
+            r#"
+[infrastructures.remote_tests]
+kind = "cloudflare"
+image = "node-pinned-v1"
+"#,
+        );
+        let remote = resolve_execution(tmp.path(), &xdg, Some("remote_tests")).unwrap();
+        assert_eq!(remote.provider, "remote_tests");
+        assert_eq!(remote.executor.as_deref(), Some("cloudflare"));
+        assert_eq!(remote.environment.as_deref(), Some("node-pinned-v1"));
     }
 
     #[test]

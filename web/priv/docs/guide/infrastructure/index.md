@@ -61,6 +61,9 @@ successful exit, and deletes the machine.
 Read [Remote Execution](/guide/infrastructure/remote-execution) for the full
 action lifecycle and a real Vitest workflow.
 
+[Cloudflare Sandbox Containers](/guide/infrastructure/cloudflare) require an
+authenticated Worker and Durable Object bridge that you deploy in your account.
+
 ## Share Results Across Machines
 
 A cache provider lets another machine reuse an action result instead of

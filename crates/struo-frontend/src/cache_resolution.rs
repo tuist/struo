@@ -193,6 +193,7 @@ fn resolve_named_workspace_provider(
         | InfrastructureProviderConfig::Docker(_)
         | InfrastructureProviderConfig::Together(_)
         | InfrastructureProviderConfig::Northflank(_)
+        | InfrastructureProviderConfig::Cloudflare(_)
         | InfrastructureProviderConfig::Daytona(_) => Err(Error::CacheProvider {
             path: name.clone(),
             kind: CacheProviderError::ExecutionProviderNotCacheable { name: name.clone() },

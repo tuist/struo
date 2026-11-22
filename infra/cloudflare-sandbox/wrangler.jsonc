@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "struo-sandbox-bridge",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-21",
+  "containers": [{ "class_name": "StruoSandbox", "scheduling_policy": "durable_object" }],
+  "durable_objects": {
+    "bindings": [{ "name": "SANDBOXES", "class_name": "StruoSandbox" }]
+  },
+  "exports": { "StruoSandbox": { "type": "durable-object", "storage": "sqlite" } }
+}

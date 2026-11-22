@@ -190,6 +190,11 @@ p {
   --nav-icon-color: oklch(63% 0.14 238.5);
 }
 
+#docs-sidebar [data-part="nav-item-icon"][data-icon="cloudflare"] {
+  --nav-icon-mask: url("/docs/icons/cloudflare.svg");
+  --nav-icon-color: #f38020;
+}
+
 #docs-sidebar [data-part="nav-item-icon"][data-icon="ruby"],
 #docs-sidebar [data-part="nav-item-icon"][data-icon="javascript"],
 #docs-sidebar [data-part="nav-item-icon"][data-icon="microsandbox"],

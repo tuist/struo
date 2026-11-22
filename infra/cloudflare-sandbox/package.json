@@ -1,0 +1,12 @@
+{
+  "name": "struo-cloudflare-sandbox-bridge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "check": "wrangler deploy --dry-run --outdir /tmp/struo-cloudflare-worker"
+  },
+  "devDependencies": {
+    "wrangler": "4.166.0"
+  }
+}
