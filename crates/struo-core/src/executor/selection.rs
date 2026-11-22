@@ -21,6 +21,7 @@ pub enum Executor {
     Northflank,
     Cloudflare,
     Sprites,
+    OpenSandbox,
     Docker,
     /// A Tuist project's Remote Execution API service.
     Tuist,
@@ -75,6 +76,7 @@ impl Executor {
             "northflank" => Ok(Self::Northflank),
             "cloudflare" => Ok(Self::Cloudflare),
             "sprites" => Ok(Self::Sprites),
+            "opensandbox" => Ok(Self::OpenSandbox),
             "docker" => Ok(Self::Docker),
             "tuist" => Ok(Self::Tuist),
             adapter => Err(Error::UnsupportedRemoteProvider {
@@ -154,6 +156,7 @@ impl Executor {
             | Self::Northflank
             | Self::Cloudflare
             | Self::Sprites
+            | Self::OpenSandbox
             | Self::Docker
             | Self::Tuist => None,
         };
@@ -175,6 +178,7 @@ impl Executor {
             | Self::Northflank
             | Self::Cloudflare
             | Self::Sprites
+            | Self::OpenSandbox
             | Self::Tuist => ResourceDomain::Remote,
         }
     }
@@ -189,6 +193,7 @@ impl Executor {
             Self::Northflank => "northflank",
             Self::Cloudflare => "cloudflare",
             Self::Sprites => "sprites",
+            Self::OpenSandbox => "opensandbox",
             Self::Docker => "docker",
             Self::Tuist => "tuist",
         }
@@ -220,6 +225,10 @@ mod tests {
             Executor::Cloudflare.resource_domain(),
             ResourceDomain::Remote
         );
+        assert_eq!(
+            Executor::OpenSandbox.resource_domain(),
+            ResourceDomain::Remote
+        );
     }
 
     #[test]
@@ -231,6 +240,7 @@ mod tests {
             "daytona",
             "together",
             "cloudflare",
+            "opensandbox",
         ] {
             for project in [false, true] {
                 let mut binding = RemoteExecution::provider(adapter);

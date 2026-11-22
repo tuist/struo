@@ -122,6 +122,11 @@ pub struct CloudflareExecutionProviderConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenSandboxExecutionProviderConfig {
+    pub image: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DockerExecutionProviderConfig {
     pub image: String,
 }
@@ -136,6 +141,7 @@ pub enum InfrastructureProviderConfig {
     Northflank(NorthflankExecutionProviderConfig),
     Cloudflare(CloudflareExecutionProviderConfig),
     Sprites,
+    OpenSandbox(OpenSandboxExecutionProviderConfig),
     Docker(DockerExecutionProviderConfig),
     Tuist(TuistCacheProviderConfig),
     ObjectStore(ObjectStoreCacheProviderConfig),
@@ -237,6 +243,10 @@ pub(crate) enum InfrastructureProviderToml {
         image: String,
     },
     Sprites,
+    #[serde(rename = "opensandbox")]
+    OpenSandbox {
+        image: String,
+    },
     Docker {
         image: String,
     },
@@ -375,6 +385,13 @@ impl InfrastructureProviderToml {
             Self::Docker { image } => {
                 let image = required_value(display_name, provider_name, "docker", "image", &image)?;
                 InfrastructureProviderConfig::Docker(DockerExecutionProviderConfig { image })
+            }
+            Self::OpenSandbox { image } => {
+                let image =
+                    required_value(display_name, provider_name, "opensandbox", "image", &image)?;
+                InfrastructureProviderConfig::OpenSandbox(OpenSandboxExecutionProviderConfig {
+                    image,
+                })
             }
             Self::Tuist {
                 url,

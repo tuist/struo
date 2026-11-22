@@ -182,6 +182,7 @@ defmodule StruoSiteWeb.Docs.Sidebar do
             icon: "microsandbox"
           },
           %Item{label: "E2B", slug: "/docs/guide/infrastructure/e2b", icon: "e2b"},
+          %Item{label: "OpenSandbox", slug: "/docs/guide/infrastructure/opensandbox"},
           %Item{
             label: "Daytona",
             slug: "/docs/guide/infrastructure/daytona",

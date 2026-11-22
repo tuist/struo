@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use futures::FutureExt;
 use struo_cas::{ActionResult, CacheProvider};
 
 use crate::{ExecutionPermit, Executor, RemoteExecution, ResourceRequest, Result, WorkspacePath};
@@ -14,6 +15,7 @@ mod http;
 mod lifecycle;
 mod microsandbox;
 mod northflank;
+mod opensandbox;
 mod output_install;
 pub(crate) use output_install::restore_output_snapshots;
 mod path;
@@ -98,14 +100,14 @@ pub(crate) async fn execute_command(
     );
     match executor {
         Executor::Cloudflare => {
-            Box::pin(cloudflare::execute_command(
-                remote,
-                command,
-                workspace_root,
-                cache,
-                stream_to_parent,
-            ))
-            .await
+            cloudflare::execute_command(remote, command, workspace_root, cache, stream_to_parent)
+                .boxed()
+                .await
+        }
+        Executor::OpenSandbox => {
+            opensandbox::execute_command(remote, command, workspace_root, cache, stream_to_parent)
+                .boxed()
+                .await
         }
         Executor::Docker => {
             Box::pin(docker::execute_command(

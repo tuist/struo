@@ -98,6 +98,7 @@ It can also use either capability on its own.
 | [Together Code Sandbox](/guide/infrastructure/together) | Execution | Hosted snapshot | Run against a prepared snapshot with Together sandbox access. |
 | [Northflank](/guide/infrastructure/northflank) | Execution | Service-backed sandbox image | Run annotated tests in a dedicated Northflank project. |
 | [Sprites](/guide/infrastructure/sprites) | Execution | Hosted Linux environment | Run scripts in a disposable Fly.io Sprite. |
+| [OpenSandbox](/guide/infrastructure/opensandbox) | Execution | Self-hosted container image | Run actions on your own sandbox service. |
 | [Tuist](/guide/infrastructure/tuist) | Shared cache, artifacts | Not applicable | Reuse action results and share installable applications. |
 | [Object storage](/guide/infrastructure/object-storage) | Shared cache | Your S3, Google Cloud Storage, or Azure bucket | Share results through storage you already run, without a cache service. |
 | [HTTP cache](/guide/infrastructure/http-cache) | Shared cache | Any server with `GET`, `HEAD`, and `PUT` | Reuse a build cache your CI runners already reach. |

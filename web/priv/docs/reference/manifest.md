@@ -120,6 +120,10 @@ snapshot = "<snapshot-id>"
 kind = "northflank"
 image = "node:22.18.0-bookworm"
 deployment_plan = "nf-compute-200"
+
+[infrastructures.self_hosted]
+kind = "opensandbox"
+image = "node:22.18.0-bookworm"
 ```
 
 Northflank also requires a `project` in the execution binding. For team-scoped
@@ -141,7 +145,7 @@ kind = "sprites"
 
 See [Sprites](/guide/infrastructure/sprites) for credentials and disposal.
 
-Docker, E2B, Daytona, Together, Northflank, Sprites, and Microsandbox provide execution only. Tuist provides shared
+Docker, E2B, Daytona, Together, Northflank, Sprites, OpenSandbox, and Microsandbox provide execution only. Tuist provides shared
 caching. Bind each capability independently when a workspace uses both.
 
 ## Targets

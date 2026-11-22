@@ -746,6 +746,10 @@ template = "vitest-v1"
 [infrastructures.daytona_tests]
 kind = "daytona"
 image = "node:22-bookworm"
+
+[infrastructures.self_hosted]
+kind = "opensandbox"
+image = "node:22-bookworm"
 "#,
         )
         .unwrap();
@@ -781,6 +785,11 @@ template = ""
             r#"
 [infrastructures.remote_tests]
 kind = "daytona"
+image = "   "
+"#,
+            r#"
+[infrastructures.remote_tests]
+kind = "opensandbox"
 image = "   "
 "#,
         ] {

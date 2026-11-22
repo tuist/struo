@@ -50,6 +50,7 @@ fn local_aliases_use_native_runtime_and_environment_resolution() {
         "sprites",
         "microsandbox",
         "cloudflare",
+        "opensandbox",
     ] {
         assert!(uses_provider_environment(Some(&RemoteExecution::provider(name))).unwrap());
     }

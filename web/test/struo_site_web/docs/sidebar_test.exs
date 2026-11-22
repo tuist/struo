@@ -59,6 +59,7 @@ defmodule StruoSiteWeb.Docs.SidebarTest do
              "Microsandbox" => "microsandbox",
              "Northflank" => "northflank",
              "Sprites" => nil,
+             "OpenSandbox" => nil,
              "Together" => "together"
            }
 

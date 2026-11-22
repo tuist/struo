@@ -344,6 +344,7 @@ fn resolve_named_workspace_provider(
         | InfrastructureProviderConfig::Together(_)
         | InfrastructureProviderConfig::Northflank(_)
         | InfrastructureProviderConfig::Cloudflare(_)
+        | InfrastructureProviderConfig::OpenSandbox(_)
         | InfrastructureProviderConfig::Docker(_) => {
             bail!("infrastructure `{name}` provides execution but not shared caching")
         }
@@ -421,104 +422,40 @@ fn remote_from_workspace_provider(
     binding: ExecutionProviderConfig,
     provider: InfrastructureProviderConfig,
 ) -> Result<RemoteExecution> {
-    let ExecutionProviderConfig {
-        name,
-        account: binding_account,
-        project: binding_project,
-        properties,
-    } = binding;
-    Ok(match provider {
-        InfrastructureProviderConfig::Local => RemoteExecution {
-            provider: name,
-            properties,
-            executor: Some("local".to_string()),
-            environment: None,
-            account: binding_account,
-            project: binding_project,
-        },
-        InfrastructureProviderConfig::Microsandbox(config) => RemoteExecution {
-            provider: name,
-            properties,
-            executor: Some("microsandbox".to_string()),
-            environment: Some(config.image),
-            account: binding_account,
-            project: binding_project,
-        },
-        InfrastructureProviderConfig::E2b(config) => RemoteExecution {
-            provider: name,
-            properties,
-            executor: Some("e2b".to_string()),
-            environment: Some(config.template),
-            account: binding_account,
-            project: binding_project,
-        },
-        InfrastructureProviderConfig::Sprites => RemoteExecution {
-            provider: name,
-            properties,
-            executor: Some("sprites".to_string()),
-            environment: None,
-            account: binding_account,
-            project: binding_project,
-        },
-        InfrastructureProviderConfig::Daytona(config) => RemoteExecution {
-            provider: name,
-            properties,
-            executor: Some("daytona".to_string()),
-            environment: Some(config.image),
-            account: binding_account,
-            project: binding_project,
-        },
-        InfrastructureProviderConfig::Together(config) => RemoteExecution {
-            provider: name,
-            properties,
-            executor: Some("together".to_string()),
-            environment: Some(config.snapshot),
-            account: binding_account,
-            project: binding_project,
-        },
+    let mut remote = remote_from_binding(binding);
+    let (executor, environment) = match provider {
+        InfrastructureProviderConfig::Local => ("local", None),
+        InfrastructureProviderConfig::Microsandbox(config) => ("microsandbox", Some(config.image)),
+        InfrastructureProviderConfig::E2b(config) => ("e2b", Some(config.template)),
+        InfrastructureProviderConfig::Sprites => ("sprites", None),
+        InfrastructureProviderConfig::Daytona(config) => ("daytona", Some(config.image)),
+        InfrastructureProviderConfig::Together(config) => ("together", Some(config.snapshot)),
         InfrastructureProviderConfig::Northflank(config) => {
-            let mut properties = properties;
-            properties
+            remote
+                .properties
                 .entry("deployment_plan".into())
                 .or_insert(config.deployment_plan.into());
-            RemoteExecution {
-                provider: name,
-                properties,
-                executor: Some("northflank".into()),
-                environment: Some(config.image),
-                account: binding_account,
-                project: binding_project,
-            }
+            ("northflank", Some(config.image))
         }
-        InfrastructureProviderConfig::Cloudflare(config) => RemoteExecution {
-            provider: name,
-            properties,
-            executor: Some("cloudflare".to_string()),
-            environment: Some(config.image),
-            account: binding_account,
-            project: binding_project,
-        },
-        InfrastructureProviderConfig::Docker(config) => RemoteExecution {
-            provider: name,
-            properties,
-            executor: Some("docker".to_string()),
-            environment: Some(config.image),
-            account: binding_account,
-            project: binding_project,
-        },
-        InfrastructureProviderConfig::Tuist(config) => RemoteExecution {
-            provider: name,
-            properties,
-            executor: Some("tuist".to_string()),
-            environment: config.execution_image,
-            account: binding_account.or(config.account),
-            project: binding_project.or(config.project),
-        },
+        InfrastructureProviderConfig::Cloudflare(config) => ("cloudflare", Some(config.image)),
+        InfrastructureProviderConfig::Docker(config) => ("docker", Some(config.image)),
+        InfrastructureProviderConfig::OpenSandbox(config) => ("opensandbox", Some(config.image)),
+        InfrastructureProviderConfig::Tuist(config) => {
+            remote.account = remote.account.or(config.account);
+            remote.project = remote.project.or(config.project);
+            ("tuist", config.execution_image)
+        }
         InfrastructureProviderConfig::ObjectStore(_)
         | InfrastructureProviderConfig::HttpCache(_) => {
-            bail!("infrastructure `{name}` provides shared caching but not execution")
+            bail!(
+                "infrastructure `{}` provides shared caching but not execution",
+                remote.provider
+            )
         }
-    })
+    };
+    remote.executor = Some(executor.into());
+    remote.environment = environment;
+    Ok(remote)
 }
 
 fn remote_from_user_provider(
@@ -569,6 +506,7 @@ fn is_builtin_execution_provider(name: &str) -> bool {
             | "northflank"
             | "cloudflare"
             | "sprites"
+            | "opensandbox"
             | "docker"
     )
 }
@@ -1488,6 +1426,33 @@ provider = "remote_tests"
         assert_eq!(
             resolve_execution(tmp.path(), &xdg, Some("sprites")).unwrap(),
             RemoteExecution::provider("sprites")
+        );
+    }
+
+    #[test]
+    fn resolve_execution_uses_named_opensandbox_image() {
+        let tmp = TempDir::new().unwrap();
+        let xdg = xdg_under(tmp.path());
+        write_workspace(
+            tmp.path(),
+            r#"
+[infrastructures.self_hosted]
+kind = "opensandbox"
+image = "node:22-bookworm"
+
+[infrastructure.execution]
+provider = "self_hosted"
+properties = { secure_access = false }
+"#,
+        );
+        let remote = resolve_execution(tmp.path(), &xdg, None).unwrap();
+        assert_eq!(remote.provider, "self_hosted");
+        assert_eq!(remote.executor.as_deref(), Some("opensandbox"));
+        assert_eq!(remote.environment.as_deref(), Some("node:22-bookworm"));
+        assert_eq!(remote.properties["secure_access"], false);
+        assert_eq!(
+            struo_core::Executor::from_binding(&remote).unwrap(),
+            struo_core::Executor::OpenSandbox
         );
     }
 
