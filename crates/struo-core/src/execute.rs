@@ -452,6 +452,7 @@ async fn execute_command(
             Executor::Microsandbox
             | Executor::E2b
             | Executor::Daytona
+            | Executor::Boat
             | Executor::Together
             | Executor::Northflank
             | Executor::Cloudflare

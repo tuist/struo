@@ -112,6 +112,10 @@ template = "vitest-node-22"
 kind = "daytona"
 image = "node:22.18.0-bookworm"
 
+[infrastructures.boat_tests]
+kind = "boat"
+snapshot = "node-tests-v1"
+
 [infrastructures.together_tests]
 kind = "together"
 snapshot = "<snapshot-id>"
@@ -145,7 +149,10 @@ kind = "sprites"
 
 See [Sprites](/guide/infrastructure/sprites) for credentials and disposal.
 
-Docker, E2B, Daytona, Together, Northflank, Sprites, OpenSandbox, and Microsandbox provide execution only. Tuist provides shared
+Boat uses a saved snapshot rather than an OCI image. See
+[Boat execution](/guide/infrastructure/boat) for snapshot preparation and cleanup.
+
+Docker, E2B, Daytona, Boat, Together, Northflank, Sprites, OpenSandbox, and Microsandbox provide execution only. Tuist provides shared
 caching. Bind each capability independently when a workspace uses both.
 
 ## Targets

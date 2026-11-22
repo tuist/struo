@@ -95,6 +95,7 @@ It can also use either capability on its own.
 | [Microsandbox](/guide/infrastructure/microsandbox) | Execution | Local image | Validate an action boundary on the current computer. |
 | [E2B](/guide/infrastructure/e2b) | Execution | Hosted template | Start a prepared hosted environment quickly. |
 | [Daytona](/guide/infrastructure/daytona) | Execution | Hosted container image | Build a hosted environment from a familiar image. |
+| [Boat](/guide/infrastructure/boat) | Execution | Hosted saved snapshot | Run scripts with a prepared Linux toolchain and disposable ownership. |
 | [Together Code Sandbox](/guide/infrastructure/together) | Execution | Hosted snapshot | Run against a prepared snapshot with Together sandbox access. |
 | [Northflank](/guide/infrastructure/northflank) | Execution | Service-backed sandbox image | Run annotated tests in a dedicated Northflank project. |
 | [Sprites](/guide/infrastructure/sprites) | Execution | Hosted Linux environment | Run scripts in a disposable Fly.io Sprite. |

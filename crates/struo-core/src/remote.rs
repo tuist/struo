@@ -7,6 +7,7 @@ use struo_cas::{ActionResult, CacheProvider};
 use crate::{ExecutionPermit, Executor, RemoteExecution, ResourceRequest, Result, WorkspacePath};
 
 mod archive;
+mod boat;
 mod cloudflare;
 mod daytona;
 mod docker;
@@ -123,6 +124,16 @@ pub(crate) async fn execute_command(
         Executor::Microsandbox => {
             microsandbox::execute_command(remote, command, workspace_root, cache, stream_to_parent)
                 .await
+        }
+        Executor::Boat => {
+            Box::pin(boat::execute_command(
+                remote,
+                command,
+                workspace_root,
+                cache,
+                stream_to_parent,
+            ))
+            .await
         }
         Executor::Sprites => {
             Box::pin(sprites::execute_command(

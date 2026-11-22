@@ -5,7 +5,7 @@ repository while the process runs in a fresh environment supplied by an
 infrastructure provider.
 
 The important boundary is the action, not the test framework. Vitest is the
-program being run. Docker, Microsandbox, E2B, Daytona,
+program being run. Docker, Microsandbox, E2B, Daytona, Boat,
 [Northflank](/guide/infrastructure/northflank), and Sprites are execution providers.
 
 Declared build graphs can also dispatch command actions with
@@ -89,6 +89,7 @@ across fresh containers with a locally prepared image. Use
 a supported local computer. Use [E2B](/guide/infrastructure/e2b) when you have
 a prepared hosted template. Use [Daytona](/guide/infrastructure/daytona) when
 you want Struo to start from a container image.
+Use [Boat](/guide/infrastructure/boat) to start from a saved Linux snapshot.
 Use [Sprites](/guide/infrastructure/sprites) for a disposable Fly.io Linux
 environment without a custom image or template.
 Use [Tuist](/guide/infrastructure/tuist#run-actions-on-tuist-workers) to run

@@ -17,6 +17,7 @@ pub enum Executor {
     Microsandbox,
     E2b,
     Daytona,
+    Boat,
     Together,
     Northflank,
     Cloudflare,
@@ -72,6 +73,7 @@ impl Executor {
             "microsandbox" => Ok(Self::Microsandbox),
             "e2b" => Ok(Self::E2b),
             "daytona" => Ok(Self::Daytona),
+            "boat" => Ok(Self::Boat),
             "together" => Ok(Self::Together),
             "northflank" => Ok(Self::Northflank),
             "cloudflare" => Ok(Self::Cloudflare),
@@ -152,6 +154,7 @@ impl Executor {
             Self::Microsandbox => Some("STRUO_MICROSANDBOX_IMAGE"),
             Self::Local
             | Self::Daytona
+            | Self::Boat
             | Self::Together
             | Self::Northflank
             | Self::Cloudflare
@@ -174,6 +177,7 @@ impl Executor {
             Self::Local | Self::Microsandbox | Self::Docker => ResourceDomain::Host,
             Self::E2b
             | Self::Daytona
+            | Self::Boat
             | Self::Together
             | Self::Northflank
             | Self::Cloudflare
@@ -189,6 +193,7 @@ impl Executor {
             Self::Microsandbox => "microsandbox",
             Self::E2b => "e2b",
             Self::Daytona => "daytona",
+            Self::Boat => "boat",
             Self::Together => "together",
             Self::Northflank => "northflank",
             Self::Cloudflare => "cloudflare",
@@ -220,6 +225,7 @@ mod tests {
         );
         assert_eq!(Executor::E2b.resource_domain(), ResourceDomain::Remote);
         assert_eq!(Executor::Daytona.resource_domain(), ResourceDomain::Remote);
+        assert_eq!(Executor::Boat.resource_domain(), ResourceDomain::Remote);
         assert_eq!(Executor::Together.resource_domain(), ResourceDomain::Remote);
         assert_eq!(
             Executor::Cloudflare.resource_domain(),
@@ -238,6 +244,7 @@ mod tests {
             "microsandbox",
             "e2b",
             "daytona",
+            "boat",
             "together",
             "cloudflare",
             "opensandbox",

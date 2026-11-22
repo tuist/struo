@@ -43,6 +43,7 @@ defmodule StruoSiteWeb.DocsLiveTest do
   test "serves infrastructure provider guides and contracts", %{conn: conn} do
     for {path, title} <- [
           {"/docs/guide/infrastructure/providers", "Become an Infrastructure Provider"},
+          {"/docs/guide/infrastructure/boat", "Boat"},
           {"/docs/reference/infrastructure", "Infrastructure Provider Contracts"},
           {"/docs/reference/infrastructure/cache", "Cache Provider Contract"},
           {"/docs/reference/infrastructure/execution", "Execution Provider Contract"}

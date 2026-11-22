@@ -46,6 +46,7 @@ fn local_aliases_use_native_runtime_and_environment_resolution() {
     for name in [
         "e2b",
         "daytona",
+        "boat",
         "together",
         "sprites",
         "microsandbox",
@@ -136,6 +137,11 @@ async fn remote_script_resolves_named_executor_and_dependency_outputs() {
             Some("node:22.18.0-alpine"),
         ),
         ("kind = \"sprites\"", "sprites", None),
+        (
+            "kind = \"boat\"\nsnapshot = \"node-tests-v1\"",
+            "boat",
+            Some("node-tests-v1"),
+        ),
     ] {
         let tmp = TempDir::new().unwrap();
         let xdg = xdg_under(tmp.path());

@@ -191,6 +191,7 @@ fn resolve_named_workspace_provider(
         InfrastructureProviderConfig::Microsandbox(_)
         | InfrastructureProviderConfig::Sprites
         | InfrastructureProviderConfig::E2b(_)
+        | InfrastructureProviderConfig::Boat(_)
         | InfrastructureProviderConfig::Docker(_)
         | InfrastructureProviderConfig::Together(_)
         | InfrastructureProviderConfig::Northflank(_)

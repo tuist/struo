@@ -750,6 +750,10 @@ image = "node:22-bookworm"
 [infrastructures.self_hosted]
 kind = "opensandbox"
 image = "node:22-bookworm"
+
+[infrastructures.boat_tests]
+kind = "boat"
+snapshot = "node-tests-v1"
 "#,
         )
         .unwrap();
@@ -791,6 +795,11 @@ image = "   "
 [infrastructures.remote_tests]
 kind = "opensandbox"
 image = "   "
+"#,
+            r#"
+[infrastructures.remote_tests]
+kind = "boat"
+snapshot = "   "
 "#,
         ] {
             let error = load_infrastructure_toml_str("struo.toml", manifest).unwrap_err();

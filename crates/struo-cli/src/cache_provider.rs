@@ -341,6 +341,7 @@ fn resolve_named_workspace_provider(
         | InfrastructureProviderConfig::Sprites
         | InfrastructureProviderConfig::E2b(_)
         | InfrastructureProviderConfig::Daytona(_)
+        | InfrastructureProviderConfig::Boat(_)
         | InfrastructureProviderConfig::Together(_)
         | InfrastructureProviderConfig::Northflank(_)
         | InfrastructureProviderConfig::Cloudflare(_)
@@ -429,6 +430,7 @@ fn remote_from_workspace_provider(
         InfrastructureProviderConfig::E2b(config) => ("e2b", Some(config.template)),
         InfrastructureProviderConfig::Sprites => ("sprites", None),
         InfrastructureProviderConfig::Daytona(config) => ("daytona", Some(config.image)),
+        InfrastructureProviderConfig::Boat(config) => ("boat", Some(config.snapshot)),
         InfrastructureProviderConfig::Together(config) => ("together", Some(config.snapshot)),
         InfrastructureProviderConfig::Northflank(config) => {
             remote
@@ -502,6 +504,7 @@ fn is_builtin_execution_provider(name: &str) -> bool {
         "microsandbox"
             | "e2b"
             | "daytona"
+            | "boat"
             | "together"
             | "northflank"
             | "cloudflare"
@@ -1321,6 +1324,44 @@ image = "node:22-bookworm"
                 properties: BTreeMap::new(),
             }
         );
+    }
+
+    #[test]
+    fn resolve_execution_uses_named_boat_snapshot() {
+        let tmp = TempDir::new().unwrap();
+        let xdg = xdg_under(tmp.path());
+        write_workspace(
+            tmp.path(),
+            r#"
+[infrastructures.remote_tests]
+kind = "boat"
+snapshot = "node-tests-v1"
+
+[infrastructure.execution]
+provider = "remote_tests"
+"#,
+        );
+        let remote = resolve_execution(tmp.path(), &xdg, None).unwrap();
+        assert_eq!(remote.executor.as_deref(), Some("boat"));
+        assert_eq!(remote.environment.as_deref(), Some("node-tests-v1"));
+        assert_eq!(remote.provider, "remote_tests");
+        assert_eq!(
+            resolve_execution(tmp.path(), &xdg, Some("boat")).unwrap(),
+            RemoteExecution::provider("boat")
+        );
+        assert!(resolve_named_workspace_provider(
+            NamedCacheProviderConfig {
+                name: "remote_tests".into(),
+                account: None,
+                project: None
+            },
+            InfrastructureProviderConfig::Boat(struo_frontend::BoatExecutionProviderConfig {
+                snapshot: "node-tests-v1".into()
+            })
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("not shared caching"));
     }
 
     #[test]

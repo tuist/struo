@@ -72,6 +72,7 @@ impl Response {
 pub(super) struct Request {
     pub method: String,
     pub path: String,
+    pub headers: BTreeMap<String, String>,
     pub body: Vec<u8>,
 }
 
@@ -85,10 +86,33 @@ pub(super) async fn spawn(
 
 pub(super) async fn spawn_with_handler(
     count: usize,
-    mut respond: impl FnMut(&Request) -> Response + Send + 'static,
+    respond: impl FnMut(&Request) -> Response + Send + 'static,
 ) -> (String, tokio::task::JoinHandle<Vec<Request>>) {
+    spawn_with_factory(move |_| (count, respond)).await
+}
+
+pub(super) async fn spawn_with(
+    responses: impl FnOnce(&str) -> Vec<Response>,
+) -> (String, tokio::task::JoinHandle<Vec<Request>>) {
+    spawn_with_factory(move |url| {
+        let responses = responses(url);
+        let count = responses.len();
+        let mut responses = responses.into_iter();
+        (count, move |_: &Request| responses.next().unwrap())
+    })
+    .await
+}
+
+async fn spawn_with_factory<F>(
+    factory: impl FnOnce(&str) -> (usize, F),
+) -> (String, tokio::task::JoinHandle<Vec<Request>>)
+where
+    F: FnMut(&Request) -> Response + Send + 'static,
+{
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
+    let url = format!("http://{address}");
+    let (count, mut respond) = factory(&url);
     let task = tokio::spawn(async move {
         let mut requests = Vec::new();
         for _ in 0..count {
@@ -104,7 +128,7 @@ pub(super) async fn spawn_with_handler(
         }
         requests
     });
-    (format!("http://{address}"), task)
+    (url, task)
 }
 
 async fn read_request(stream: &mut tokio::net::TcpStream) -> Request {
@@ -145,6 +169,7 @@ async fn read_request(stream: &mut tokio::net::TcpStream) -> Request {
     Request {
         method,
         path,
+        headers: header_map,
         body: bytes[body_start..body_end].to_vec(),
     }
 }

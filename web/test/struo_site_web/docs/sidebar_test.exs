@@ -53,6 +53,7 @@ defmodule StruoSiteWeb.Docs.SidebarTest do
     sandboxes = Enum.find(Sidebar.guide_tree(), &(&1.label == "Sandboxes"))
 
     assert Map.new(sandboxes.items, &{&1.label, &1.icon}) == %{
+             "Boat" => nil,
              "Cloudflare" => "cloudflare",
              "Daytona" => "daytona",
              "E2B" => "e2b",

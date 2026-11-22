@@ -271,6 +271,13 @@ SH
     The file "$WORKSPACE/daytona_deleted" should be exist
   End
 
+  It 'requires Boat credentials without provisioning a sandbox'
+    When call env -u BOAT_API_KEY -u STRUO_BOAT_API_KEY "$STRUO_BIN" -C "$WORKSPACE" exec --remote --compute boat -- sh -c 'printf must-not-run'
+    The status should be failure
+    The stdout should equal ''
+    The stderr should include 'set STRUO_BOAT_API_KEY or BOAT_API_KEY'
+  End
+
   It 'resolves Together infrastructure and reports missing sandbox credentials'
     cat > "$WORKSPACE/struo.toml" <<'TOML'
 [infrastructures.remote_tests]

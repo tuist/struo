@@ -106,6 +106,11 @@ pub struct DaytonaExecutionProviderConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoatExecutionProviderConfig {
+    pub snapshot: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TogetherExecutionProviderConfig {
     pub snapshot: String,
 }
@@ -137,6 +142,7 @@ pub enum InfrastructureProviderConfig {
     Microsandbox(MicrosandboxExecutionProviderConfig),
     E2b(E2bExecutionProviderConfig),
     Daytona(DaytonaExecutionProviderConfig),
+    Boat(BoatExecutionProviderConfig),
     Together(TogetherExecutionProviderConfig),
     Northflank(NorthflankExecutionProviderConfig),
     Cloudflare(CloudflareExecutionProviderConfig),
@@ -231,6 +237,9 @@ pub(crate) enum InfrastructureProviderToml {
     },
     Daytona {
         image: String,
+    },
+    Boat {
+        snapshot: String,
     },
     Together {
         snapshot: String,
@@ -346,6 +355,11 @@ impl InfrastructureProviderToml {
                 let image =
                     required_value(display_name, provider_name, "daytona", "image", &image)?;
                 InfrastructureProviderConfig::Daytona(DaytonaExecutionProviderConfig { image })
+            }
+            Self::Boat { snapshot } => {
+                let snapshot =
+                    required_value(display_name, provider_name, "boat", "snapshot", &snapshot)?;
+                InfrastructureProviderConfig::Boat(BoatExecutionProviderConfig { snapshot })
             }
             Self::Together { snapshot } => {
                 let snapshot = required_value(
