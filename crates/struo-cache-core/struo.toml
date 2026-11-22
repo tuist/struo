@@ -8,6 +8,7 @@ srcs = ["src/**/*.rs"]
 crate_name = "struo_cache_core"
 crate_root = "src/lib.rs"
 edition = "2021"
+cargo_package = "struo-cache-core"
 
 [[target]]
 name = "struo_cache_core_unit_tests"
