@@ -43,7 +43,14 @@ fn local_aliases_use_native_runtime_and_environment_resolution() {
     let mut binding = RemoteExecution::provider("native-alias");
     binding.executor = Some("local".to_string());
     assert!(!uses_provider_environment(Some(&binding)).unwrap());
-    for name in ["e2b", "daytona", "together", "microsandbox", "cloudflare"] {
+    for name in [
+        "e2b",
+        "daytona",
+        "together",
+        "sprites",
+        "microsandbox",
+        "cloudflare",
+    ] {
         assert!(uses_provider_environment(Some(&RemoteExecution::provider(name))).unwrap());
     }
 }
@@ -121,74 +128,79 @@ async fn autodetects_annotated_scripts_without_script_flag() {
 
 #[tokio::test]
 async fn remote_script_resolves_named_executor_and_dependency_outputs() {
-    let tmp = TempDir::new().unwrap();
-    let xdg = xdg_under(tmp.path());
-    let script = tmp.path().join("scripts").join("test.sh");
-    fs::create_dir_all(script.parent().unwrap()).unwrap();
-    fs::write(
-        tmp.path().join("struo.toml"),
-        r#"
-[infrastructures.remote_tests]
-kind = "microsandbox"
-image = "node:22.18.0-alpine"
-"#,
-    )
-    .unwrap();
-    fs::write(
-        &script,
-        "#!/bin/sh\n# struo remote \"remote_tests\"\n# struo input \"../tests\"\ntrue\n",
-    )
-    .unwrap();
-    fs::create_dir(tmp.path().join("tests")).unwrap();
+    for (config, executor, environment) in [
+        (
+            "kind = \"microsandbox\"\nimage = \"node:22.18.0-alpine\"",
+            "microsandbox",
+            Some("node:22.18.0-alpine"),
+        ),
+        ("kind = \"sprites\"", "sprites", None),
+    ] {
+        let tmp = TempDir::new().unwrap();
+        let xdg = xdg_under(tmp.path());
+        let script = tmp.path().join("scripts").join("test.sh");
+        fs::create_dir_all(script.parent().unwrap()).unwrap();
+        fs::write(
+            tmp.path().join("struo.toml"),
+            format!("[infrastructures.remote_tests]\n{config}\n"),
+        )
+        .unwrap();
+        fs::write(
+            &script,
+            "#!/bin/sh\n# struo remote \"remote_tests\"\n# struo input \"../tests\"\ntrue\n",
+        )
+        .unwrap();
+        fs::create_dir(tmp.path().join("tests")).unwrap();
 
-    let invocation = script_invocation(
-        tmp.path(),
-        BTreeMap::new(),
-        None,
-        None,
-        None,
-        SandboxMode::Off,
-        Some(&xdg),
-        &["/bin/sh".to_string(), "scripts/test.sh".to_string()],
-    )
-    .await
-    .unwrap();
-    let action = action_from_script_invocation(
-        &invocation,
-        None,
-        &[DependencyFingerprint {
-            script_path: "scripts/install.sh".to_string(),
-            digest: Digest::of_bytes(b"dependencies"),
-            outputs: vec![WorkspacePath::try_from("node_modules").unwrap()],
-        }],
-    )
-    .await
-    .unwrap();
+        let invocation = script_invocation(
+            tmp.path(),
+            BTreeMap::new(),
+            None,
+            None,
+            None,
+            SandboxMode::Off,
+            Some(&xdg),
+            &["/bin/sh".to_string(), "scripts/test.sh".to_string()],
+        )
+        .await
+        .unwrap();
+        let action = action_from_script_invocation(
+            &invocation,
+            None,
+            &[DependencyFingerprint {
+                script_path: "scripts/install.sh".to_string(),
+                digest: Digest::of_bytes(b"dependencies"),
+                outputs: vec![WorkspacePath::try_from("node_modules").unwrap()],
+            }],
+        )
+        .await
+        .unwrap();
 
-    let Action::RunCommand {
-        argv,
-        env,
-        inputs,
-        remote,
-        ..
-    } = action
-    else {
-        panic!("script action should produce a command action");
-    };
-    assert_eq!(argv, vec!["/bin/sh".to_string(), "test.sh".to_string()]);
-    assert!(env.is_empty());
-    assert!(inputs.iter().any(|input| input.as_str() == "node_modules"));
-    assert_eq!(
-        remote,
-        Some(Box::new(RemoteExecution {
-            provider: "remote_tests".to_string(),
-            executor: Some("microsandbox".to_string()),
-            environment: Some("node:22.18.0-alpine".to_string()),
-            account: None,
-            project: None,
-            properties: BTreeMap::new(),
-        }))
-    );
+        let Action::RunCommand {
+            argv,
+            env,
+            inputs,
+            remote,
+            ..
+        } = action
+        else {
+            panic!("script action should produce a command action");
+        };
+        assert_eq!(argv, vec!["/bin/sh".to_string(), "test.sh".to_string()]);
+        assert!(env.is_empty());
+        assert!(inputs.iter().any(|input| input.as_str() == "node_modules"));
+        assert_eq!(
+            remote,
+            Some(Box::new(RemoteExecution {
+                provider: "remote_tests".to_string(),
+                executor: Some(executor.to_string()),
+                environment: environment.map(str::to_string),
+                account: None,
+                project: None,
+                properties: BTreeMap::new(),
+            }))
+        );
+    }
 }
 
 #[tokio::test]

@@ -20,6 +20,7 @@ pub enum Executor {
     Together,
     Northflank,
     Cloudflare,
+    Sprites,
     Docker,
     /// A Tuist project's Remote Execution API service.
     Tuist,
@@ -73,6 +74,7 @@ impl Executor {
             "together" => Ok(Self::Together),
             "northflank" => Ok(Self::Northflank),
             "cloudflare" => Ok(Self::Cloudflare),
+            "sprites" => Ok(Self::Sprites),
             "docker" => Ok(Self::Docker),
             "tuist" => Ok(Self::Tuist),
             adapter => Err(Error::UnsupportedRemoteProvider {
@@ -105,6 +107,9 @@ impl Executor {
                     "Northflank requires an explicit image, project, and properties.deployment_plan"
                         .into(),
             });
+        }
+        if executor == Self::Sprites && binding.environment.is_some() {
+            return Err(executor.unsupported("custom Sprite images or templates"));
         }
         if executor == Self::Docker
             && !binding.environment.as_deref().is_some_and(|image| {
@@ -148,6 +153,7 @@ impl Executor {
             | Self::Together
             | Self::Northflank
             | Self::Cloudflare
+            | Self::Sprites
             | Self::Docker
             | Self::Tuist => None,
         };
@@ -168,6 +174,7 @@ impl Executor {
             | Self::Together
             | Self::Northflank
             | Self::Cloudflare
+            | Self::Sprites
             | Self::Tuist => ResourceDomain::Remote,
         }
     }
@@ -181,6 +188,7 @@ impl Executor {
             Self::Together => "together",
             Self::Northflank => "northflank",
             Self::Cloudflare => "cloudflare",
+            Self::Sprites => "sprites",
             Self::Docker => "docker",
             Self::Tuist => "tuist",
         }

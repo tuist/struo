@@ -18,6 +18,7 @@ mod output_install;
 pub(crate) use output_install::restore_output_snapshots;
 mod path;
 mod phase;
+mod sprites;
 #[cfg(test)]
 mod test_server;
 mod together;
@@ -70,6 +71,7 @@ pub(super) async fn phase_permit(
     })
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn execute_command(
     executor: Executor,
     remote: &RemoteExecution,
@@ -119,6 +121,16 @@ pub(crate) async fn execute_command(
         Executor::Microsandbox => {
             microsandbox::execute_command(remote, command, workspace_root, cache, stream_to_parent)
                 .await
+        }
+        Executor::Sprites => {
+            Box::pin(sprites::execute_command(
+                remote,
+                command,
+                workspace_root,
+                cache,
+                stream_to_parent,
+            ))
+            .await
         }
         Executor::Daytona => {
             Box::pin(daytona::execute_command(

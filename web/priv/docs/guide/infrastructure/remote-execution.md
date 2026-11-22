@@ -5,8 +5,8 @@ repository while the process runs in a fresh environment supplied by an
 infrastructure provider.
 
 The important boundary is the action, not the test framework. Vitest is the
-program being run. Docker, Microsandbox, E2B, Daytona, and
-[Northflank](/guide/infrastructure/northflank) are execution providers.
+program being run. Docker, Microsandbox, E2B, Daytona,
+[Northflank](/guide/infrastructure/northflank), and Sprites are execution providers.
 
 Declared build graphs can also dispatch command actions with
 `struo build --remote --compute <provider>`. Struo keeps dependency scheduling and
@@ -29,7 +29,7 @@ For each remote action, Struo performs this lifecycle:
    safe symbolic links. A link is safe when it resolves inside a declared
    input or to a directory that holds declared inputs, such as a workspace
    package linked from `node_modules`.
-4. Transfer that package into a clean `/workspace` directory.
+4. Transfer that package into a clean workspace directory in the sandbox.
 5. Run the declared argument list with its working directory, selected
    environment variables, resources, and timeout.
 6. After a successful exit, retrieve only the declared outputs into a local
@@ -89,6 +89,8 @@ across fresh containers with a locally prepared image. Use
 a supported local computer. Use [E2B](/guide/infrastructure/e2b) when you have
 a prepared hosted template. Use [Daytona](/guide/infrastructure/daytona) when
 you want Struo to start from a container image.
+Use [Sprites](/guide/infrastructure/sprites) for a disposable Fly.io Linux
+environment without a custom image or template.
 Use [Tuist](/guide/infrastructure/tuist#run-actions-on-tuist-workers) to run
 graph actions on a Tuist project's remote execution workers.
 

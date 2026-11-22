@@ -135,6 +135,7 @@ pub enum InfrastructureProviderConfig {
     Together(TogetherExecutionProviderConfig),
     Northflank(NorthflankExecutionProviderConfig),
     Cloudflare(CloudflareExecutionProviderConfig),
+    Sprites,
     Docker(DockerExecutionProviderConfig),
     Tuist(TuistCacheProviderConfig),
     ObjectStore(ObjectStoreCacheProviderConfig),
@@ -235,6 +236,7 @@ pub(crate) enum InfrastructureProviderToml {
     Cloudflare {
         image: String,
     },
+    Sprites,
     Docker {
         image: String,
     },
@@ -310,6 +312,7 @@ impl InfrastructureProviderToml {
     ) -> Result<InfrastructureProviderConfig> {
         Ok(match self {
             Self::Local => InfrastructureProviderConfig::Local,
+            Self::Sprites => InfrastructureProviderConfig::Sprites,
             Self::Microsandbox { image } => {
                 let image = image.trim().to_string();
                 if image.is_empty() {

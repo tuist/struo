@@ -197,7 +197,8 @@ defmodule StruoSiteWeb.Docs.Sidebar do
             label: "Cloudflare",
             slug: "/docs/guide/infrastructure/cloudflare",
             icon: "cloudflare"
-          }
+          },
+          %Item{label: "Sprites", slug: "/docs/guide/infrastructure/sprites"}
         ]
       },
       %Group{

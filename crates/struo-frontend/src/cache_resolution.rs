@@ -189,6 +189,7 @@ fn resolve_named_workspace_provider(
     match provider {
         InfrastructureProviderConfig::Local => Ok(ResolvedCacheProviderConfig::Local),
         InfrastructureProviderConfig::Microsandbox(_)
+        | InfrastructureProviderConfig::Sprites
         | InfrastructureProviderConfig::E2b(_)
         | InfrastructureProviderConfig::Docker(_)
         | InfrastructureProviderConfig::Together(_)

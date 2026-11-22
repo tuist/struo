@@ -131,7 +131,14 @@ pub(in crate::remote) async fn reconcile<P: Provider>(
 /// exact marker are deleted; journaled ids it does not report are left alone.
 async fn repair<P: Provider>(provider: &P, mut entry: Entry, report: &mut Report) {
     let nonce = entry.nonce().to_string();
-    let ids = match provider.find(&nonce).await {
+    let ids = match provider
+        .find_owned(
+            &nonce,
+            &entry.record().sandbox_ids,
+            &entry.record().credential,
+        )
+        .await
+    {
         Ok(Lookup::Found(ids)) => ids,
         Ok(Lookup::Absent) if settled(entry.record(), provider) => {
             tracing::debug!(provider = P::NAME, %nonce, phase = ?entry.record().phase, "no sandbox carries the marker");

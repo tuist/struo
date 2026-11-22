@@ -132,7 +132,16 @@ image preparation and coordinator requirements.
 Together requires an existing snapshot ID and organization sandbox access. See
 [Together Code Sandbox](/guide/infrastructure/together) for setup and lifecycle.
 
-Docker, E2B, Daytona, Together, Northflank, and Microsandbox provide execution only. Tuist provides shared
+Sprites uses its standard hosted environment without an image or template:
+
+```toml
+[infrastructures.sprite_tests]
+kind = "sprites"
+```
+
+See [Sprites](/guide/infrastructure/sprites) for credentials and disposal.
+
+Docker, E2B, Daytona, Together, Northflank, Sprites, and Microsandbox provide execution only. Tuist provides shared
 caching. Bind each capability independently when a workspace uses both.
 
 ## Targets

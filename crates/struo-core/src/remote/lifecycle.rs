@@ -51,6 +51,16 @@ pub(in crate::remote) trait Provider: Clone + Send + Sync + 'static {
     /// Lists sandboxes carrying `nonce` under [`MARKER_KEY`].
     fn find(&self, nonce: &str) -> impl Future<Output = Result<Lookup>> + Send;
 
+    /// Resolves ownership when a provider needs recorded identity as well as a marker.
+    fn find_owned(
+        &self,
+        nonce: &str,
+        _ids: &[String],
+        _credential: &str,
+    ) -> impl Future<Output = Result<Lookup>> + Send {
+        self.find(nonce)
+    }
+
     /// Deletes a sandbox. A missing sandbox counts as deleted.
     fn delete(&self, id: &str) -> impl Future<Output = Result<()>> + Send;
 }

@@ -338,6 +338,7 @@ fn resolve_named_workspace_provider(
     match provider {
         InfrastructureProviderConfig::Local => Ok(ResolvedCacheProviderConfig::Local),
         InfrastructureProviderConfig::Microsandbox(_)
+        | InfrastructureProviderConfig::Sprites
         | InfrastructureProviderConfig::E2b(_)
         | InfrastructureProviderConfig::Daytona(_)
         | InfrastructureProviderConfig::Together(_)
@@ -451,6 +452,14 @@ fn remote_from_workspace_provider(
             account: binding_account,
             project: binding_project,
         },
+        InfrastructureProviderConfig::Sprites => RemoteExecution {
+            provider: name,
+            properties,
+            executor: Some("sprites".to_string()),
+            environment: None,
+            account: binding_account,
+            project: binding_project,
+        },
         InfrastructureProviderConfig::Daytona(config) => RemoteExecution {
             provider: name,
             properties,
@@ -553,7 +562,14 @@ fn remote_from_binding(binding: ExecutionProviderConfig) -> RemoteExecution {
 fn is_builtin_execution_provider(name: &str) -> bool {
     matches!(
         name,
-        "microsandbox" | "e2b" | "daytona" | "together" | "northflank" | "cloudflare" | "docker"
+        "microsandbox"
+            | "e2b"
+            | "daytona"
+            | "together"
+            | "northflank"
+            | "cloudflare"
+            | "sprites"
+            | "docker"
     )
 }
 
@@ -1450,6 +1466,29 @@ image = "node-pinned-v1"
         assert_eq!(remote.provider, "remote_tests");
         assert_eq!(remote.executor.as_deref(), Some("cloudflare"));
         assert_eq!(remote.environment.as_deref(), Some("node-pinned-v1"));
+    }
+
+    #[test]
+    fn resolve_execution_uses_named_sprites_environment() {
+        let tmp = TempDir::new().unwrap();
+        let xdg = xdg_under(tmp.path());
+        write_workspace(
+            tmp.path(),
+            r#"
+[infrastructures.remote_tests]
+kind = "sprites"
+[infrastructure.execution]
+provider = "remote_tests"
+"#,
+        );
+        let remote = resolve_execution(tmp.path(), &xdg, None).unwrap();
+        assert_eq!(remote.provider, "remote_tests");
+        assert_eq!(remote.executor.as_deref(), Some("sprites"));
+        assert!(remote.environment.is_none());
+        assert_eq!(
+            resolve_execution(tmp.path(), &xdg, Some("sprites")).unwrap(),
+            RemoteExecution::provider("sprites")
+        );
     }
 
     #[test]

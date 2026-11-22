@@ -455,6 +455,7 @@ async fn execute_command(
             | Executor::Together
             | Executor::Northflank
             | Executor::Cloudflare
+            | Executor::Sprites
             | Executor::Docker
             | Executor::Tuist,
             _,
