@@ -170,6 +170,12 @@ defmodule StruoSiteWeb.Docs.Sidebar do
           %Item{label: "Docker", slug: "/docs/guide/infrastructure/docker"},
           %Item{label: "Object Storage", slug: "/docs/guide/infrastructure/object-storage"},
           %Item{label: "HTTP Cache", slug: "/docs/guide/infrastructure/http-cache"},
+          %Item{label: "Tuist", slug: "/docs/guide/infrastructure/tuist", icon: "tuist"}
+        ]
+      },
+      %Group{
+        label: "Sandboxes",
+        items: [
           %Item{
             label: "Microsandbox",
             slug: "/docs/guide/infrastructure/microsandbox",
@@ -181,9 +187,12 @@ defmodule StruoSiteWeb.Docs.Sidebar do
             slug: "/docs/guide/infrastructure/daytona",
             icon: "daytona"
           },
-          %Item{label: "Together", slug: "/docs/guide/infrastructure/together"},
-          %Item{label: "Northflank", slug: "/docs/guide/infrastructure/northflank"},
-          %Item{label: "Tuist", slug: "/docs/guide/infrastructure/tuist", icon: "tuist"}
+          %Item{label: "Together", slug: "/docs/guide/infrastructure/together", icon: "together"},
+          %Item{
+            label: "Northflank",
+            slug: "/docs/guide/infrastructure/northflank",
+            icon: "northflank"
+          }
         ]
       },
       %Group{

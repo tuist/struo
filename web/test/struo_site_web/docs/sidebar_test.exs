@@ -45,29 +45,27 @@ defmodule StruoSiteWeb.Docs.SidebarTest do
     refute Sidebar.item_or_children_active?(parent, "/docs/reference/prelude/other")
   end
 
-  test "infrastructure providers include their company logos" do
+  test "sandbox providers have their own category and company logos" do
     infrastructure =
       Sidebar.guide_tree()
       |> Enum.find(&(&1.label == "Infrastructure"))
 
-    assert Map.new(infrastructure.items, &{&1.label, &1.icon}) == %{
-             "Artifacts" => nil,
-             "Become a Provider" => nil,
-             "Buildkite" => nil,
-             "Connect A Project" => nil,
+    sandboxes = Enum.find(Sidebar.guide_tree(), &(&1.label == "Sandboxes"))
+
+    assert Map.new(sandboxes.items, &{&1.label, &1.icon}) == %{
              "Daytona" => "daytona",
-             "Docker" => nil,
              "E2B" => "e2b",
-             "HTTP Cache" => nil,
              "Microsandbox" => "microsandbox",
-             "Northflank" => nil,
-             "Object Storage" => nil,
-             "Overview" => nil,
-             "Remote Execution" => nil,
-             "Together" => nil,
-             "Triggers (Experimental)" => nil,
-             "Tuist" => "tuist"
+             "Northflank" => "northflank",
+             "Together" => "together"
            }
+
+    refute Enum.any?(
+             infrastructure.items,
+             &(&1.slug in Enum.map(sandboxes.items, fn item -> item.slug end))
+           )
+
+    assert Enum.find(infrastructure.items, &(&1.label == "Tuist")).icon == "tuist"
   end
 
   test "natively supported toolchains live in their own group with logos" do
