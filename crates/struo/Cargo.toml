@@ -13,6 +13,7 @@ path = "src/lib.rs"
 crate-type = ["rlib", "staticlib", "cdylib"]
 
 [dependencies]
+struo-cache-core.workspace = true
 struo-cas.workspace = true
 struo-core.workspace = true
 struo-frontend.workspace = true

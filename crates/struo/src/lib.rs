@@ -15,13 +15,12 @@
 
 #![deny(missing_docs)]
 
-pub use action_key::ActionKeyBuilder;
 pub use cache::{digest_from_hex, Cache, Error, Result};
+pub use struo_cache_core::ActionKeyBuilder;
 pub use struo_cas::{
     ActionResult, CacheProvider, Digest, StagedBlob, StagedBlobReader, Stats, TuistCacheConfig,
 };
 
-mod action_key;
 mod cache;
 
 // The C ABI entry points are the workspace's only sanctioned use of

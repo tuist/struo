@@ -10,6 +10,26 @@
   },
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
+  "browser": "lib/browser.mjs",
+  "exports": {
+    ".": {
+      "browser": {
+        "types": "./lib/browser.d.mts",
+        "default": "./lib/browser.mjs"
+      },
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./browser": {
+      "types": "./lib/browser.d.mts",
+      "default": "./lib/browser.mjs"
+    },
+    "./browser/execution": {
+      "types": "./lib/execution.d.mts",
+      "default": "./lib/execution.mjs"
+    },
+    "./package.json": "./package.json"
+  },
   "files": [
     "lib",
     "prebuilds"
@@ -21,6 +41,13 @@
     "koffi": "^3.0.0"
   },
   "scripts": {
-    "test": "node test.js"
+    "test": "node test.js",
+    "test:browser": "node --test browser.test.mjs execution.test.mjs",
+    "test:types": "tsc -p tsconfig.browser.json && tsc --noEmit --strict --target ES2022 --module NodeNext --types node lib/index.d.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "playwright": "^1.65.1",
+    "typescript": "^7.0.2"
   }
 }

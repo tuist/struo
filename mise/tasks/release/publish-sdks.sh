@@ -41,6 +41,11 @@ if [[ ! -d packages/js/prebuilds || ! -d packages/ruby/prebuilds ]]; then
   exit 1
 fi
 
+if [[ ! -f packages/js/lib/wasm/struo_cache_core_bg.wasm || ! -f packages/js/lib/wasm/struo_cache_core.js ]]; then
+  echo "Browser SDK assets are missing; run sdk:build-browser first" >&2
+  exit 1
+fi
+
 stage_dir="$(mktemp -d)"
 trap 'rm -rf "${stage_dir}"' EXIT
 

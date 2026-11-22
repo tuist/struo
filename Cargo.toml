@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/struo",
+    "crates/struo-cache-core",
     "crates/struo-cli",
     "crates/struo-core",
     "crates/struo-cas",
@@ -20,6 +21,7 @@ repository = "https://github.com/tuist/struo"
 
 [workspace.dependencies]
 struo = { version = "0.0.0", path = "crates/struo" }
+struo-cache-core = { version = "0.0.0", path = "crates/struo-cache-core" }
 struo-core = { version = "0.0.0", path = "crates/struo-core", default-features = false }
 struo-cas = { version = "0.0.0", path = "crates/struo-cas" }
 struo-frontend = { version = "0.0.0", path = "crates/struo-frontend" }

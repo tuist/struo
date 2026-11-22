@@ -1,0 +1,26 @@
+[package]
+name = "struo-cache-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Portable Struo content digests and action keys"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+browser = ["dep:wasm-bindgen"]
+
+[dependencies]
+blake3.workspace = true
+hex.workspace = true
+serde.workspace = true
+wasm-bindgen = { version = "=0.2.130", optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

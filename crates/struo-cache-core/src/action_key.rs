@@ -1,4 +1,4 @@
-use struo_cas::Digest;
+use crate::Digest;
 
 // Released SDK keys hash this domain, so it keeps its original `once` name to
 // keep existing keys stable across the rename.
@@ -53,9 +53,8 @@ impl ActionKeyBuilder {
 
     /// Consume the builder and return the action key.
     ///
-    /// Use the result as the action digest passed to
-    /// [`Cache::get_action_result`](crate::Cache::get_action_result) and
-    /// [`Cache::put_action_result`](crate::Cache::put_action_result).
+    /// Use the result as the action digest passed to a cache client's
+    /// `get_action_result` and `put_action_result` methods.
     pub fn finish(self) -> Digest {
         Digest::from_bytes(*self.hasher.finalize().as_bytes())
     }

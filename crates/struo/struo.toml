@@ -2,6 +2,7 @@
 name = "struo"
 kind = "rust_library"
 deps = [
+  "crates/struo-cache-core/struo_cache_core",
   "crates/struo-cas/struo_cas",
   "crates/struo-host-tree/struo_host_tree",
   "crates/struo-core/struo_core",
@@ -26,6 +27,7 @@ CARGO_PKG_VERSION = "0.0.0"
 name = "struo_unit_tests"
 kind = "rust_test"
 deps = [
+  "crates/struo-cache-core/struo_cache_core",
   "crates/struo-cas/struo_cas",
   "crates/struo-host-tree/struo_host_tree",
   "crates/struo-core/struo_core",

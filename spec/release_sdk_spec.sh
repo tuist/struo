@@ -20,6 +20,7 @@ Describe 'release SDK packaging scripts'
 
   setup_release_graph_workspace() {
     mkdir -p \
+      "$WORKSPACE/crates/struo-cache-core" \
       "$WORKSPACE/crates/struo-cas" \
       "$WORKSPACE/crates/struo-core" \
       "$WORKSPACE/crates/struo-frontend" \
@@ -32,6 +33,7 @@ Describe 'release SDK packaging scripts'
       "$WORKSPACE/Cargo.toml" \
       "$WORKSPACE/crates/struo/Cargo.toml" \
       "$WORKSPACE/struo.toml" \
+      "$WORKSPACE/crates/struo-cache-core/struo.toml" \
       "$WORKSPACE/crates/struo-cas/struo.toml" \
       "$WORKSPACE/crates/struo-core/struo.toml" \
       "$WORKSPACE/crates/struo-frontend/struo.toml" \
@@ -282,10 +284,27 @@ LOCK
   setup_publishable_packages() {
     mkdir -p \
       "$WORKSPACE/packages/js/prebuilds" \
+      "$WORKSPACE/packages/js/lib/wasm" \
       "$WORKSPACE/packages/ruby/prebuilds"
+    touch \
+      "$WORKSPACE/packages/js/lib/wasm/struo_cache_core_bg.wasm" \
+      "$WORKSPACE/packages/js/lib/wasm/struo_cache_core.js"
     printf '{"name":"@tuist/struo","version":"0.0.0"}\n' > "$WORKSPACE/packages/js/package.json"
     printf 'Gem::Specification.new\n' > "$WORKSPACE/packages/ruby/struo.gemspec"
   }
+
+  It 'checks browser assets before publishing'
+    setup_release_path
+    setup_publishable_packages
+    write_stub gem '#!/usr/bin/env bash'
+    write_stub npm '#!/usr/bin/env bash'
+    rm "$WORKSPACE/packages/js/lib/wasm/struo_cache_core_bg.wasm"
+    cd "$WORKSPACE"
+
+    When call "$REPO_ROOT/mise/tasks/release/publish-sdks.sh" --version 0.1.0
+    The status should be failure
+    The stderr should include 'Browser SDK assets are missing; run sdk:build-browser first'
+  End
 
   It 'skips registries that already carry the version'
     setup_release_path

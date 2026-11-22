@@ -22,7 +22,9 @@ The language libraries intentionally expose the same small cache surface:
 - Remove an action result without deleting its referenced payloads.
 - Inspect local cache statistics.
 
-They do not execute commands or load the repository graph.
+The cache entry points do not execute commands or load the repository graph.
+JavaScript also offers a separate [browser execution entry point](/guide/sdk/javascript#browser-execution)
+for same-origin tab handlers and OAuth2-authenticated GitLab pipelines.
 
 ## Choose A Language
 
@@ -31,7 +33,7 @@ They do not execute commands or load the repository graph.
 | Rust | `struo` crate | Asynchronous | [Rust](/guide/sdk/rust) |
 | Swift | `Struo.xcframework` and the matching Swift wrapper | Asynchronous | [Swift](/guide/sdk/swift) |
 | Ruby | `struo` gem | Synchronous | [Ruby](/guide/sdk/ruby) |
-| JavaScript | `@tuist/struo` package for Node.js | Promise-based | [JavaScript](/guide/sdk/javascript) |
+| JavaScript | `@tuist/struo` package for Node.js and browsers | Promise-based | [JavaScript](/guide/sdk/javascript) |
 | C | `libstruo` and `struo.h` | Synchronous | [C](/guide/sdk/c) |
 
 Choose the binding used by the process that owns the integration. All
@@ -39,6 +41,11 @@ bindings use compatible digests and action-result concepts, so separate tools
 can share a configured cache without translating records.
 
 ## Choose A Cache
+
+In a browser, await Wasm initialization and open an IndexedDB cache with an
+optional database name. Browser caches share content digests and action keys
+with native clients, but do not expose filesystem methods or workspace
+provider configuration. See the [browser guide](/guide/sdk/javascript#browser-cache).
 
 The default constructor preserves the lightweight local behavior of earlier
 releases. Use an explicit local root for test isolation or caller-owned cache

@@ -1,0 +1,22 @@
+[[target]]
+name = "struo_cache_core"
+kind = "rust_library"
+deps = ["cargo_dependencies"]
+srcs = ["src/**/*.rs"]
+
+[target.attrs]
+crate_name = "struo_cache_core"
+crate_root = "src/lib.rs"
+edition = "2021"
+
+[[target]]
+name = "struo_cache_core_unit_tests"
+kind = "rust_test"
+deps = ["cargo_dependencies"]
+srcs = ["src/**/*.rs"]
+
+[target.attrs]
+crate_name = "struo_cache_core"
+crate_root = "src/lib.rs"
+edition = "2021"
+cargo_package = "struo-cache-core"

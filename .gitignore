@@ -8,6 +8,7 @@
 /third_party/rust/vendor/
 /packages/js/node_modules
 /packages/js/prebuilds
+/packages/js/lib/wasm
 /packages/ruby/prebuilds
 /packages/ruby/*.gem
 *.swp

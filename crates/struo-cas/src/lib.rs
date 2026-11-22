@@ -15,7 +15,6 @@
 
 mod blob;
 mod budget;
-mod digest;
 mod error;
 mod filesystem;
 mod gc;
@@ -32,7 +31,6 @@ pub use budget::{
     TransferBudget, DEFAULT_TRANSFER_MEMORY_BYTES, DEFAULT_TRANSFER_STAGING_BYTES,
     MIN_TRANSFER_MEMORY_BYTES,
 };
-pub use digest::Digest;
 pub use error::{Error, ErrorKind, Result};
 pub use gc::GcReport;
 pub use model::{ActionResult, Stats};
@@ -42,6 +40,7 @@ pub use remote::{
     STRUO_CACHE_READ_ONLY_ENV,
 };
 pub use store::{Cas, StagedBlob, StagedBlobReader};
+pub use struo_cache_core::Digest;
 pub use tuist::{
     Executed, ProjectCreateError, RemoteProject, TuistAuth, TuistAuthPrompt, TuistCacheConfig,
     TuistExecution, TuistProjects, DEFAULT_EXECUTION_TIMEOUT, TUIST_APP_OAUTH_CLIENT_ID,

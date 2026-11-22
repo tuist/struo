@@ -37,6 +37,7 @@ done
 
 manifest_files=(
   struo.toml
+  crates/struo-cache-core/struo.toml
   crates/struo-cas/struo.toml
   crates/struo-host-tree/struo.toml
   crates/struo-core/struo.toml
@@ -124,12 +125,35 @@ dep_rustc_flags = ${dependency_flags}
 # struo release generated targets end
 EOF
 
+cat >>crates/struo-cache-core/struo.toml <<EOF
+# struo release generated targets start
+[[target]]
+name = "struo_cache_core_${suffix}"
+kind = "rust_library"
+deps = ["${dependency_target}"]
+srcs = ["src/**/*.rs"]
+
+[target.attrs]
+crate_name = "struo_cache_core"
+crate_root = "src/lib.rs"
+edition = "2021"
+target = "${target}"
+rustc_flags = ${crate_flags}
+cargo_package = "struo-cache-core"
+
+[target.attrs.rustc_env]
+CARGO_MANIFEST_DIR = "crates/struo-cache-core"
+CARGO_PKG_NAME = "struo-cache-core"
+CARGO_PKG_VERSION = "${version}"
+# struo release generated targets end
+EOF
+
 cat >>crates/struo-cas/struo.toml <<EOF
 # struo release generated targets start
 [[target]]
 name = "struo_cas_${suffix}"
 kind = "rust_library"
-deps = ["${dependency_target}"]
+deps = ["crates/struo-cache-core/struo_cache_core_${suffix}", "${dependency_target}"]
 srcs = ["src/**/*.rs"]
 
 [target.attrs]
@@ -283,6 +307,7 @@ cat >>crates/struo/struo.toml <<EOF
 name = "struo_cdylib_${suffix}"
 kind = "rust_library"
 deps = [
+  "crates/struo-cache-core/struo_cache_core_${suffix}",
   "crates/struo-cas/struo_cas_${suffix}",
   "crates/struo-host-tree/struo_host_tree_${suffix}",
   "crates/struo-core/struo_core_${suffix}",
@@ -309,6 +334,7 @@ CARGO_PKG_VERSION = "${version}"
 name = "struo_staticlib_${suffix}"
 kind = "rust_library"
 deps = [
+  "crates/struo-cache-core/struo_cache_core_${suffix}",
   "crates/struo-cas/struo_cas_${suffix}",
   "crates/struo-host-tree/struo_host_tree_${suffix}",
   "crates/struo-core/struo_core_${suffix}",

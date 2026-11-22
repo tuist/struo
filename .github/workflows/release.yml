@@ -322,7 +322,11 @@ jobs:
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151
         with:
           version: ${{ env.MISE_VERSION }}
-          install_args: "ruby node"
+          install_args: "ruby node rust"
+      - name: Build browser SDK
+        run: mise run sdk:build-browser
+        env:
+          STRUO_RELEASE_VERSION: ${{ needs.detect.outputs.next-version }}
       # RubyGems also uses trusted publishing: this exchanges the workflow's
       # OIDC identity for a short-lived key and exports it as
       # GEM_HOST_API_KEY. The trusted publisher on rubygems.org pins the
