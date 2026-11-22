@@ -150,7 +150,7 @@ async fn mock(
                         continue;
                     }
                     assert!(path.contains("/fs/read?"));
-                    #[cfg(unix)]
+                    #[cfg(target_os = "linux")]
                     {
                         use std::os::unix::fs::symlink;
                         let workspace = tempfile::tempdir().unwrap();
@@ -179,7 +179,7 @@ async fn mock(
                         socket.write_all(&response).await.unwrap();
                         continue;
                     }
-                    #[cfg(not(unix))]
+                    #[cfg(not(target_os = "linux"))]
                     {
                         let mut archive = tar::Builder::new(Vec::new());
                         let bytes = b"passed\0\xff";
@@ -292,7 +292,7 @@ async fn transfers_declared_dependencies_and_outputs_and_preserves_streams_and_e
                 std::fs::read(workspace.path().join("reports/result.bin")).unwrap(),
                 b"passed\0\xff"
             );
-            #[cfg(unix)]
+            #[cfg(target_os = "linux")]
             {
                 use std::os::unix::fs::MetadataExt;
                 let reports = workspace.path().join("reports");
