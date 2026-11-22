@@ -27,6 +27,7 @@ mod test_server;
 mod together;
 #[cfg(any(target_os = "linux", target_vendor = "apple"))]
 mod tuist;
+mod vercel;
 
 pub(crate) struct PreparedCommand<'a> {
     pub lease: Option<ExecutionPermit>,
@@ -147,6 +148,16 @@ pub(crate) async fn execute_command(
         }
         Executor::Daytona => {
             Box::pin(daytona::execute_command(
+                remote,
+                command,
+                workspace_root,
+                cache,
+                stream_to_parent,
+            ))
+            .await
+        }
+        Executor::Vercel => {
+            Box::pin(vercel::execute_command(
                 remote,
                 command,
                 workspace_root,

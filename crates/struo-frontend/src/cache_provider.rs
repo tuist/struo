@@ -111,6 +111,11 @@ pub struct BoatExecutionProviderConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VercelExecutionProviderConfig {
+    pub runtime: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TogetherExecutionProviderConfig {
     pub snapshot: String,
 }
@@ -143,6 +148,7 @@ pub enum InfrastructureProviderConfig {
     E2b(E2bExecutionProviderConfig),
     Daytona(DaytonaExecutionProviderConfig),
     Boat(BoatExecutionProviderConfig),
+    Vercel(VercelExecutionProviderConfig),
     Together(TogetherExecutionProviderConfig),
     Northflank(NorthflankExecutionProviderConfig),
     Cloudflare(CloudflareExecutionProviderConfig),
@@ -240,6 +246,9 @@ pub(crate) enum InfrastructureProviderToml {
     },
     Boat {
         snapshot: String,
+    },
+    Vercel {
+        runtime: String,
     },
     Together {
         snapshot: String,
@@ -360,6 +369,11 @@ impl InfrastructureProviderToml {
                 let snapshot =
                     required_value(display_name, provider_name, "boat", "snapshot", &snapshot)?;
                 InfrastructureProviderConfig::Boat(BoatExecutionProviderConfig { snapshot })
+            }
+            Self::Vercel { runtime } => {
+                let runtime =
+                    required_value(display_name, provider_name, "vercel", "runtime", &runtime)?;
+                InfrastructureProviderConfig::Vercel(VercelExecutionProviderConfig { runtime })
             }
             Self::Together { snapshot } => {
                 let snapshot = required_value(

@@ -43,7 +43,7 @@ pub use cache_provider::{
     InfrastructureProviderConfig, MicrosandboxExecutionProviderConfig, NamedCacheProviderConfig,
     NorthflankExecutionProviderConfig, ObjectStoreCacheProviderConfig,
     OpenSandboxExecutionProviderConfig, TogetherExecutionProviderConfig, TuistCacheProviderConfig,
-    DEFAULT_TUIST_URL,
+    VercelExecutionProviderConfig, DEFAULT_TUIST_URL,
 };
 pub use cache_resolution::{
     resolve_cache_provider, ResolvedCacheProviderConfig, ResolvedHttpCacheProviderConfig,

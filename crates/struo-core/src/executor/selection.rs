@@ -23,6 +23,7 @@ pub enum Executor {
     Cloudflare,
     Sprites,
     OpenSandbox,
+    Vercel,
     Docker,
     /// A Tuist project's Remote Execution API service.
     Tuist,
@@ -42,6 +43,16 @@ impl Executor {
             return Ok(Self::Local);
         };
         let executor = Self::from_binding(binding)?;
+        if executor == Self::Vercel
+            && [&binding.account, &binding.project]
+                .iter()
+                .any(|value| value.as_deref().is_none_or(|value| value.trim().is_empty()))
+        {
+            return Err(Error::RemoteProviderConfig {
+                provider: binding.provider.clone(),
+                message: "Vercel requires nonempty account and project in the execution binding before cache lookup; the CLI can bind VERCEL_TEAM_ID and VERCEL_PROJECT_ID".into(),
+            });
+        }
         if executor != Self::Local {
             if *network == NetworkPolicy::Deny {
                 return Err(executor.unsupported("network denial"));
@@ -79,13 +90,14 @@ impl Executor {
             "cloudflare" => Ok(Self::Cloudflare),
             "sprites" => Ok(Self::Sprites),
             "opensandbox" => Ok(Self::OpenSandbox),
+            "vercel" => Ok(Self::Vercel),
             "docker" => Ok(Self::Docker),
             "tuist" => Ok(Self::Tuist),
             adapter => Err(Error::UnsupportedRemoteProvider {
                 provider: adapter.to_string(),
             }),
         }?;
-        if !matches!(executor, Self::Tuist | Self::Northflank)
+        if !matches!(executor, Self::Tuist | Self::Northflank | Self::Vercel)
             && (binding.account.is_some() || binding.project.is_some())
         {
             return Err(executor.unsupported("explicit account/project execution scoping"));
@@ -160,6 +172,7 @@ impl Executor {
             | Self::Cloudflare
             | Self::Sprites
             | Self::OpenSandbox
+            | Self::Vercel
             | Self::Docker
             | Self::Tuist => None,
         };
@@ -183,6 +196,7 @@ impl Executor {
             | Self::Cloudflare
             | Self::Sprites
             | Self::OpenSandbox
+            | Self::Vercel
             | Self::Tuist => ResourceDomain::Remote,
         }
     }
@@ -199,6 +213,7 @@ impl Executor {
             Self::Cloudflare => "cloudflare",
             Self::Sprites => "sprites",
             Self::OpenSandbox => "opensandbox",
+            Self::Vercel => "vercel",
             Self::Docker => "docker",
             Self::Tuist => "tuist",
         }
@@ -226,6 +241,11 @@ mod tests {
         assert_eq!(Executor::E2b.resource_domain(), ResourceDomain::Remote);
         assert_eq!(Executor::Daytona.resource_domain(), ResourceDomain::Remote);
         assert_eq!(Executor::Boat.resource_domain(), ResourceDomain::Remote);
+        assert_eq!(Executor::Vercel.resource_domain(), ResourceDomain::Remote);
+        let mut binding = RemoteExecution::provider("vercel");
+        binding.account = Some("team-a".into());
+        binding.project = Some("project-a".into());
+        assert_eq!(Executor::from_binding(&binding).unwrap(), Executor::Vercel);
         assert_eq!(Executor::Together.resource_domain(), ResourceDomain::Remote);
         assert_eq!(
             Executor::Cloudflare.resource_domain(),

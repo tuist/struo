@@ -52,6 +52,7 @@ fn local_aliases_use_native_runtime_and_environment_resolution() {
         "microsandbox",
         "cloudflare",
         "opensandbox",
+        "vercel",
     ] {
         assert!(uses_provider_environment(Some(&RemoteExecution::provider(name))).unwrap());
     }
@@ -141,6 +142,11 @@ async fn remote_script_resolves_named_executor_and_dependency_outputs() {
             "kind = \"boat\"\nsnapshot = \"node-tests-v1\"",
             "boat",
             Some("node-tests-v1"),
+        ),
+        (
+            "kind = \"vercel\"\nruntime = \"node24\"",
+            "vercel",
+            Some("node24"),
         ),
     ] {
         let tmp = TempDir::new().unwrap();

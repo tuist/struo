@@ -258,6 +258,12 @@ SH
     The path "$WORKSPACE/node_modules/.bin/vitest" should be symlink
   End
 
+  It 'requires credentials for Vercel Sandbox execution'
+    When call env -u VERCEL_TOKEN VERCEL_TEAM_ID=team-test VERCEL_PROJECT_ID=prj-test "$STRUO_BIN" -C "$WORKSPACE" exec --remote --compute vercel -- node --version
+    The status should not equal 0
+    The stderr should include 'set VERCEL_TOKEN'
+  End
+
   It 'runs a command through the daytona compute provider'
     copy_exec_fixture daytona
     start_python_server "$WORKSPACE/daytona_api.py" "$WORKSPACE/daytona_deleted" > "$WORKSPACE/daytona_port" &

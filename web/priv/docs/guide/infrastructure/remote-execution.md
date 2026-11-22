@@ -6,7 +6,8 @@ infrastructure provider.
 
 The important boundary is the action, not the test framework. Vitest is the
 program being run. Docker, Microsandbox, E2B, Daytona, Boat,
-[Northflank](/guide/infrastructure/northflank), and Sprites are execution providers.
+[Northflank](/guide/infrastructure/northflank), Sprites, and
+[Vercel Sandbox](/guide/infrastructure/vercel) are execution providers.
 
 Declared build graphs can also dispatch command actions with
 `struo build --remote --compute <provider>`. Struo keeps dependency scheduling and

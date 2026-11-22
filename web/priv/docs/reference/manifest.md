@@ -128,6 +128,10 @@ deployment_plan = "nf-compute-200"
 [infrastructures.self_hosted]
 kind = "opensandbox"
 image = "node:22.18.0-bookworm"
+
+[infrastructures.vercel_tests]
+kind = "vercel"
+runtime = "node24"
 ```
 
 Northflank also requires a `project` in the execution binding. For team-scoped
@@ -152,7 +156,10 @@ See [Sprites](/guide/infrastructure/sprites) for credentials and disposal.
 Boat uses a saved snapshot rather than an OCI image. See
 [Boat execution](/guide/infrastructure/boat) for snapshot preparation and cleanup.
 
-Docker, E2B, Daytona, Boat, Together, Northflank, Sprites, OpenSandbox, and Microsandbox provide execution only. Tuist provides shared
+Vercel selects a provider-managed runtime rather than an immutable image. See
+[Vercel Sandbox](/guide/infrastructure/vercel) for authentication and team/project scope.
+
+Docker, E2B, Daytona, Boat, Together, Northflank, Sprites, OpenSandbox, Vercel Sandbox, and Microsandbox provide execution only. Tuist provides shared
 caching. Bind each capability independently when a workspace uses both.
 
 ## Targets

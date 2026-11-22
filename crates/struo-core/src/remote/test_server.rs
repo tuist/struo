@@ -11,8 +11,8 @@ pub(super) struct Response {
 
 /// Server side of [`Hold`]: report arrival, then wait for the test to release.
 pub(super) struct HeldResponse {
-    arrived: tokio::sync::oneshot::Sender<()>,
-    release: tokio::sync::oneshot::Receiver<()>,
+    pub(super) arrived: tokio::sync::oneshot::Sender<()>,
+    pub(super) release: tokio::sync::oneshot::Receiver<()>,
 }
 
 /// Test side of a held response. The request has reached the server once
@@ -131,7 +131,7 @@ where
     (url, task)
 }
 
-async fn read_request(stream: &mut tokio::net::TcpStream) -> Request {
+pub(super) async fn read_request(stream: &mut tokio::net::TcpStream) -> Request {
     let mut bytes = Vec::new();
     let header_end = loop {
         let mut chunk = [0_u8; 4096];
@@ -165,6 +165,48 @@ async fn read_request(stream: &mut tokio::net::TcpStream) -> Request {
         bytes.extend_from_slice(&chunk[..read]);
     }
     let body_start = header_end + 4;
+    if header_map
+        .get("transfer-encoding")
+        .is_some_and(|value| value == "chunked")
+    {
+        let mut offset = body_start;
+        let mut body = Vec::new();
+        loop {
+            let end = loop {
+                if let Some(end) = bytes[offset..]
+                    .windows(2)
+                    .position(|value| value == b"\r\n")
+                {
+                    break offset + end;
+                }
+                let mut chunk = [0; 4096];
+                let read = stream.read(&mut chunk).await.unwrap();
+                assert!(read > 0);
+                bytes.extend_from_slice(&chunk[..read]);
+            };
+            let length =
+                usize::from_str_radix(std::str::from_utf8(&bytes[offset..end]).unwrap(), 16)
+                    .unwrap();
+            offset = end + 2;
+            if length == 0 {
+                break;
+            }
+            while bytes.len() < offset + length + 2 {
+                let mut chunk = [0; 4096];
+                let read = stream.read(&mut chunk).await.unwrap();
+                assert!(read > 0);
+                bytes.extend_from_slice(&chunk[..read]);
+            }
+            body.extend_from_slice(&bytes[offset..offset + length]);
+            offset += length + 2;
+        }
+        return Request {
+            method,
+            path,
+            body,
+            headers: header_map,
+        };
+    }
     let body_end = (body_start + content_length).min(bytes.len());
     Request {
         method,
@@ -174,7 +216,7 @@ async fn read_request(stream: &mut tokio::net::TcpStream) -> Request {
     }
 }
 
-async fn write_response(stream: &mut tokio::net::TcpStream, response: &Response) {
+pub(super) async fn write_response(stream: &mut tokio::net::TcpStream, response: &Response) {
     let reason = match response.status {
         200 => "OK",
         204 => "No Content",

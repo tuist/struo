@@ -754,6 +754,10 @@ image = "node:22-bookworm"
 [infrastructures.boat_tests]
 kind = "boat"
 snapshot = "node-tests-v1"
+
+[infrastructures.vercel_tests]
+kind = "vercel"
+runtime = "node24"
 "#,
         )
         .unwrap();
@@ -775,6 +779,14 @@ snapshot = "node-tests-v1"
                     }
                 )
             )
+        );
+        assert_eq!(
+            config.providers.get("vercel_tests"),
+            Some(&crate::InfrastructureProviderConfig::Vercel(
+                crate::VercelExecutionProviderConfig {
+                    runtime: "node24".into(),
+                }
+            ))
         );
     }
 
@@ -800,6 +812,11 @@ image = "   "
 [infrastructures.remote_tests]
 kind = "boat"
 snapshot = "   "
+"#,
+            r#"
+[infrastructures.remote_tests]
+kind = "vercel"
+runtime = "   "
 "#,
         ] {
             let error = load_infrastructure_toml_str("struo.toml", manifest).unwrap_err();

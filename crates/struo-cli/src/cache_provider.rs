@@ -74,6 +74,16 @@ fn bind_environment_override(
     mut binding: RemoteExecution,
     lookup: impl Fn(&str) -> Option<String>,
 ) -> RemoteExecution {
+    if binding.executor.as_deref().unwrap_or(&binding.provider) == "vercel" {
+        for (field, variable) in [
+            (&mut binding.account, "VERCEL_TEAM_ID"),
+            (&mut binding.project, "VERCEL_PROJECT_ID"),
+        ] {
+            if field.is_none() {
+                *field = lookup(variable).filter(|value| !value.trim().is_empty());
+            }
+        }
+    }
     if binding.environment.is_none() {
         let variable = match binding.executor.as_deref().unwrap_or(&binding.provider) {
             "e2b" => Some("STRUO_E2B_TEMPLATE"),
@@ -346,6 +356,7 @@ fn resolve_named_workspace_provider(
         | InfrastructureProviderConfig::Northflank(_)
         | InfrastructureProviderConfig::Cloudflare(_)
         | InfrastructureProviderConfig::OpenSandbox(_)
+        | InfrastructureProviderConfig::Vercel(_)
         | InfrastructureProviderConfig::Docker(_) => {
             bail!("infrastructure `{name}` provides execution but not shared caching")
         }
@@ -431,6 +442,7 @@ fn remote_from_workspace_provider(
         InfrastructureProviderConfig::Sprites => ("sprites", None),
         InfrastructureProviderConfig::Daytona(config) => ("daytona", Some(config.image)),
         InfrastructureProviderConfig::Boat(config) => ("boat", Some(config.snapshot)),
+        InfrastructureProviderConfig::Vercel(config) => ("vercel", Some(config.runtime)),
         InfrastructureProviderConfig::Together(config) => ("together", Some(config.snapshot)),
         InfrastructureProviderConfig::Northflank(config) => {
             remote
@@ -510,6 +522,7 @@ fn is_builtin_execution_provider(name: &str) -> bool {
             | "cloudflare"
             | "sprites"
             | "opensandbox"
+            | "vercel"
             | "docker"
     )
 }
@@ -1165,6 +1178,65 @@ project = "default-app"
                 project: Some("remote-builds".to_string()),
                 properties: BTreeMap::new(),
             }
+        );
+    }
+
+    #[test]
+    fn resolve_execution_uses_vercel_runtime_and_team_project_scope() {
+        let tmp = TempDir::new().unwrap();
+        let xdg = xdg_under(tmp.path());
+        write_workspace(
+            tmp.path(),
+            r#"
+[infrastructures.remote_tests]
+kind = "vercel"
+runtime = "node24"
+
+[infrastructure.execution]
+provider = "remote_tests"
+account = "team-a"
+project = "prj-a"
+"#,
+        );
+        let remote = resolve_execution(tmp.path(), &xdg, None).unwrap();
+        assert_eq!(remote.executor.as_deref(), Some("vercel"));
+        assert_eq!(remote.environment.as_deref(), Some("node24"));
+        assert_eq!(remote.account.as_deref(), Some("team-a"));
+        assert_eq!(remote.project.as_deref(), Some("prj-a"));
+        assert_eq!(
+            struo_core::Executor::from_binding(&remote).unwrap(),
+            struo_core::Executor::Vercel
+        );
+    }
+
+    #[test]
+    fn vercel_environment_scopes_partition_action_keys_without_overriding_bindings() {
+        let mut keys = std::collections::HashSet::new();
+        for (team, project) in [
+            ("team-a", "prj-a"),
+            ("team-b", "prj-a"),
+            ("team-a", "prj-b"),
+        ] {
+            let binding =
+                bind_environment_override(RemoteExecution::provider("vercel"), |name| match name {
+                    "VERCEL_TEAM_ID" => Some(team.into()),
+                    "VERCEL_PROJECT_ID" => Some(project.into()),
+                    _ => None,
+                });
+            assert_eq!(binding.account.as_deref(), Some(team));
+            assert_eq!(binding.project.as_deref(), Some(project));
+            let action: struo_core::Action = serde_json::from_value(serde_json::json!({
+                "kind": "run_command", "argv": ["tool"], "remote": binding,
+            }))
+            .unwrap();
+            assert!(keys.insert(action.digest()));
+        }
+        let mut binding = RemoteExecution::provider("vercel");
+        binding.account = Some("explicit-team".into());
+        binding.project = Some("explicit-project".into());
+        assert_eq!(
+            bind_environment_override(binding.clone(), |_| Some("other".into())),
+            binding
         );
     }
 

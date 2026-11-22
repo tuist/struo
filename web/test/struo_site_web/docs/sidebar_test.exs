@@ -61,7 +61,8 @@ defmodule StruoSiteWeb.Docs.SidebarTest do
              "Northflank" => "northflank",
              "Sprites" => nil,
              "OpenSandbox" => nil,
-             "Together" => "together"
+             "Together" => "together",
+             "Vercel Sandbox" => nil
            }
 
     refute Enum.any?(
