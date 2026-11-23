@@ -153,6 +153,11 @@ pub enum InfrastructureProviderConfig {
     Northflank(NorthflankExecutionProviderConfig),
     Cloudflare(CloudflareExecutionProviderConfig),
     Sprites,
+    Tensorlake {
+        environment: String,
+        environment_kind: String,
+        namespace: String,
+    },
     OpenSandbox(OpenSandboxExecutionProviderConfig),
     Docker(DockerExecutionProviderConfig),
     Tuist(TuistCacheProviderConfig),
@@ -261,6 +266,11 @@ pub(crate) enum InfrastructureProviderToml {
         image: String,
     },
     Sprites,
+    Tensorlake {
+        image: Option<String>,
+        snapshot: Option<String>,
+        namespace: String,
+    },
     #[serde(rename = "opensandbox")]
     OpenSandbox {
         image: String,
@@ -333,6 +343,7 @@ impl NamedCacheProviderToml {
 }
 
 impl InfrastructureProviderToml {
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn into_config(
         self,
         display_name: &str,
@@ -341,6 +352,31 @@ impl InfrastructureProviderToml {
         Ok(match self {
             Self::Local => InfrastructureProviderConfig::Local,
             Self::Sprites => InfrastructureProviderConfig::Sprites,
+            Self::Tensorlake {
+                image,
+                snapshot,
+                namespace,
+            } => {
+                let (environment, environment_kind) = match (image, snapshot) {
+                    (Some(image), None) if !image.trim().is_empty() => (image, "image"),
+                    (None, Some(snapshot)) if !snapshot.trim().is_empty() => (snapshot, "snapshot"),
+                    _ => return Err(Error::Eval {
+                        path: display_name.into(),
+                        message: format!("tensorlake infrastructure `{provider_name}` requires exactly one nonempty image or snapshot"),
+                    }),
+                };
+                if namespace.trim().is_empty() {
+                    return Err(Error::Eval {
+                        path: display_name.into(),
+                        message: format!("tensorlake infrastructure `{provider_name}` namespace must not be empty"),
+                    });
+                }
+                InfrastructureProviderConfig::Tensorlake {
+                    environment: environment.trim().into(),
+                    environment_kind: environment_kind.into(),
+                    namespace: namespace.trim().into(),
+                }
+            }
             Self::Microsandbox { image } => {
                 let image = image.trim().to_string();
                 if image.is_empty() {

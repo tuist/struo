@@ -284,6 +284,21 @@ SH
     The stderr should include 'set STRUO_BOAT_API_KEY or BOAT_API_KEY'
   End
 
+  It 'resolves Tensorlake infrastructure without provisioning when credentials are missing'
+    cat > "$WORKSPACE/struo.toml" <<'TOML'
+[infrastructures.remote_tests]
+kind = "tensorlake"
+image = "node-tests-v1"
+namespace = "test-namespace"
+[infrastructure.execution]
+provider = "remote_tests"
+TOML
+    When call env -u TENSORLAKE_API_KEY -u STRUO_TENSORLAKE_API_KEY "$STRUO_BIN" -C "$WORKSPACE" exec --remote -- sh -c 'printf must-not-run'
+    The status should be failure
+    The stdout should equal ''
+    The stderr should include 'set STRUO_TENSORLAKE_API_KEY or TENSORLAKE_API_KEY'
+  End
+
   It 'resolves Together infrastructure and reports missing sandbox credentials'
     cat > "$WORKSPACE/struo.toml" <<'TOML'
 [infrastructures.remote_tests]

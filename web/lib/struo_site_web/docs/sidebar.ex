@@ -201,6 +201,7 @@ defmodule StruoSiteWeb.Docs.Sidebar do
             icon: "cloudflare"
           },
           %Item{label: "Sprites", slug: "/docs/guide/infrastructure/sprites"},
+          %Item{label: "Tensorlake", slug: "/docs/guide/infrastructure/tensorlake"},
           %Item{label: "Vercel Sandbox", slug: "/docs/guide/infrastructure/vercel"}
         ]
       },

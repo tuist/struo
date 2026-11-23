@@ -22,6 +22,7 @@ pub(crate) use output_install::restore_output_snapshots;
 mod path;
 mod phase;
 mod sprites;
+mod tensorlake;
 #[cfg(test)]
 mod test_server;
 mod together;
@@ -128,6 +129,16 @@ pub(crate) async fn execute_command(
         }
         Executor::Boat => {
             Box::pin(boat::execute_command(
+                remote,
+                command,
+                workspace_root,
+                cache,
+                stream_to_parent,
+            ))
+            .await
+        }
+        Executor::Tensorlake => {
+            Box::pin(tensorlake::execute_command(
                 remote,
                 command,
                 workspace_root,

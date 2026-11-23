@@ -153,13 +153,24 @@ kind = "sprites"
 
 See [Sprites](/guide/infrastructure/sprites) for credentials and disposal.
 
+Tensorlake requires a prepared image or snapshot and the API key's namespace:
+
+```toml
+[infrastructures.tensorlake_tests]
+kind = "tensorlake"
+image = "node-tests-v1" # Or snapshot = "snapshot-id", not both.
+namespace = "your-project-namespace"
+```
+
+See [Tensorlake](/guide/infrastructure/tensorlake) for prerequisites and cleanup.
+
 Boat uses a saved snapshot rather than an OCI image. See
 [Boat execution](/guide/infrastructure/boat) for snapshot preparation and cleanup.
 
 Vercel selects a provider-managed runtime rather than an immutable image. See
 [Vercel Sandbox](/guide/infrastructure/vercel) for authentication and team/project scope.
 
-Docker, E2B, Daytona, Boat, Together, Northflank, Sprites, OpenSandbox, Vercel Sandbox, and Microsandbox provide execution only. Tuist provides shared
+Docker, E2B, Daytona, Boat, Together, Northflank, Sprites, Tensorlake, OpenSandbox, Vercel Sandbox, and Microsandbox provide execution only. Tuist provides shared
 caching. Bind each capability independently when a workspace uses both.
 
 ## Targets

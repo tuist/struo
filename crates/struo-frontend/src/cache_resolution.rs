@@ -190,6 +190,7 @@ fn resolve_named_workspace_provider(
         InfrastructureProviderConfig::Local => Ok(ResolvedCacheProviderConfig::Local),
         InfrastructureProviderConfig::Microsandbox(_)
         | InfrastructureProviderConfig::Sprites
+        | InfrastructureProviderConfig::Tensorlake { .. }
         | InfrastructureProviderConfig::E2b(_)
         | InfrastructureProviderConfig::Boat(_)
         | InfrastructureProviderConfig::Docker(_)

@@ -349,6 +349,7 @@ fn resolve_named_workspace_provider(
         InfrastructureProviderConfig::Local => Ok(ResolvedCacheProviderConfig::Local),
         InfrastructureProviderConfig::Microsandbox(_)
         | InfrastructureProviderConfig::Sprites
+        | InfrastructureProviderConfig::Tensorlake { .. }
         | InfrastructureProviderConfig::E2b(_)
         | InfrastructureProviderConfig::Daytona(_)
         | InfrastructureProviderConfig::Boat(_)
@@ -440,6 +441,19 @@ fn remote_from_workspace_provider(
         InfrastructureProviderConfig::Microsandbox(config) => ("microsandbox", Some(config.image)),
         InfrastructureProviderConfig::E2b(config) => ("e2b", Some(config.template)),
         InfrastructureProviderConfig::Sprites => ("sprites", None),
+        InfrastructureProviderConfig::Tensorlake {
+            environment,
+            environment_kind,
+            namespace,
+        } => {
+            remote
+                .properties
+                .insert("environment_kind".into(), environment_kind.into());
+            remote
+                .properties
+                .insert("namespace".into(), namespace.into());
+            ("tensorlake", Some(environment))
+        }
         InfrastructureProviderConfig::Daytona(config) => ("daytona", Some(config.image)),
         InfrastructureProviderConfig::Boat(config) => ("boat", Some(config.snapshot)),
         InfrastructureProviderConfig::Vercel(config) => ("vercel", Some(config.runtime)),
@@ -521,6 +535,7 @@ fn is_builtin_execution_provider(name: &str) -> bool {
             | "northflank"
             | "cloudflare"
             | "sprites"
+            | "tensorlake"
             | "opensandbox"
             | "vercel"
             | "docker"
@@ -1540,6 +1555,58 @@ provider = "remote_tests"
             resolve_execution(tmp.path(), &xdg, Some("sprites")).unwrap(),
             RemoteExecution::provider("sprites")
         );
+    }
+
+    #[test]
+    fn tensorlake_resolves_prepared_images_and_snapshots() {
+        for kind in ["image", "snapshot"] {
+            let tmp = TempDir::new().unwrap();
+            let xdg = xdg_under(tmp.path());
+            write_workspace(
+                tmp.path(),
+                &format!(
+                    r#"
+[infrastructures.remote_tests]
+kind = "tensorlake"
+{kind} = "node-tests-v1"
+namespace = "ns-one"
+[infrastructure.execution]
+provider = "remote_tests"
+"#
+                ),
+            );
+            let remote = resolve_execution(tmp.path(), &xdg, None).unwrap();
+            assert_eq!(remote.executor.as_deref(), Some("tensorlake"));
+            assert_eq!(remote.environment.as_deref(), Some("node-tests-v1"));
+            assert_eq!(remote.properties["namespace"], "ns-one");
+            assert_eq!(remote.properties["environment_kind"], kind);
+            assert_eq!(
+                struo_core::Executor::from_binding(&remote).unwrap(),
+                struo_core::Executor::Tensorlake
+            );
+            let roundtrip: RemoteExecution =
+                serde_json::from_slice(&serde_json::to_vec(&remote).unwrap()).unwrap();
+            assert_eq!(roundtrip, remote);
+            assert_eq!(
+                resolve_execution(tmp.path(), &xdg, Some("remote_tests")).unwrap(),
+                remote
+            );
+        }
+        for invalid in [
+            "image = 'one'\nsnapshot = 'two'\nnamespace = 'ns'",
+            "image = 'one'\nnamespace = ''",
+            "namespace = 'ns'",
+        ] {
+            let tmp = TempDir::new().unwrap();
+            write_workspace(
+                tmp.path(),
+                &format!("[infrastructures.remote_tests]\nkind = 'tensorlake'\n{invalid}"),
+            );
+            assert!(
+                resolve_execution(tmp.path(), &xdg_under(tmp.path()), Some("remote_tests"))
+                    .is_err()
+            );
+        }
     }
 
     #[test]

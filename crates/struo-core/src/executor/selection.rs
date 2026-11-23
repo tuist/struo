@@ -22,6 +22,7 @@ pub enum Executor {
     Northflank,
     Cloudflare,
     Sprites,
+    Tensorlake,
     OpenSandbox,
     Vercel,
     Docker,
@@ -89,6 +90,7 @@ impl Executor {
             "northflank" => Ok(Self::Northflank),
             "cloudflare" => Ok(Self::Cloudflare),
             "sprites" => Ok(Self::Sprites),
+            "tensorlake" => Ok(Self::Tensorlake),
             "opensandbox" => Ok(Self::OpenSandbox),
             "vercel" => Ok(Self::Vercel),
             "docker" => Ok(Self::Docker),
@@ -126,6 +128,26 @@ impl Executor {
         }
         if executor == Self::Sprites && binding.environment.is_some() {
             return Err(executor.unsupported("custom Sprite images or templates"));
+        }
+        if executor == Self::Tensorlake
+            && (binding
+                .environment
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+                || binding
+                    .properties
+                    .get("namespace")
+                    .and_then(serde_json::Value::as_str)
+                    .is_none_or(|value| value.trim().is_empty())
+                || binding
+                    .properties
+                    .get("environment_kind")
+                    .is_some_and(|value| !matches!(value.as_str(), Some("image" | "snapshot"))))
+        {
+            return Err(Error::RemoteProviderConfig {
+                provider: binding.provider.clone(),
+                message: "Tensorlake requires an explicit environment, properties.namespace, and environment_kind of image or snapshot".into(),
+            });
         }
         if executor == Self::Docker
             && !binding.environment.as_deref().is_some_and(|image| {
@@ -171,6 +193,7 @@ impl Executor {
             | Self::Northflank
             | Self::Cloudflare
             | Self::Sprites
+            | Self::Tensorlake
             | Self::OpenSandbox
             | Self::Vercel
             | Self::Docker
@@ -195,6 +218,7 @@ impl Executor {
             | Self::Northflank
             | Self::Cloudflare
             | Self::Sprites
+            | Self::Tensorlake
             | Self::OpenSandbox
             | Self::Vercel
             | Self::Tuist => ResourceDomain::Remote,
@@ -212,6 +236,7 @@ impl Executor {
             Self::Northflank => "northflank",
             Self::Cloudflare => "cloudflare",
             Self::Sprites => "sprites",
+            Self::Tensorlake => "tensorlake",
             Self::OpenSandbox => "opensandbox",
             Self::Vercel => "vercel",
             Self::Docker => "docker",
