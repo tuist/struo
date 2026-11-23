@@ -83,7 +83,7 @@ symbolic links. Native dependencies must match the guest's Linux architecture
 and runtime. A dependency-install action can also produce `node_modules`; see
 [Remote Execution](/guide/infrastructure/remote-execution).
 
-## Limits And Cleanup
+## Limits and cleanup
 
 Struo supports ordinary named creation, not warm-pool claims. Capacity waits can
 take minutes. One action deadline covers preparation, creation, readiness,

@@ -10,7 +10,15 @@ Use it with a managed build cache that your CI runners already reach, such as
 the caches some hosted runner providers include, or with a cache server you
 run yourself.
 
-## Configure A Server
+**Capabilities:** shared caching. This provider does not execute actions.
+
+## Prerequisites
+
+Use a reachable HTTP or WebDAV server that supports `GET`, `HEAD`, and `PUT`,
+returns content lengths, and makes writes readable only after they complete.
+Obtain credentials with read/write access, or read-only access for untrusted jobs.
+
+## Configuration
 
 Name the server in the repository root `struo.toml`:
 
@@ -49,7 +57,7 @@ The same `kind = "http_cache"` table works in `~/.config/struo/config.toml`
 for a personal default, and as `[cache_provider]` with `kind = "http_cache"`
 for a single workspace.
 
-## Hosted Runner Caches
+### Hosted runner caches
 
 Some runner providers offer an HTTP build cache with credentials their
 runners receive automatically. Their documentation describes these
@@ -74,7 +82,14 @@ either service yet.
   Copy the endpoint and prefix into `url` and `key_prefix`, and export the
   token under the variable `token_env` names.
 
-## Use From CI Services
+## Usage
+
+Run your cacheable scripts or builds as usual after configuring the binding.
+Verify sharing from a second machine with an empty local cache, the same
+configuration and inputs. A hit on the first machine alone can come from its
+local cache.
+
+### CI services
 
 Struo does not use a CI service's own cache storage. GitHub Actions has a
 cache service, but its entries cannot be overwritten, are scoped to branches,
@@ -101,21 +116,9 @@ env:
   STRUO_CACHE_READ_ONLY: ${{ github.event_name == 'pull_request' && '1' || '0' }}
 ```
 
-## Key Layout
+## Limits and cleanup
 
-Each key is one path segment under `url` and `key_prefix`, so a `WebDAV`
-server never needs to create folders:
-
-```text
-<url>/<key_prefix>v1.cas.<struo-digest-hex>   exact uncompressed blob bytes
-<url>/<key_prefix>v1.ac.<action-digest-hex>   native action result as JSON
-```
-
-`v1` versions the layout. See the
-[cache reference](/reference/infrastructure/cache#http-cache-layout) for the
-request and status contract.
-
-## Failures
+### Failures
 
 - **Unreachable server, timeouts, `408`, `429`, and `5xx`:** the action runs
   locally and the result is kept in the local cache.
@@ -130,17 +133,14 @@ command still succeeds with its local result. Struo never deletes keys from
 the server; configure retention there. A result whose referenced content has
 been evicted is treated as a miss.
 
-## Tested Setups
+### Compatibility
 
-| Setup | Status |
-| --- | --- |
-| HTTP server on a loopback address, through the command line | Tested: remote reuse across two clients with empty local caches, read-only mode publishes nothing, rejected token fails the command, missing token variable is a configuration error, stopped server falls back to local execution |
-| In-process HTTP server in automated tests | Tested: a 3 MiB streamed output round-trips byte for byte, key layout and bearer token, status classification, unreachable server, plain HTTP credential refusal, prefix isolation, URL credential rejection, and redirect refusal |
-| Depot Cache | Documented `WebDAV` interface; not yet tested |
-| Namespace HTTP cache | Documented `WebDAV` interface; not yet tested |
-| Other `WebDAV` or HTTP build caches | Expected to work when they meet the contract below; not yet tested |
+Struo's automated checks cover local HTTP servers. Depot, Namespace and other
+hosted caches have not been verified against their live services. Check your
+server against the [HTTP cache contract](/reference/infrastructure/cache#http-cache-layout)
+before adopting it.
 
-## Limitations
+### Service requirements
 
 - The server must return `Content-Length` for `GET` and `HEAD`. Chunked
   responses without a length are rejected as protocol errors.

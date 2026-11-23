@@ -5,7 +5,10 @@ Struo creates a fresh image-based sandbox for each uncached action, uploads
 declared inputs, runs the command, retrieves declared outputs, and deletes
 the sandbox.
 
-## Deploy The Service
+**Capabilities:** remote execution through a self-hosted service. Configure
+shared caching separately.
+
+## Prerequisites
 
 Follow OpenSandbox's [deployment guide](https://open-sandbox.ai/deployment/)
 to run its lifecycle service with a supported Docker or Kubernetes backend.
@@ -19,7 +22,7 @@ registry digest for repeatable builds; changing the configured image changes
 the action's cache identity. Updating a mutable image tag does not invalidate
 an existing cached result.
 
-## Configure Execution
+## Configuration
 
 ```toml
 [infrastructures.self_hosted]
@@ -47,11 +50,11 @@ export OPEN_SANDBOX_API_KEY=...
 ```
 
 `STRUO_OPENSANDBOX_API_KEY` takes precedence over `OPEN_SANDBOX_API_KEY`.
-Struo sends that credential only to the lifecycle service. It resolves the
-execd endpoint on port 44772 and forwards the returned access headers,
-including `X-EXECD-ACCESS-TOKEN`, to guest requests. Do not substitute a
-lifecycle API key for a guest access token. Use HTTPS outside trusted local
-networks because these headers authorize sandbox access.
+Struo sends that credential only to the lifecycle service and uses separate
+service-issued credentials for guest access. Use HTTPS outside trusted local
+networks.
+
+## Usage
 
 Run with the workspace default or select the named infrastructure:
 
@@ -60,32 +63,24 @@ struo exec --remote --compute self_hosted -- node --version
 ```
 
 Annotated scripts can select it with `# struo remote "self_hosted"`.
-Runtime execution bindings use the same `opensandbox` executor and explicit
-image environment, with `secure_access` in the binding's `properties` map.
-OpenSandbox provides execution only; configure shared caching separately.
 
-## Inputs And Results
+### Inputs and results
 
 Declare dependency outputs such as `node_modules` as inputs to downstream
 actions. Struo includes them even when Git ignores them, preserves executable
-modes and safe symlinks, and excludes undeclared files. Uploads use binary
-multipart transfers; output and capture downloads use complete binary
-responses rather than text or line-range APIs.
+modes and safe symlinks, and excludes undeclared files.
 
-Struo starts commands in the background and polls their exit status. A
-startup acknowledgement does not count as command success. It captures
-stdout and stderr separately and retrieves declared outputs only after an
-accepted exit code. Transfers and captures use Struo's bounded staging and
+Struo captures stdout and stderr separately and retrieves declared outputs only
+after an accepted exit code. Transfers and captures use Struo's bounded staging and
 I/O limits. Output archives must pass path and symlink validation before
 Struo installs them in the workspace.
 
-## Lifecycle And Limits
+## Limits and cleanup
 
 Struo applies the action's CPU and memory request to sandbox resource limits,
-using 250 MiB when the action declares no memory estimate. Startup waits
-through `Pending` and `Allocated` until the sandbox reaches `Running`.
-The coordinator uses remote admission capacity and keeps its permit through
-cleanup. An explicit action timeout covers reconciliation, provisioning,
+using 250 MiB when the action declares no memory estimate. Struo waits for the
+sandbox to become ready before staging inputs and reserves execution capacity
+until cleanup finishes. An explicit action timeout covers recovery, provisioning,
 transfers, and command execution. Without one, Struo uses a 15-minute action
 budget. Cleanup has separate bounded requests and retries transient deletion
 failures.

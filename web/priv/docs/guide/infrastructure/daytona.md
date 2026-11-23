@@ -5,7 +5,14 @@ with process and filesystem operations. Struo creates one sandbox for each
 action that misses the cache, transfers declared inputs, runs the command,
 retrieves declared outputs, and deletes the sandbox.
 
-## Configure An Image
+**Capabilities:** remote execution. Configure shared caching separately.
+
+## Prerequisites
+
+Use a Daytona account and API key with sandbox access. Prepare a Linux image
+with the tools your actions need, including `tar`.
+
+## Configuration
 
 Choose a Linux container image that contains the stable tools shared by your
 actions. A Vitest workflow can use a pinned Node.js image:
@@ -23,7 +30,7 @@ Struo asks Daytona to build the sandbox environment from that image. The image
 must provide `tar`. Repository dependencies remain declared action outputs and
 inputs, so changing a package lock invalidates the correct action.
 
-## Authenticate
+### Authentication
 
 Set the provider access key outside the script:
 
@@ -34,7 +41,7 @@ export DAYTONA_API_KEY=...
 `STRUO_DAYTONA_API_KEY` takes precedence when both variables are present. Struo
 does not forward the key to the action process.
 
-## Run
+## Usage
 
 Use the workspace default:
 
@@ -60,7 +67,7 @@ Vitest example.
 Daytona's command endpoint returns standard output and standard error as one
 combined result. Struo exposes that result as standard output.
 
-## Lifecycle
+## Limits and cleanup
 
 Struo marks each Daytona sandbox as ephemeral and sets immediate deletion after
 stop. It also sends an explicit delete request after success, command failure,

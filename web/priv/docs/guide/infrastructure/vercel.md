@@ -5,7 +5,17 @@ a fresh Linux sandbox. Struo uploads declared inputs, including local
 `node_modules`, runs the command, restores declared outputs after an accepted
 exit code, and deletes the sandbox.
 
-## Configure A Runtime
+**Capabilities:** remote execution. Configure shared caching separately.
+
+## Prerequisites
+
+Use a Vercel account, team and project with Sandbox access. Set `VERCEL_TOKEN`
+to an access token for that team/project outside scripts and manifests. Struo
+does not forward it to commands. Automatic OIDC discovery is not supported.
+Prepare dependencies for the guest's Linux architecture and runtime, rather
+than uploading macOS-built native modules.
+
+## Configuration
 
 ```toml
 [infrastructures.remote_tests]
@@ -19,24 +29,17 @@ project = "prj_your_project_id"
 ```
 
 `account` selects the Vercel team and `project` selects its project. Without
-explicit scope, set `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`. The CLI records
-these non-secret defaults in the execution binding before computing cache
-identity. Explicit bindings take precedence. Runtime API callers must supply
-nonempty `account` and `project` fields; unresolved scope is rejected before
-cache lookup. Set `VERCEL_TOKEN`
-to a Vercel access token with Sandbox access for that team/project. Keep the
-token outside scripts and manifests. Struo does not forward it to commands.
-This adapter uses token authentication, not automatic OIDC credential discovery.
+explicit scope, set `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`. Explicit bindings
+take precedence. Struo rejects unresolved scope before looking up cached results.
 
-Runtime values follow Vercel's deprecated but still published runtime-based
-create API, currently `node22`,
+Supported runtime values are `node22`,
 `node24`, `node26`, and `python3.13`. Built-in `--compute vercel` uses `node24`.
 These runtime names are provider-managed references, not immutable image pins.
 The guest must provide `sh`, `env`, `mkdir`, and `tar` supporting
 `--hard-dereference`. Local native dependencies must match the guest's Linux
 architecture and runtime. Do not upload macOS-built native modules.
 
-## Run Annotated Tests
+## Usage
 
 For a script at `scripts/test.sh`:
 
@@ -61,19 +64,13 @@ Select the same account/project in the workspace execution binding when using
 the default provider, or supply the scope environment variables when selecting
 a provider by name.
 
-## Transfers And Limits
+## Limits and cleanup
 
-Struo streams a gzip-compressed input archive through Vercel's binary write
-endpoint and reads output files as binary streams. Safe symlinks and executable
-modes are preserved. Output archives pass through the shared safe extractor;
-hard links are copied as independent files without dereferencing symlinks.
-
-Standard output and standard error are captured separately into guest files
-and downloaded under one combined capture allowance. Output is replayed after
-completion, not streamed live. The command uses literal positional arguments
-and the selected environment plus the guest runtime's `PATH`. An explicitly
-selected `PATH` overrides that default. Struo's existing host memory, remote
-admission, capture, archive and transfer-stall budgets apply.
+Struo preserves safe symlinks, executable modes and separate binary stdout and
+stderr. Output appears after completion, not live. Transfers and captures
+respect Struo's resource limits, and outputs are validated before installation.
+Commands use the selected environment plus the guest runtime's `PATH` unless
+you supply an explicit `PATH`.
 
 The action deadline covers preparation, ownership recovery, provisioning,
 transfer, execution and output installation. It defaults to ten minutes.
@@ -84,7 +81,7 @@ an even number, with 2048 MB per CPU, satisfying Vercel's allocation contract.
 Network denial, output-idle timeout, explicit filesystem setup and output
 redirection are not supported by this adapter and fail closed.
 
-## Disposal And Recovery
+### Cleanup and recovery
 
 Vercel sandboxes persist by default. Struo explicitly sets `persistent = false`
 and never creates snapshots or mounts persistent drives. It deletes the named
@@ -93,17 +90,14 @@ Stopping a session alone is not cleanup because the named configuration remains.
 
 Creation intent is durably recorded before provisioning. A unique name and
 atomic ownership tag allow recovery after a lost response or process exit.
-Cleanup verifies the exact name and tag through an authenticated lookup with
-`resume=false` before every deletion attempt, including retries and recovery.
+Cleanup verifies ownership before every deletion attempt, including retries
+and recovery.
 Vercel does not offer a conditional-delete ownership precondition, so a name
 replaced between that lookup and deletion remains an API-level race.
-Inconclusive ownership and failed
-cleanup remain journaled. Cancellation retains the admission lease until the
-bounded cleanup attempt finishes. Session timeout limits active compute after
-a client crash, but named metadata still needs a later reconciliation pass.
+Inconclusive ownership and failed cleanup remain journaled. Cancellation waits
+for a bounded cleanup attempt. Session timeout limits active compute after a
+client crash, but named metadata still needs a later reconciliation pass.
 
-The adapter follows the official SDK's runtime-based `/v2` create path and
-session APIs. The newer image-based `/v3` and `/v4` create APIs are separate
-contracts and are not used here. See the [REST API](https://vercel.com/docs/rest-api#sandboxes)
-and [pricing and quotas](https://vercel.com/docs/sandbox/pricing) for current
+Struo currently supports Vercel's runtime-based environments, not its newer
+image-based environments. See [pricing and quotas](https://vercel.com/docs/sandbox/pricing) for current
 account availability, limits and billing.

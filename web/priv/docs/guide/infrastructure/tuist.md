@@ -1,17 +1,28 @@
 # Tuist
 
-[Tuist](https://tuist.dev) provides shared caching, live run reporting and
-artifact publication for Struo, with application previews for supported native
-interfaces. Configure the capabilities your project needs
+[Tuist](https://tuist.dev) provides shared caching, remote execution, live run
+reporting and artifact publication for Struo, with application previews for
+supported native applications. Configure the capabilities your project needs
 independently.
+
+**Capabilities:** shared caching, remote execution when enabled for your account,
+live reporting, and artifact publication with supported application previews.
 
 ::: info Trigger orchestration is coming
 Tuist support for [Struo triggers](/guide/infrastructure/triggers) is coming.
-This page covers caching, run reporting and application previews, not CI
+This page covers caching, execution, reporting and application previews, not CI
 orchestration.
 :::
 
-## Create And Connect A Project
+## Prerequisites
+
+Use a Tuist account and project. The credential needs access to the operations
+you select; remote execution requires account execution capacity and read/write
+access to the same project you use for caching. Workers run Linux on AMD64.
+
+## Configuration
+
+### Create and connect a project
 
 Provision a Tuist project and bind this repository to it in one command:
 
@@ -24,7 +35,7 @@ and writes the provider binding into the repository root `struo.toml`. Read
 [Connect A Project](/guide/infrastructure/connect) for account and project
 selection. The result is the same configuration described below.
 
-## Configure The Cache
+### Configure the cache
 
 Add a Tuist provider and cache binding to the repository root `struo.toml`:
 
@@ -41,9 +52,9 @@ provider = "tuist"
 Replace `acme` and `app` with the Tuist account and project that should own the
 shared entries.
 
-## Authenticate A Developer Machine
+### Authenticate a developer machine
 
-Sign in struo:
+Sign in to Struo:
 
 ```sh
 struo auth login --provider tuist
@@ -56,7 +67,9 @@ publication. Remove it when the machine should no longer access the provider:
 struo auth logout --provider tuist
 ```
 
-## Verify A Shared Result
+## Usage
+
+### Verify a shared result
 
 Use two machines with the same `struo.toml`, script, and input. On the first
 machine, run the [example scripted workflow](/guide/scripted/):
@@ -77,7 +90,7 @@ The second machine should report a cache hit and restore
 `build/greeting.txt`. Because its local cache has no matching entry, the hit
 confirms that Tuist supplied the recorded result.
 
-## Publish Application Previews
+### Publish application previews
 
 Configure Tuist as the artifact publication provider in the repository root
 `struo.toml`. If the project already defines this provider for caching, reuse
@@ -98,12 +111,9 @@ struo auth login --provider tuist
 struo artifact publish MyApplication --track review
 ```
 
-Tuist receives the full immutable artifact closure through its authenticated
-project artifact service, not a selected preview payload. The adapter uses
-existing Tuist authentication and streams content without inspecting native
-executables. A matching remote receipt confirms publication and returns the
-project's previews URL. Preview projection happens asynchronously, so this
-receipt does not mean an application is already available to install.
+Tuist receives the artifact and its dependencies and returns the project's
+previews URL. Preview processing is asynchronous, so a publication receipt
+does not mean an application is already available to install.
 
 To publish after successful builds, add an explicit policy and authorize this
 machine and workspace:
@@ -119,46 +129,32 @@ struo build MyApplication
 ```
 
 All requested builds must succeed, and the producer must approve the entire
-closure for automatic publication. No artifact-publication request occurs when
-the policy or local authorization is absent. Authorization binds the exact
-endpoint and target to Tuist's stable project destination, `project:<project_id>`.
-Changing the endpoint, workspace or target requires new authorization; a changed
-stable destination is rejected before upload. See
+artifact and its dependencies for automatic publication. Struo does not publish
+without both the policy and local authorization. Changing the endpoint,
+workspace or target requires new authorization; Struo rejects a changed project
+destination before upload. See
 [Artifacts](/guide/infrastructure/artifacts#publish-after-successful-builds)
 for the provider-neutral policy and replay behavior.
 
-### Supported Formats And Limits
+#### Supported formats and retention
 
-The receiver retains arbitrary artifact payloads and unknown interfaces without
-executing them. Metadata documents are limited to one mebibyte and the full
-closure to 20 GiB. Known native interfaces additionally create previews using
-the project's default preview visibility and existing Tuist distribution surfaces.
-Generic artifact contents remain private even in public projects:
+Tuist retains arbitrary artifact payloads without executing them. Metadata
+documents are limited to one mebibyte and the full artifact with dependencies
+to 20 GiB. Generic artifact contents remain private even in public projects.
+Supported native previews use the project's default preview visibility:
 
-- `apple_application` exports `dev.struo.apple-install.v2` on macOS, alongside
-  its v1 installation description. The v2 interface points to the bundle ZIP
-  and `spec.metadata_payload` with `once.apple_application.v1` metadata, and
-  `spec.icon_payload` names a PNG icon when the bundle has one.
-  Ad-hoc signed macOS and simulator applications are eligible for automatic
-  publication and preview projection. Physical-device applications are not.
-- `android_binary` exports `dev.struo.android-install.v1`, pointing to the APK
-  and `spec.metadata_payload` with `once.android_application.v1` metadata.
-  `spec.icon_payload` names a PNG icon when the APK has one.
-  Debug-signed, non-instrumentation APKs approve automatic publication.
+- Ad-hoc signed macOS and simulator applications support automatic publication
+  and previews. Physical-device applications do not.
+- Debug-signed, non-instrumentation Android APKs support automatic publication.
   Unsigned APKs do not produce installable previews.
 
-Native producers validate signatures and collect metadata; the generic adapter
-does not. Unknown interfaces remain available through authenticated artifact
-downloads even when no preview is projected.
+Other artifact formats remain available through authenticated downloads.
+Publications expire after 30 days on hosted Tuist, or according to the
+self-hosted app-preview retention setting. Repeating the same publication does
+not reactivate an expired record. The returned URL does not guarantee permanent
+file availability.
 
-The same intent is looked up remotely before transfer. A verified retained
-receipt avoids another upload; an unconfirmed completion can be recovered by
-replaying the same intent. Publications expire after 30 days on hosted Tuist,
-or according to the self-hosted app-preview retention setting. Expired records
-remain as tombstones and cannot be reactivated by replaying the same intent.
-The returned URL is not a permanent-byte availability guarantee.
-
-## Follow Runs Live
+### Follow runs live
 
 Struo streams build and test runs to Tuist when the provider is configured and
 the machine is authenticated. Each run publishes ordered event batches to the
@@ -170,11 +166,11 @@ Live reporting is best-effort: a missing endpoint or an expired session is
 logged and never fails the run. Re-authenticate with `struo auth login
 --provider tuist` when the session expires.
 
-## Authenticate Automation
+### Authenticate automation
 
 Choose the authentication method supported by the environment.
 
-### Account Token
+#### Account token
 
 Set `TUIST_TOKEN` to a Tuist account token authorized for the project's operations
 when the runner can store a long-lived secret:
@@ -183,7 +179,7 @@ when the runner can store a long-lived secret:
 TUIST_TOKEN=tuist_... ./scripts/greet.sh
 ```
 
-### OpenID Connect
+#### OpenID Connect
 
 Use [OpenID Connect](https://openid.net/developers/how-connect-works/) on a
 supported automation runner. Log in without opening a browser before running
@@ -215,23 +211,10 @@ the Amp workspace in your Tuist account's Integrations settings. When the
 workspace is connected to several Tuist accounts, Struo authenticates as the
 manifest's `account`.
 
-## Connection recovery
-
-Struo retries transient cache failures during blob existence checks, uploads, and
-action-result publication with at most three attempts per RPC. This includes
-HTTP/2 connection retirement, where the cache asks the client to use a new
-connection. Interrupted uploads restart from the beginning with a fresh upload
-resource and a newly opened file or stream.
-
-Authentication failures, permission refusals, invalid requests, quota refusals,
-requests that exceed the request timeout, and local file errors are not
-retried, so a cache that stops responding fails after one timeout rather than
-three. Retries do not provide resumable uploads.
-
-## Run Actions On Tuist Workers
+### Run actions on Tuist workers
 
 When remote execution is enabled for the account, Tuist runs graph command
-actions on single-use Linux workers through the Bazel Remote Execution API.
+actions on single-use Linux workers.
 Struo uploads only the input files the project cache does not already hold,
 asks the service to run the action, and reads outputs back from the same cache.
 Dependencies still decide when each action starts, and results stay in the
@@ -268,19 +251,12 @@ uploading anything when the account has no execution capacity, when the cache
 and execution name different projects, or when a pinned `execution_image`
 differs from the image the service advertises.
 
-The Tuist server must advertise the worker image, the cache endpoint, the
-account's execution concurrency, and the absolute directory where workers run
-actions. Struo fails before uploading anything against a server that omits the
-execution directory, because it cannot place outputs and working directories
-safely without it.
+## Limits and cleanup
 
-Struo keeps at most as many actions in flight as the account's advertised
-concurrency. When the service answers that its queue is full or that it is
-serving too many streams, Struo waits with backoff and tries again instead of
-failing. If the service rejects the credential during a long build, Struo
-refreshes it once and retries. Struo waits for an action up to its timeout
-plus twenty minutes, which covers the fifteen minutes Tuist keeps an action
-queued.
+Struo respects the account's execution concurrency and waits when the worker
+queue is full. An action can wait up to its timeout plus twenty minutes,
+including up to fifteen minutes in Tuist's queue. Use a compatible Tuist server;
+Struo rejects missing execution configuration before uploading inputs.
 
 Workers run `linux/amd64`. Commands must resolve their tools inside the worker
 image, not on the computer that started the build. Struo does not wrap remote
@@ -299,24 +275,21 @@ place only actions that are safe to repeat on it. Unsupported requirements,
 such as network denial or a timeout longer than ten minutes, fail instead of
 running locally.
 
-Output directories preserve relative symbolic links to other declared outputs.
-They can also preserve dangling links elsewhere inside the workspace, provided
-the target is absent and no coordinator symlink is traversed. Absolute targets,
-workspace escapes, cycles, and links to existing undeclared coordinator files or
-directories are rejected. Struo snapshots these outputs privately before
-publishing them, and repeats the checks when restoring cached snapshots. It
-never materializes undeclared coordinator data through an output link.
+Struo validates returned paths and symbolic links before restoring outputs.
+Links must not escape the workspace or expose undeclared coordinator files.
 
-Inputs go to the client-facing cache endpoint the execution service advertises.
-Gateways and workers may use a separate internal address in the same cache mesh;
-coordinators do not need access to the workers' private network. Older servers
-that advertise only one CAS endpoint must make it reachable by the coordinator.
-When `TUIST_CACHE_ENDPOINT` is set, Struo uses it instead and logs a warning if
-it differs, so set it only to an endpoint the workers read from.
+Keep `TUIST_CACHE_ENDPOINT` unset unless you need an override. If you set it,
+choose an endpoint reachable by the coordinator that the workers also read from.
+
+### Cache failures
+
+Struo retries transient cache failures up to three times. Interrupted uploads
+restart rather than resume. Authentication, permission and quota refusals,
+invalid requests, request timeouts and local file errors are not retried.
 
 ## Next
 
-Add an [execution provider](/guide/infrastructure/remote-execution) when the
-command should also run away from the current computer. Read
+Read [Remote Execution](/guide/infrastructure/remote-execution) for provider
+selection and declared inputs and outputs. Read
 [Memory](/guide/memory/) to inspect the status, cache state, and action identity
 that Struo records for each run.

@@ -8,13 +8,16 @@ Buildkite schedules workers and reports their status. Struo owns the build
 graph inside each worker. **Generate one job per matching trigger, not one
 job per Struo action.**
 
+**Capabilities:** CI orchestration through the example adapter below. Buildkite
+is not a native Struo execution or shared-cache provider.
+
 ::: warning Example adapter, not a native integration
 This example connects Buildkite to the experimental Struo worker interface.
 There is no installed Struo Buildkite plugin. It covers branch-push verification
 on one Linux x86-64 worker pool, not pull requests, tags, releases, or deployments.
 :::
 
-## Prepare The Service And Workers
+## Prerequisites
 
 Configure the pipeline to receive branch pushes only. Install the generator
 below as `struo-buildkite-pipeline` in your trusted bootstrap image, outside
@@ -37,7 +40,7 @@ files to project code. Agent targeting and `env` entries are not isolation;
 ordinary agent defaults do not establish this boundary. The example assumes
 you already enforce it with your worker infrastructure and trusted hooks.
 
-## Generate Worker Jobs From Approved Triggers
+## Configuration
 
 The adapter reads activated declarations without evaluating project modules.
 It matches the source ref and carries the approved definition revision and
@@ -124,7 +127,7 @@ The adapter supplies only service concerns: worker routing, timeout, and the
 per-job memory budget. Adapt routing for additional worker pools; declaring
 an OS in Struo does not provision or isolate a machine with that OS.
 
-## Validate Before Connecting A Real Pipeline
+## Usage
 
 With a representative clean checkout and Buildkite environment, inspect the
 generated pipeline without changing a running build:
@@ -145,7 +148,7 @@ the job. Publish the aggregate build result through Buildkite; do not turn a
 missing job or a crashed worker into success. Retain run records from `.struo/`
 through trusted infrastructure if you need them after the worker exits.
 
-## Current Limits
+## Limits and cleanup
 
 Buildkite still owns event authentication, worker isolation, cancellation,
 required checks, and recovery. The normalized observation is not an

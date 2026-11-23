@@ -5,7 +5,10 @@ execution providers. With `struo build --remote`, Struo schedules ready compiler
 actions independently, transfers their declared inputs, and collects their
 declared outputs. Dependencies still determine when each action can start.
 
-## Prepare An Immutable Environment
+**Capabilities:** local container execution through Struo's remote-execution
+interface. Docker does not provide shared caching; configure it separately.
+
+## Prerequisites
 
 Install Docker and prepare an image containing the action's tools, `sleep`,
 `mkdir`, `rm`, and `tar` with `--hard-dereference` support, such as GNU tar.
@@ -14,6 +17,8 @@ Pull or build the image yourself, then obtain its local immutable image ID:
 ```sh
 docker image inspect --format '{{.Id}}' your-build-image
 ```
+
+## Configuration
 
 Configure that exact `sha256:` ID in the root `struo.toml`:
 
@@ -30,7 +35,7 @@ Tags and shortened IDs are rejected. Struo does not pull images implicitly.
 Changing the image changes the execution binding and partitions cached results.
 The example value above is a placeholder, not a runnable image ID.
 
-## Build Through The Provider
+## Usage
 
 ```sh
 struo build --remote --compute workers your_target
@@ -54,7 +59,7 @@ host workspace mount nor the Docker socket. Do not give untrusted code control
 of the coordinator or its Docker access. Docker is a development execution
 backend, not a hostile multi-tenant isolation guarantee.
 
-## Resource And Failure Behavior
+## Limits and cleanup
 
 Docker workers share Struo's host admission budget with local actions and also
 reserve capacity against the Docker daemon's reported CPUs and two thirds of
@@ -65,8 +70,7 @@ memory limits, including a matching memory-plus-swap limit, and reservations
 remain held through deletion. Target kinds can declare command resources with
 [`run_action`](/reference/modules/); undeclared requests use Struo's defaults.
 If deletion fails, host CPU, memory, exclusive slots, and daemon reservations
-remain held while background reconciliation retries cleanup. Reconciliation
-does not need to acquire the capacity held by the orphaned container.
+remain held while Struo retries cleanup.
 
 Each action snapshots its Docker endpoint and TLS configuration. Changing the
 current Docker context does not redirect that action or its cleanup. Ownership
@@ -77,17 +81,12 @@ Struo creates a fresh writable container for each uncached command, validates
 returned outputs before installing them, and awaits container cleanup. Failed
 or cancelled operations retain ownership records when cleanup is uncertain.
 Declared `clean_paths` and `create_dirs` apply inside the worker after input
-staging; private coordinator scratch contents are not copied as implicit inputs.
-Response files are restored after cleanup. Ordered actions receive prior
-same-target outputs unless they explicitly opt into independent input staging.
+staging. Struo does not copy private coordinator scratch files as implicit inputs.
 Unsupported action policies fail rather than silently running locally or
 weakening their requirements. Cache hits can restore outputs without starting
 a container.
 
-Archive transfers enforce both progress-stall limits and a separate deadline
-for the worker's acknowledgement after upload completes. Diagnostic output
-does not count as artifact progress. The absolute artifact-transfer deadline
-still bounds transfers that continue making progress.
+Archive transfers have progress-stall limits and an overall deadline.
 
 ## Resolve Xcode On Mac And Compile On Linux
 

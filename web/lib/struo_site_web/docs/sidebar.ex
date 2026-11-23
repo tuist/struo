@@ -166,43 +166,63 @@ defmodule StruoSiteWeb.Docs.Sidebar do
           %Item{label: "Connect A Project", slug: "/docs/guide/infrastructure/connect"},
           %Item{label: "Remote Execution", slug: "/docs/guide/infrastructure/remote-execution"},
           %Item{label: "Triggers (Experimental)", slug: "/docs/guide/infrastructure/triggers"},
-          %Item{label: "Buildkite", slug: "/docs/guide/infrastructure/buildkite"},
-          %Item{label: "Docker", slug: "/docs/guide/infrastructure/docker"},
-          %Item{label: "Object Storage", slug: "/docs/guide/infrastructure/object-storage"},
-          %Item{label: "HTTP Cache", slug: "/docs/guide/infrastructure/http-cache"},
-          %Item{label: "Tuist", slug: "/docs/guide/infrastructure/tuist", icon: "tuist"}
+          %Item{
+            label: "Buildkite (Example)",
+            slug: "/docs/guide/infrastructure/buildkite",
+            icon: "buildkite"
+          }
         ]
       },
       %Group{
-        label: "Sandboxes",
+        label: "Infrastructure Providers",
         items: [
+          %Item{label: "Boat", slug: "/docs/guide/infrastructure/boat", icon: "boat"},
+          %Item{
+            label: "Cloudflare",
+            slug: "/docs/guide/infrastructure/cloudflare",
+            icon: "cloudflare"
+          },
+          %Item{label: "Daytona", slug: "/docs/guide/infrastructure/daytona", icon: "daytona"},
+          %Item{label: "Docker", slug: "/docs/guide/infrastructure/docker", icon: "docker"},
+          %Item{label: "E2B", slug: "/docs/guide/infrastructure/e2b", icon: "e2b"},
+          %Item{
+            label: "HTTP Cache",
+            slug: "/docs/guide/infrastructure/http-cache",
+            icon: "http-cache"
+          },
           %Item{
             label: "Microsandbox",
             slug: "/docs/guide/infrastructure/microsandbox",
             icon: "microsandbox"
           },
-          %Item{label: "E2B", slug: "/docs/guide/infrastructure/e2b", icon: "e2b"},
-          %Item{label: "OpenSandbox", slug: "/docs/guide/infrastructure/opensandbox"},
-          %Item{
-            label: "Daytona",
-            slug: "/docs/guide/infrastructure/daytona",
-            icon: "daytona"
-          },
-          %Item{label: "Boat", slug: "/docs/guide/infrastructure/boat"},
-          %Item{label: "Together", slug: "/docs/guide/infrastructure/together", icon: "together"},
           %Item{
             label: "Northflank",
             slug: "/docs/guide/infrastructure/northflank",
             icon: "northflank"
           },
           %Item{
-            label: "Cloudflare",
-            slug: "/docs/guide/infrastructure/cloudflare",
-            icon: "cloudflare"
+            label: "Object Storage",
+            slug: "/docs/guide/infrastructure/object-storage",
+            icon: "object-storage"
           },
-          %Item{label: "Sprites", slug: "/docs/guide/infrastructure/sprites"},
-          %Item{label: "Tensorlake", slug: "/docs/guide/infrastructure/tensorlake"},
-          %Item{label: "Vercel Sandbox", slug: "/docs/guide/infrastructure/vercel"}
+          %Item{
+            label: "OpenSandbox",
+            slug: "/docs/guide/infrastructure/opensandbox",
+            icon: "opensandbox"
+          },
+          %Item{label: "Sprites", slug: "/docs/guide/infrastructure/sprites", icon: "sprites"},
+          %Item{
+            label: "Tensorlake",
+            slug: "/docs/guide/infrastructure/tensorlake",
+            icon: "tensorlake"
+          },
+          %Item{label: "Together", slug: "/docs/guide/infrastructure/together", icon: "together"},
+          %Item{label: "Tuist", slug: "/docs/guide/infrastructure/tuist", icon: "tuist"},
+          %Item{
+            label: "Vercel Sandbox",
+            slug: "/docs/guide/infrastructure/vercel",
+            icon: "vercel"
+          }
         ]
       },
       %Group{

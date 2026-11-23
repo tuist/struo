@@ -1,15 +1,18 @@
 # Cloudflare Sandbox Containers
 
 Struo runs commands in [Cloudflare Sandbox Containers](https://developers.cloudflare.com/sandbox/)
-through an authenticated Worker that you operate. Cloudflare exposes container
-control to a Durable Object inside that Worker. The Rust CLI calls the Struo
-bridge protocol, not a Cloudflare sandbox REST API.
+through an authenticated Worker bridge that you operate in your account.
+
+**Capabilities:** remote execution through a self-deployed bridge. Configure
+shared caching separately, including when using Cloudflare R2 object storage.
+
+## Prerequisites
 
 You need a Workers Paid account with Containers access and a deployed Struo
 bridge. Installing Struo or selecting this provider does not deploy that
 infrastructure. An administrator must approve the deployment and its costs.
 
-## Deploy The Bridge
+### Deploy the bridge
 
 Use Struo's Cloudflare sandbox bridge project. Install its
 locked dependencies with `npm ci`, run `npm test` and `npm run check`, then
@@ -30,7 +33,7 @@ For reproducible caching, use a versioned image key bound to an immutable
 digest and change the key when changing the image. The managed image reference
 does not promise immutable contents.
 
-## Configure Struo
+## Configuration
 
 ```toml
 [infrastructures.remote_tests]
@@ -47,6 +50,8 @@ a Cloudflare account API token as the bridge credential. The CLI authenticates
 each bridge call and refuses redirects. HTTP is accepted only on loopback for
 local development.
 
+## Usage
+
 Run `struo exec --remote -- node --version`, or select the named provider with
 `struo exec --remote --compute remote_tests -- node --version`. Annotated
 scripts can select `# struo remote "remote_tests"`.
@@ -58,21 +63,11 @@ the guest's Linux architecture and ABI. See
 [Remote Execution](/guide/infrastructure/remote-execution) for dependency and
 test actions.
 
-## Transfer And Execution Contract
+## Limits and cleanup
 
-The bridge exposes an authenticated `/v1` protocol:
-
-| Request | Contract |
-| --- | --- |
-| `POST /sandboxes` | Provision one container for a unique ownership marker, selected image, CPU and memory request, and transfer/capture limits. Return that marker as `id`. |
-| `GET /sandboxes?marker=…` | Return owned records with their exact markers, including uncertain creates and failed deletions. |
-| `PUT /sandboxes/{id}/inputs/{offset}` | Append an ordered input tar chunk of at most 8 MiB. Reject replayed offsets. |
-| `POST /sandboxes/{id}/stage` | Extract the uploaded declared inputs into the fresh execution root. |
-| `POST /sandboxes/{id}/exec` | Execute literal `argv`, explicit environment and working directory once. Return a required integer `exitCode`. |
-| `GET /sandboxes/{id}/stdout` or `/stderr` | Stream separate binary captures from guest disk. |
-| `POST /sandboxes/{id}/outputs` | Pack only the declared relative `paths`. |
-| `GET /sandboxes/{id}/outputs` | Stream the output tar. Struo validates paths, archive limits and declared-output containment before installing it. |
-| `DELETE /sandboxes/{id}` | Destroy the whole container, confirm destruction and retain a tombstone against delayed creates. |
+Struo transfers only declared inputs and restores declared outputs after an
+accepted exit. It preserves separate binary stdout and stderr and validates
+output paths before installing files in your workspace.
 
 Struo spends one action deadline across provisioning, input staging, execution
 and output retrieval. The bridge expires the container after one hour, even if
@@ -96,7 +91,7 @@ requirements. Each deployment trusts one bridge token: use separate deployments
 for separate tenants. The bridge token stays in the Worker and CLI, never in
 the command environment.
 
-## Verification Boundary
+### Deployment verification
 
 The bundled regression tests exercise the bridge with container doubles and a
 local process-backed dependency/output roundtrip, and the Rust adapter with

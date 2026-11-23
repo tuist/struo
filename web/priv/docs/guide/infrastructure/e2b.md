@@ -5,12 +5,16 @@ templates. Struo creates one sandbox for each action that misses the cache,
 transfers declared inputs, runs the command, retrieves declared outputs, and
 deletes the sandbox.
 
-## Prepare A Template
+**Capabilities:** remote execution. Configure shared caching separately.
+
+## Prerequisites
 
 Create an [E2B template](https://e2b.dev/docs/template) containing the stable
 tools shared by your actions. A Vitest template should provide Node.js, npm,
 and `tar`. Keep repository dependencies such as `node_modules` in the action
 graph instead of baking them into the template.
+
+## Configuration
 
 Add the template name or identifier to the repository root `struo.toml`:
 
@@ -26,7 +30,7 @@ provider = "remote_tests"
 Pin the template contents so two executions with the same action identity see
 the same tools.
 
-## Authenticate
+### Authentication
 
 Set the provider access key outside the script:
 
@@ -38,7 +42,7 @@ export E2B_API_KEY=e2b_...
 authenticates sandbox creation, file transfer, and deletion. Struo does not
 forward it to the action process.
 
-## Run
+## Usage
 
 Use the workspace default:
 
@@ -61,7 +65,7 @@ An annotated script can select it with:
 See [Remote Execution](/guide/infrastructure/remote-execution) for a two-action
 Vitest example.
 
-## Lifecycle And Network Access
+## Limits and cleanup
 
 Struo creates E2B sandboxes with secure system communication, outbound network
 access, a finite lifetime, and kill-on-timeout behavior. Outbound access lets

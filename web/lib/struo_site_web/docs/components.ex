@@ -15,6 +15,7 @@ defmodule StruoSiteWeb.Docs.Components do
     "Typed Graph" => "subtask",
     "Toolchains" => "stack_2",
     "Infrastructure" => "server",
+    "Infrastructure Providers" => "server",
     "Memory" => "package",
     "Language Libraries" => "apps",
     "References" => "file_text",

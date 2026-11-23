@@ -5,7 +5,16 @@ an isolated micro-virtual-machine on the local computer. It is useful for
 validating the same declared input and output contract used by the hosted E2B
 and Daytona executors.
 
-## Configure An Execution Environment
+**Capabilities:** local micro-VM execution through Struo's remote-execution
+interface. Configure shared caching separately.
+
+## Prerequisites
+
+Use Linux or Apple Silicon macOS with the virtualization support required by
+[Microsandbox](https://github.com/microsandbox/microsandbox). Prepare an image
+containing the runtime and tools your actions need.
+
+## Configuration
 
 Give the infrastructure a name based on its role. The name is a policy label,
 not the name of the test framework:
@@ -23,13 +32,15 @@ The provider definition selects the Microsandbox executor adapter and the
 image that supplies tools such as [Node.js](https://nodejs.org/). Pin the image
 to an immutable digest for reproducible shared workflows.
 
+## Usage
+
 Run one command through the configured provider:
 
 ```sh
 struo exec --remote -- node --version
 ```
 
-## Select The Provider From A Script
+### Select the provider from a script
 
 An annotated script can name the same infrastructure directly:
 
@@ -48,7 +59,7 @@ Struo resolves `remote_tests` through the root manifest. The command uses the
 Node.js executable from the configured image. Struo does not copy a
 machine-specific interpreter path or import the host tool environment.
 
-## Model Package Dependencies As An Action
+### Model package dependencies as an action
 
 The image should contain tools that are stable across many actions. Repository
 dependencies belong in the action graph. For example, an install script can
@@ -82,18 +93,13 @@ package manager store. If an existing workflow must copy such a tree, declare
 it as an `input`; Struo transfers it recursively and rejects symbolic links that
 escape the declared input trees.
 
-## Filesystem Boundary
+## Limits and cleanup
 
 The Microsandbox executor starts with a clean workspace. Before execution,
 Struo creates the declared working directory and transfers only declared input
 files, directories, and safe symbolic links. After a successful command, Struo
 retrieves only declared outputs and installs them into the workspace through a
 staging directory.
-
-The local adapter streams these trees through the Microsandbox filesystem
-service. Hosted E2B and Daytona adapters package the same declared trees into
-archives for transfer. A future hosted executor can use a content-addressed
-missing-file exchange without changing the script contract.
 
 Struo stops the micro-virtual-machine and removes its persisted state after
 success, failure, or timeout.

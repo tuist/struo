@@ -4,7 +4,18 @@
 creates a disposable Sprite for each uncached action, uploads declared inputs,
 runs the command, retrieves declared outputs, and deletes the Sprite.
 
-## Configure And Authenticate
+**Capabilities:** remote execution. Configure shared caching separately.
+
+## Prerequisites
+
+Use a Sprites account and token with creation, execution, file-transfer and
+deletion access. Sprites supplies its standard Linux environment; Struo does
+not accept custom images or templates or pin that environment to an immutable
+image. Verify the tool versions your scripts need before reusing cached
+results across environment updates. The guest must provide `tar` with
+`--hard-dereference` support, `mkdir`, and GNU `dd`.
+
+## Configuration
 
 Add a provider to the root `struo.toml`:
 
@@ -21,6 +32,8 @@ Struo uses this bearer token for creation, file transfer, command execution,
 and deletion. Struo does not forward it to the command unless you explicitly
 declare it in the action environment.
 
+## Usage
+
 ```sh
 struo exec --remote --compute remote_tests -- ./scripts/test.sh
 ```
@@ -32,32 +45,14 @@ dependency-installation and Vitest actions. Declare `node_modules` as an output
 of installation and an input to testing. Install native dependencies on the
 same Linux architecture as the Sprite, rather than copying them from macOS.
 
-## Environment And Transfers
+## Limits and cleanup
 
-Sprites supplies its standard Linux environment. Struo does not accept custom
-images or templates for this provider, and cannot pin the provider's base
-environment to an immutable image. Verify the Node.js and other tool versions
-your scripts need before relying on cached results across environment updates.
-The environment must provide `tar` with `--hard-dereference` support, `mkdir`,
-and GNU `dd`.
+Struo preserves executable modes, safe symbolic links and separate binary
+stdout and stderr. It validates outputs before installation. Interrupted
+execution without an exit status fails the action. Transfers must make
+progress within the configured stall timeout; quiet commands may remain silent.
 
-Struo transfers archives as raw binary data through the filesystem API. It
-splits uploads into requests of at most 16 MiB, then assembles the archive in
-the Sprite. Large dependency directories do not require one request per file.
-Struo preserves executable modes and safe workspace symbolic links, copies
-hard-linked outputs as independent files, and validates downloaded archives
-before installing declared outputs.
-
-Struo uses non-TTY WebSocket exec to preserve separate binary stdout and
-stderr streams and the reported process exit code. A disconnected stream
-without an exit status fails the action. Struo does not use HTTP exec, whose
-current framing relies on HTTP transport chunk boundaries.
-Partial WebSocket messages and blocked writes must make progress within the
-configured stall timeout. Quiet commands may remain silent between messages.
-
-## Disposal And Recovery
-
-Struo sends `DELETE /v1/sprites/{name}` after success, command failure, timeout,
+Struo deletes the Sprite after success, command failure, timeout,
 or transfer failure. Idle hibernation does not delete a Sprite or its storage.
 Cancellation cleanup retains the admission lease until deletion finishes.
 
@@ -78,6 +73,5 @@ delete orphaned Sprites through your account; no finite provider-side lifetime
 backs up this cleanup.
 
 `STRUO_SPRITES_API_URL` overrides `https://api.sprites.dev` for testing or a
-compatible endpoint. Protocol details follow the
-[canonical API specification](https://api.sprites.dev/openapi.json) and the
-[exec protocol](https://sprites.dev/api/sprites/exec).
+compatible endpoint. See the [Sprites documentation](https://sprites.dev/)
+for account limits and billing.

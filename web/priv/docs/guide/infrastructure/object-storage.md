@@ -8,7 +8,16 @@ directly.
 Use it for development teams and CI fleets that already have a bucket, for a
 self-hosted cache, or to try shared caching without an account anywhere.
 
-## Configure A Bucket
+**Capabilities:** shared caching. This provider does not execute actions.
+
+## Prerequisites
+
+Create a bucket or container in Amazon S3, Google Cloud Storage, Azure Blob
+Storage, or an API-compatible service. A local or mounted directory also works.
+Give trusted clients read/write access and untrusted jobs read-only access.
+Configure retention in the storage service.
+
+## Configuration
 
 Name the bucket in the repository root `struo.toml`:
 
@@ -47,7 +56,7 @@ options = { endpoint = "https://ACCOUNT_ID.r2.cloudflarestorage.com", region = "
 
 Option names follow the configuration keys of the Rust `object_store` library,
 with or without their `aws_`, `google_`, or `azure_` prefix, plus `profile` for
-S3 (see [Authenticate](#authenticate)). Unknown names are rejected. Credential
+S3 (see [Authentication](#authentication)). Unknown names are rejected. Credential
 options, such as `secret_access_key` or `account_key`, are also rejected so
 that secrets never land in a configuration file; set them in the environment
 instead. Options that only point at credentials, such as a token file path or a
@@ -57,7 +66,7 @@ The same `kind = "object_store"` table works in `~/.config/struo/config.toml`
 for a personal default, and as `[cache_provider]` with `kind = "object_store"`
 for a single workspace.
 
-## Authenticate
+### Authentication
 
 Struo reads credentials from the environment variables and ambient identity
 each service's own tools use:
@@ -103,7 +112,14 @@ container or metadata endpoint in `options` switches S3 back to the storage
 library's own credential lookup, which does not read `~/.aws` profiles; such
 options cannot be combined with `profile`.
 
-## Restrict Untrusted Jobs
+## Usage
+
+Run cacheable scripts or builds as usual. To verify sharing, use a second
+client with an empty local cache and the same configuration and inputs. A
+successful write or a hit from the first client's local cache does not prove
+remote reuse.
+
+### Restrict untrusted jobs
 
 Content is verified against its digest before Struo uses it, but an action
 result is a record whose correctness Struo cannot check. Anyone who can write
@@ -123,7 +139,9 @@ object storage cache. It does not disable Tuist uploads. The environment can
 only make access narrower; it cannot turn publishing back on for a provider
 configured with `read_only = true`.
 
-## Manage Retention
+## Limits and cleanup
+
+### Retention
 
 Struo never deletes objects from the bucket. Local garbage collection and
 `struo cache action forget` affect only the local cache. Configure retention
@@ -134,7 +152,7 @@ one day.
 Expiring content is safe. A shared result whose referenced content has been
 deleted is treated as a miss, and Struo runs the action again.
 
-## Failures
+### Failures
 
 - **Unreachable or throttled service:** each request retries up to three times
   within 30 seconds. After that, the action runs locally and the result is kept
@@ -163,31 +181,21 @@ Reads issue a metadata request before downloading an object so Struo can
 reserve memory and staging disk before starting the body transfer. These
 requests count toward the storage service's request charges and rate limits.
 
-## Supported Services
+### Service compatibility
 
 The `s3://`, `gs://`, and `az://` backends use each service's REST API, so any
 service implementing that API with standard request signing is expected to
-work. Struo's own checks have exercised these setups:
-
-| Setup | Status |
-| --- | --- |
-| S3 API through the moto emulator | Tested: remote reuse across two clients and read-only mode |
-| S3 credentials from `~/.aws` profiles, through the moto emulator | Tested: a static-key profile and a `credential_process` profile, selected by `AWS_PROFILE` and by `options.profile`; an unknown profile fails the command |
-| S3 credentials from IAM Identity Center (SSO), assumed roles, web identity, ECS, EKS, and EC2 instance metadata | Supported through the AWS SDK credential chain; not yet tested |
-| S3 endpoint that is not running | Tested: actions fall back to local execution |
-| In-memory store in automated tests | Tested: eviction, corrupt and truncated content, refused reads, upload ordering, staging budget |
-| Azure Blob Storage through the Azurite emulator | Tested: remote reuse, multipart upload of a 12 MB blob, refused credentials |
-| `file://` directory | Tested, including multipart writes |
-| Amazon S3 | Protocol compatible; not yet tested against the live service |
-| Google Cloud Storage | Protocol compatible; not yet tested against the live service or an emulator |
-| Azure Blob Storage | Protocol compatible; tested only through Azurite |
-| Cloudflare R2, MinIO, Backblaze B2, Wasabi, DigitalOcean Spaces, Tigris, Ceph RGW, and other S3-compatible services | Protocol compatible through `endpoint`; not yet tested |
+work. Automated checks cover S3 through moto, Azure through Azurite, and local
+directories. Live Amazon S3, Google Cloud Storage, Azure and S3-compatible
+services have not been verified. This includes Cloudflare R2, MinIO, Backblaze
+B2, Wasabi, DigitalOcean Spaces, Tigris and Ceph RGW. Validate your chosen
+service and authentication method before relying on it.
 
 Some S3-compatible services need `virtual_hosted_style_request = "true"` or a
 specific `region`, such as `auto` for Cloudflare R2. Plain HTTP endpoints, such
 as a local MinIO, need `allow_http = "true"`.
 
-## Limitations
+### Storage limits
 
 - Content is stored uncompressed, so transfer and storage costs match the raw
   size of outputs.

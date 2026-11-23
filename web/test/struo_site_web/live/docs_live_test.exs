@@ -41,6 +41,25 @@ defmodule StruoSiteWeb.DocsLiveTest do
   end
 
   test "serves infrastructure provider guides and contracts", %{conn: conn} do
+    providers =
+      StruoSiteWeb.Docs.Sidebar.guide_tree()
+      |> Enum.find(&(&1.label == "Infrastructure Providers"))
+
+    for provider <- providers.items do
+      {:ok, view, _html} = live(conn, provider.slug)
+      assert has_element?(view, "article h1")
+      assert has_element?(view, "article strong", "Capabilities:")
+
+      for heading <- ["Prerequisites", "Configuration", "Usage", "Limits and cleanup"] do
+        assert has_element?(view, "article h2", heading)
+      end
+
+      assert has_element?(
+               view,
+               "#docs-sidebar a[href='#{provider.slug}'] [data-selected] [data-icon='#{provider.icon}']"
+             )
+    end
+
     for {path, title} <- [
           {"/docs/guide/infrastructure/providers", "Become an Infrastructure Provider"},
           {"/docs/guide/infrastructure/boat", "Boat"},

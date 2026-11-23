@@ -45,33 +45,41 @@ defmodule StruoSiteWeb.Docs.SidebarTest do
     refute Sidebar.item_or_children_active?(parent, "/docs/reference/prelude/other")
   end
 
-  test "sandbox providers have their own category and company logos" do
+  test "infrastructure providers include execution and cache providers with icons" do
     infrastructure =
       Sidebar.guide_tree()
       |> Enum.find(&(&1.label == "Infrastructure"))
 
-    sandboxes = Enum.find(Sidebar.guide_tree(), &(&1.label == "Sandboxes"))
+    providers = Enum.find(Sidebar.guide_tree(), &(&1.label == "Infrastructure Providers"))
 
-    assert Map.new(sandboxes.items, &{&1.label, &1.icon}) == %{
-             "Boat" => nil,
+    assert Map.new(providers.items, &{&1.label, &1.icon}) == %{
+             "Boat" => "boat",
              "Cloudflare" => "cloudflare",
              "Daytona" => "daytona",
+             "Docker" => "docker",
              "E2B" => "e2b",
+             "HTTP Cache" => "http-cache",
              "Microsandbox" => "microsandbox",
              "Northflank" => "northflank",
-             "Sprites" => nil,
-             "Tensorlake" => nil,
-             "OpenSandbox" => nil,
+             "Object Storage" => "object-storage",
+             "Sprites" => "sprites",
+             "OpenSandbox" => "opensandbox",
+             "Tensorlake" => "tensorlake",
              "Together" => "together",
-             "Vercel Sandbox" => nil
+             "Tuist" => "tuist",
+             "Vercel Sandbox" => "vercel"
            }
+
+    labels = Enum.map(providers.items, & &1.label)
+    assert labels == Enum.sort(labels)
 
     refute Enum.any?(
              infrastructure.items,
-             &(&1.slug in Enum.map(sandboxes.items, fn item -> item.slug end))
+             &(&1.slug in Enum.map(providers.items, fn item -> item.slug end))
            )
 
-    assert Enum.find(infrastructure.items, &(&1.label == "Tuist")).icon == "tuist"
+    assert Enum.find(infrastructure.items, &(&1.label == "Buildkite (Example)")).icon ==
+             "buildkite"
   end
 
   test "natively supported toolchains live in their own group with logos" do

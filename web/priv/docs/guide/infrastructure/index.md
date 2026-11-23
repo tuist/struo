@@ -101,7 +101,8 @@ It can also use either capability on its own.
 | [Sprites](/guide/infrastructure/sprites) | Execution | Hosted Linux environment | Run scripts in a disposable Fly.io Sprite. |
 | [OpenSandbox](/guide/infrastructure/opensandbox) | Execution | Self-hosted container image | Run actions on your own sandbox service. |
 | [Vercel Sandbox](/guide/infrastructure/vercel) | Execution | Hosted runtime | Run isolated tests with declared local dependencies. |
-| [Tuist](/guide/infrastructure/tuist) | Shared cache, artifacts | Not applicable | Reuse action results and share installable applications. |
+| [Cloudflare](/guide/infrastructure/cloudflare) | Execution | Containers through your Worker bridge | Run actions in your Cloudflare account. |
+| [Tuist](/guide/infrastructure/tuist) | Execution, shared cache, artifacts, live reporting | Single-use Linux workers when execution is enabled | Reuse results, run graph actions, follow runs and share applications. |
 | [Object storage](/guide/infrastructure/object-storage) | Shared cache | Your S3, Google Cloud Storage, or Azure bucket | Share results through storage you already run, without a cache service. |
 | [HTTP cache](/guide/infrastructure/http-cache) | Shared cache | Any server with `GET`, `HEAD`, and `PUT` | Reuse a build cache your CI runners already reach. |
 

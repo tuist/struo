@@ -195,8 +195,26 @@ p {
   --nav-icon-color: #f38020;
 }
 
+#docs-sidebar [data-part="nav-item-icon"][data-icon="boat"] {
+  --nav-icon-mask: url("/docs/icons/boat.svg");
+}
+#docs-sidebar [data-part="nav-item-icon"][data-icon="http-cache"] {
+  --nav-icon-mask: url("/docs/icons/http-cache.svg");
+}
+#docs-sidebar [data-part="nav-item-icon"][data-icon="object-storage"] {
+  --nav-icon-mask: url("/docs/icons/object-storage.svg");
+}
+#docs-sidebar [data-part="nav-item-icon"][data-icon="vercel"] {
+  --nav-icon-mask: url("/docs/icons/vercel.svg");
+}
+
 #docs-sidebar [data-part="nav-item-icon"][data-icon="ruby"],
 #docs-sidebar [data-part="nav-item-icon"][data-icon="javascript"],
+#docs-sidebar [data-part="nav-item-icon"][data-icon="buildkite"],
+#docs-sidebar [data-part="nav-item-icon"][data-icon="docker"],
+#docs-sidebar [data-part="nav-item-icon"][data-icon="opensandbox"],
+#docs-sidebar [data-part="nav-item-icon"][data-icon="sprites"],
+#docs-sidebar [data-part="nav-item-icon"][data-icon="tensorlake"],
 #docs-sidebar [data-part="nav-item-icon"][data-icon="microsandbox"],
 #docs-sidebar [data-part="nav-item-icon"][data-icon="e2b"],
 #docs-sidebar [data-part="nav-item-icon"][data-icon="daytona"],
@@ -216,6 +234,21 @@ p {
 #docs-sidebar [data-part="nav-item-icon"][data-icon="javascript"] {
   background-image: url("/docs/icons/javascript.svg");
 }
+#docs-sidebar [data-part="nav-item-icon"][data-icon="buildkite"] {
+  background-image: url("/docs/icons/buildkite.png");
+}
+#docs-sidebar [data-part="nav-item-icon"][data-icon="docker"] {
+  background-image: url("/docs/icons/docker.png");
+}
+#docs-sidebar [data-part="nav-item-icon"][data-icon="opensandbox"] {
+  background-image: url("/docs/icons/opensandbox.svg");
+}
+#docs-sidebar [data-part="nav-item-icon"][data-icon="sprites"] {
+  background-image: url("/docs/icons/sprites.png");
+}
+#docs-sidebar [data-part="nav-item-icon"][data-icon="tensorlake"] {
+  background-image: url("/docs/icons/tensorlake.svg");
+}
 #docs-sidebar [data-part="nav-item-icon"][data-icon="microsandbox"] {
   background-image: url("/docs/icons/microsandbox.png");
 }
@@ -232,5 +265,5 @@ p {
   background-image: url("/docs/icons/northflank.svg");
 }
 #docs-sidebar [data-part="nav-item-icon"][data-icon="tuist"] {
-  background-image: url("/docs/icons/tuist.png");
+  background-image: url("/docs/icons/tuist.svg");
 }
