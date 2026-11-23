@@ -73,6 +73,7 @@ run_task = "phx.server"
 config = ["config/**/*.exs"]
 data = [
   "assets/**/*",
+  "priv/posts/**/*.md",
   "priv/changelog/**/*.md",
   "priv/docs/guide/**/*.md",
   "priv/docs/reference/index.md",
@@ -89,6 +90,7 @@ data = [
   "priv/static/images/*.svg",
 ]
 priv = [
+  "priv/posts/**/*.md",
   "priv/changelog/**/*.md",
   "priv/docs/guide/**/*.md",
   "priv/docs/reference/index.md",
@@ -129,6 +131,7 @@ config = ["config/**/*.exs"]
 data = [
   ".formatter.exs",
   "mix.lock",
+  "priv/posts/**/*.md",
   "priv/changelog/**/*.md",
   "priv/docs/guide/**/*.md",
   "priv/docs/reference/index.md",
@@ -145,6 +148,7 @@ data = [
   "priv/static/images/*.svg",
 ]
 priv = [
+  "priv/posts/**/*.md",
   "priv/changelog/**/*.md",
   "priv/docs/guide/**/*.md",
   "priv/docs/reference/index.md",
@@ -186,6 +190,7 @@ data = [
   "deps/phoenix_html/priv/static/*",
   "deps/phoenix_live_view/package.json",
   "deps/phoenix_live_view/priv/static/*",
+  "priv/posts/**/*.md",
   "priv/changelog/**/*.md",
   "priv/docs/guide/**/*.md",
   "priv/docs/reference/index.md",
@@ -230,6 +235,7 @@ compile_args = ["--warnings-as-errors"]
 config = ["config/config.exs", "config/prod.exs"]
 data = [
   "assets/**/*",
+  "priv/posts/**/*.md",
   "priv/changelog/**/*.md",
   "priv/docs/guide/**/*.md",
   "priv/docs/reference/index.md",
@@ -246,6 +252,7 @@ data = [
   "priv/static/images/*.svg",
 ]
 priv = [
+  "priv/posts/**/*.md",
   "priv/changelog/**/*.md",
   "priv/docs/guide/**/*.md",
   "priv/docs/reference/index.md",
