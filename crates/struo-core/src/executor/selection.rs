@@ -18,6 +18,7 @@ pub enum Executor {
     E2b,
     Daytona,
     Boat,
+    LangSmith,
     Together,
     Northflank,
     Cloudflare,
@@ -75,6 +76,7 @@ impl Executor {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn from_binding(binding: &RemoteExecution) -> Result<Self> {
         let executor = match binding.executor.as_deref().unwrap_or(&binding.provider) {
             "local" if binding.environment.is_none() => Ok(Self::Local),
@@ -86,6 +88,7 @@ impl Executor {
             "e2b" => Ok(Self::E2b),
             "daytona" => Ok(Self::Daytona),
             "boat" => Ok(Self::Boat),
+            "langsmith" => Ok(Self::LangSmith),
             "together" => Ok(Self::Together),
             "northflank" => Ok(Self::Northflank),
             "cloudflare" => Ok(Self::Cloudflare),
@@ -103,6 +106,17 @@ impl Executor {
             && (binding.account.is_some() || binding.project.is_some())
         {
             return Err(executor.unsupported("explicit account/project execution scoping"));
+        }
+        if executor == Self::LangSmith
+            && binding
+                .environment
+                .as_deref()
+                .is_none_or(|snapshot| snapshot.trim().is_empty())
+        {
+            return Err(Error::RemoteProviderConfig {
+                provider: binding.provider.clone(),
+                message: "LangSmith requires an explicit prepared snapshot in environment".into(),
+            });
         }
         if executor == Self::Northflank
             && (binding
@@ -189,6 +203,7 @@ impl Executor {
             Self::Local
             | Self::Daytona
             | Self::Boat
+            | Self::LangSmith
             | Self::Together
             | Self::Northflank
             | Self::Cloudflare
@@ -214,6 +229,7 @@ impl Executor {
             Self::E2b
             | Self::Daytona
             | Self::Boat
+            | Self::LangSmith
             | Self::Together
             | Self::Northflank
             | Self::Cloudflare
@@ -232,6 +248,7 @@ impl Executor {
             Self::E2b => "e2b",
             Self::Daytona => "daytona",
             Self::Boat => "boat",
+            Self::LangSmith => "langsmith",
             Self::Together => "together",
             Self::Northflank => "northflank",
             Self::Cloudflare => "cloudflare",

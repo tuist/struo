@@ -193,6 +193,7 @@ fn resolve_named_workspace_provider(
         | InfrastructureProviderConfig::Tensorlake { .. }
         | InfrastructureProviderConfig::E2b(_)
         | InfrastructureProviderConfig::Boat(_)
+        | InfrastructureProviderConfig::LangSmith(_)
         | InfrastructureProviderConfig::Docker(_)
         | InfrastructureProviderConfig::Together(_)
         | InfrastructureProviderConfig::Northflank(_)

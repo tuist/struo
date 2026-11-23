@@ -6577,6 +6577,7 @@ dependencies = [
  "tokio-tungstenite",
  "tokio-util",
  "tracing",
+ "uuid",
  "zip",
 ]
 

@@ -284,6 +284,20 @@ SH
     The stderr should include 'set STRUO_BOAT_API_KEY or BOAT_API_KEY'
   End
 
+  It 'resolves LangSmith infrastructure without provisioning when credentials are missing'
+    cat > "$WORKSPACE/struo.toml" <<'TOML'
+[infrastructures.remote_tests]
+kind = "langsmith"
+snapshot = "node-tests:v1"
+[infrastructure.execution]
+provider = "remote_tests"
+TOML
+    When call env -u LANGSMITH_API_KEY -u STRUO_LANGSMITH_API_KEY "$STRUO_BIN" -C "$WORKSPACE" exec --remote -- sh -c 'printf must-not-run'
+    The status should be failure
+    The stdout should equal ''
+    The stderr should include 'set STRUO_LANGSMITH_API_KEY or LANGSMITH_API_KEY'
+  End
+
   It 'resolves Tensorlake infrastructure without provisioning when credentials are missing'
     cat > "$WORKSPACE/struo.toml" <<'TOML'
 [infrastructures.remote_tests]

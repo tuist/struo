@@ -39,6 +39,7 @@ tempfile.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+uuid.workspace = true
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-native-roots"] }
 jsonwebtoken = { version = "10.2.0", default-features = false, features = ["rust_crypto"] }
 libc.workspace = true

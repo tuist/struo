@@ -144,6 +144,11 @@ async fn remote_script_resolves_named_executor_and_dependency_outputs() {
             Some("node-tests-v1"),
         ),
         (
+            "kind = \"langsmith\"\nsnapshot = \"node-tests:v1\"",
+            "langsmith",
+            Some("node-tests:v1"),
+        ),
+        (
             "kind = \"vercel\"\nruntime = \"node24\"",
             "vercel",
             Some("node24"),

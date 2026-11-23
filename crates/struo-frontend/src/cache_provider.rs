@@ -111,6 +111,11 @@ pub struct BoatExecutionProviderConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LangSmithExecutionProviderConfig {
+    pub snapshot: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VercelExecutionProviderConfig {
     pub runtime: String,
 }
@@ -148,6 +153,7 @@ pub enum InfrastructureProviderConfig {
     E2b(E2bExecutionProviderConfig),
     Daytona(DaytonaExecutionProviderConfig),
     Boat(BoatExecutionProviderConfig),
+    LangSmith(LangSmithExecutionProviderConfig),
     Vercel(VercelExecutionProviderConfig),
     Together(TogetherExecutionProviderConfig),
     Northflank(NorthflankExecutionProviderConfig),
@@ -250,6 +256,10 @@ pub(crate) enum InfrastructureProviderToml {
         image: String,
     },
     Boat {
+        snapshot: String,
+    },
+    #[serde(rename = "langsmith")]
+    LangSmith {
         snapshot: String,
     },
     Vercel {
@@ -405,6 +415,18 @@ impl InfrastructureProviderToml {
                 let snapshot =
                     required_value(display_name, provider_name, "boat", "snapshot", &snapshot)?;
                 InfrastructureProviderConfig::Boat(BoatExecutionProviderConfig { snapshot })
+            }
+            Self::LangSmith { snapshot } => {
+                let snapshot = required_value(
+                    display_name,
+                    provider_name,
+                    "langsmith",
+                    "snapshot",
+                    &snapshot,
+                )?;
+                InfrastructureProviderConfig::LangSmith(LangSmithExecutionProviderConfig {
+                    snapshot,
+                })
             }
             Self::Vercel { runtime } => {
                 let runtime =

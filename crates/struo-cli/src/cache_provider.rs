@@ -353,6 +353,7 @@ fn resolve_named_workspace_provider(
         | InfrastructureProviderConfig::E2b(_)
         | InfrastructureProviderConfig::Daytona(_)
         | InfrastructureProviderConfig::Boat(_)
+        | InfrastructureProviderConfig::LangSmith(_)
         | InfrastructureProviderConfig::Together(_)
         | InfrastructureProviderConfig::Northflank(_)
         | InfrastructureProviderConfig::Cloudflare(_)
@@ -456,6 +457,7 @@ fn remote_from_workspace_provider(
         }
         InfrastructureProviderConfig::Daytona(config) => ("daytona", Some(config.image)),
         InfrastructureProviderConfig::Boat(config) => ("boat", Some(config.snapshot)),
+        InfrastructureProviderConfig::LangSmith(config) => ("langsmith", Some(config.snapshot)),
         InfrastructureProviderConfig::Vercel(config) => ("vercel", Some(config.runtime)),
         InfrastructureProviderConfig::Together(config) => ("together", Some(config.snapshot)),
         InfrastructureProviderConfig::Northflank(config) => {
@@ -531,6 +533,7 @@ fn is_builtin_execution_provider(name: &str) -> bool {
             | "e2b"
             | "daytona"
             | "boat"
+            | "langsmith"
             | "together"
             | "northflank"
             | "cloudflare"
@@ -1411,6 +1414,41 @@ image = "node:22-bookworm"
                 properties: BTreeMap::new(),
             }
         );
+    }
+
+    #[test]
+    fn resolve_execution_uses_named_langsmith_snapshot_and_rejects_cache_use() {
+        let tmp = TempDir::new().unwrap();
+        let xdg = xdg_under(tmp.path());
+        write_workspace(
+            tmp.path(),
+            r#"
+[infrastructures.remote_tests]
+kind = "langsmith"
+snapshot = "node-tests:v1"
+[infrastructure.execution]
+provider = "remote_tests"
+"#,
+        );
+        let remote = resolve_execution(tmp.path(), &xdg, None).unwrap();
+        assert_eq!(remote.executor.as_deref(), Some("langsmith"));
+        assert_eq!(remote.environment.as_deref(), Some("node-tests:v1"));
+        assert_eq!(remote.provider, "remote_tests");
+        assert!(resolve_named_workspace_provider(
+            NamedCacheProviderConfig {
+                name: "remote_tests".into(),
+                account: None,
+                project: None
+            },
+            InfrastructureProviderConfig::LangSmith(
+                struo_frontend::LangSmithExecutionProviderConfig {
+                    snapshot: "node-tests:v1".into()
+                }
+            )
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("not shared caching"));
     }
 
     #[test]

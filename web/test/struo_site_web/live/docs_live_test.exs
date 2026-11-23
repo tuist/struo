@@ -56,8 +56,15 @@ defmodule StruoSiteWeb.DocsLiveTest do
 
       assert has_element?(
                view,
-               "#docs-sidebar a[href='#{provider.slug}'] [data-selected] [data-icon='#{provider.icon}']"
+               "#docs-sidebar a[href='#{provider.slug}'] [data-selected]"
              )
+
+      if provider.icon do
+        assert has_element?(
+                 view,
+                 "#docs-sidebar a[href='#{provider.slug}'] [data-selected] [data-icon='#{provider.icon}']"
+               )
+      end
     end
 
     for {path, title} <- [

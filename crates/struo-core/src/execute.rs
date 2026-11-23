@@ -453,6 +453,7 @@ async fn execute_command(
             | Executor::E2b
             | Executor::Daytona
             | Executor::Boat
+            | Executor::LangSmith
             | Executor::Together
             | Executor::Northflank
             | Executor::Cloudflare

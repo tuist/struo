@@ -59,6 +59,7 @@ defmodule StruoSiteWeb.Docs.SidebarTest do
              "Docker" => "docker",
              "E2B" => "e2b",
              "HTTP Cache" => "http-cache",
+             "LangSmith" => nil,
              "Microsandbox" => "microsandbox",
              "Northflank" => "northflank",
              "Object Storage" => "object-storage",

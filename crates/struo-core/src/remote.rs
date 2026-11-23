@@ -13,6 +13,7 @@ mod daytona;
 mod docker;
 mod e2b;
 mod http;
+mod langsmith;
 mod lifecycle;
 mod microsandbox;
 mod northflank;
@@ -126,6 +127,16 @@ pub(crate) async fn execute_command(
         Executor::Microsandbox => {
             microsandbox::execute_command(remote, command, workspace_root, cache, stream_to_parent)
                 .await
+        }
+        Executor::LangSmith => {
+            Box::pin(langsmith::execute_command(
+                remote,
+                command,
+                workspace_root,
+                cache,
+                stream_to_parent,
+            ))
+            .await
         }
         Executor::Boat => {
             Box::pin(boat::execute_command(
