@@ -1,43 +1,69 @@
 %{
   title: "Builds are the new bottleneck",
-  description: "Agents produce more code than toolchains can build and test. Why we built Struo to bring remote caching and execution to the projects you already have.",
+  description: "We want more teams to benefit from faster builds and tests, without having to change how they define their projects or where they run them.",
   authors: ["pedro"]
 }
 ---
 
-When we started building infrastructure at [Tuist](https://tuist.dev), we expected agents to change how much code teams could produce. More code would mean more builds and tests, often with several agents working on the same repository at once. Companies would need more compute and a way to make the most efficient use of it. That meant reusing results instead of compiling the same dependencies again, and scheduling the remaining work to make good use of the machines available. Adding capacity alone would leave teams paying for work they could have skipped.
+The world is going to need more compute. Agents produce more software, and that software needs to be built and tested. When we started building infrastructure at [Tuist](https://tuist.dev), we expected that demand to grow. But teams were already compiling the same dependencies over and over across developer machines and CI. More capacity would help; so would avoiding repeated work.
 
-We built infrastructure to help with both. A shared cache lets one machine reuse work another has done. Remote execution gives a build more machines for the work that remains. We wanted teams to get their results sooner without spending compute on work they could have skipped.
+We built shared caching to reuse results and remote execution to distribute work. But projects couldn't use those services unless their build tools supported them. **Using compute efficiently shouldn't require changing how you define your software.**
 
-But having that infrastructure available doesn't mean a project can use it. The build toolchain has to know which results it can reuse and which steps it can send to another machine. We found that many teams didn't want to change either their project definition or their build toolchain to get those capabilities. They preferred to wait for the tools they already used to catch up.
+Sandbox providers were also giving agents new places to run code. We wanted to connect existing projects and automation to all this infrastructure, including providers other than ourselves. That became [Struo](https://struo.run), Latin for "I build" or "I arrange".
 
-At the same time, sandbox providers were making it easier to give agents environments in which to run code. We saw more places to execute work, alongside projects and automation that had no common way to use them. We wanted to build that connection, for our infrastructure and for other providers too. That became [Struo](https://struo.run).
+**Our mission is to bring remote caching and execution to everyone.**
 
 ## Keeping the project you already have
 
-[Google](https://about.google) and [Meta](https://about.meta.com) have dealt with high build volumes for years. Their experience went into [Bazel](https://bazel.build) and [Buck](https://buck2.build), which support **remote caching and execution**. For many teams, adopting those capabilities has meant adopting one of those build systems too.
+[Google](https://about.google) and [Meta](https://about.meta.com) have dealt with high build volumes for years. [Bazel](https://bazel.build) and [Buck](https://buck2.build) brought their approach to remote caching and execution to other organizations.
 
-That means describing the project again in build files, then maintaining them alongside the `Cargo.toml`, `Package.swift`, or Xcode project their tools already use. Agents make that migration cheaper, but the team still has to keep those descriptions in sync. Native tools are making progress: [Xcode 26 introduced compilation caching](https://developer.apple.com/documentation/xcode-release-notes/xcode-26-release-notes), and [Cargo is working toward a cache shared across workspaces](https://goals.rust-lang.org/2026/cargo-cross-workspace-cache.html), with remote caching identified as a possible future extension. We wanted teams to have an option besides migrating or waiting.
+Adopting them means changing your project definition and workflow, even with agents helping with the migration. In our view, Bazel's developer experience also carries assumptions from Google's way of working that don't fit every team.
 
-UTF-8 offers a useful example of adoption without conversion. In 1992, [Ken Thompson designed it with Rob Pike at a New Jersey diner](https://doc.cat-v.org/bell_labs/utf-8_history). It could encode Unicode text while leaving existing ASCII files valid, byte for byte. Developers still had work to do to support multilingual text, but they didn't have to convert their ASCII files first. We wanted the same starting point for builds: **keep the project definition and change how the work runs**.
+Native tools are catching up. [Xcode 26 introduced compilation caching](https://developer.apple.com/documentation/xcode-release-notes/xcode-26-release-notes), and [Cargo is working toward a cache shared across workspaces](https://goals.rust-lang.org/2026/cargo-cross-workspace-cache.html), with remote caching as a possible future extension. We wanted to offer another option without asking teams to migrate or wait.
 
 ## A narrow waist between projects and infrastructure
 
-We think of Struo as a narrow waist. On one side are projects with their own formats and toolchains, along with scripts and other automation. On the other are providers of storage and compute, including sandboxes. In between, Struo describes work as actions with commands, inputs, and outputs, so providers don't need to understand each project's format.
+Struo turns a project's work into actions: a command to run, the inputs it needs, and the outputs to keep. A cache can store the results, and a compute provider can run the command. Neither needs to understand the original project format.
 
-With that description, Struo can fingerprint an action and look for a previous result in a shared cache. If it finds one, it downloads the result instead of running the action. If the action needs to run, Struo can schedule it locally or send it to a remote worker. Adding machines helps with the remaining work; reusing results avoids work altogether.
+This is the narrow waist: **a common interface to caching and execution, without prescribing how teams organize their work.** It works for existing projects and for internal automation teams build themselves.
 
-Our own infrastructure gave us a reason to start, but we want teams to use compute more efficiently wherever they build. Tuist is the first provider, and others have shown interest. Supporting a new project format shouldn't require a separate integration with each provider, and connecting a provider shouldn't require teams to rewrite their projects.
+We've integrated with many providers for caching and remote execution, and keep adding more. We want using them to become a solved problem, without requiring specialist Bazel expertise. Teams could stop wasting compute, and providers, including us, could work on other challenges.
 
-The name comes from Latin: *struo* means "I build" or "I arrange". It seemed fitting for a tool that takes the pieces of an existing project and works out how to build them.
+## Start with a script
 
-## What Struo does
+You don't have to move a whole project to try this. **You can adopt as much as you need, one piece of work at a time.** Start with a script:
 
-Struo reads the project you already have. It recognizes a `Cargo.toml`, an Xcode project, a Swift package, a Mix project, or an Nx workspace, asks the native tool what the project contains, and turns the answer into a graph of small steps with declared inputs and outputs. You don't add build files or run an init step, and Struo doesn't write anything back to your repository.
+For Vitest, save this as `scripts/test.sh`:
 
-For a Cargo project, the switch starts with **changing the build command**. From the directory containing your root `Cargo.toml`, replace `cargo build` with `struo build`. You keep your manifests, lockfile, and Rust toolchain; Struo reads the project and caches its build actions locally. Once you connect a remote cache provider, the same `struo build` command also shares those results with your teammates and CI. You don't have to add cache logic to each crate or change the build command again.
+```sh
+#!/usr/bin/env -S struo exec -- bash
+# struo input "../package.json"
+# struo input "../package-lock.json"
+# struo input "../src"
+# struo input "../tests"
+# struo input "../vitest.config.ts"
+# struo output "../reports"
+# struo cwd ".."
+# struo remote "remote_tests"
 
-Take a Cargo workspace with a few crates, some dependencies from crates.io, a crate whose build script links a C library, and some tests. This is what happens when you run `struo build my-cli`:
+set -eu
+npm ci --no-audit --no-fund
+./node_modules/.bin/vitest run --reporter=json --outputFile=reports/vitest.json
+```
+
+The first line runs the script through Struo. The headers tell it what to send, what to bring back, and where to run. Configure `remote_tests` in `struo.toml` with an environment supplying Node.js, npm, and Bash, and adjust the input paths for your project.
+
+After `chmod +x scripts/test.sh`, run `./scripts/test.sh`. Struo either restores a cached result or runs the script remotely and brings back the report. The [remote execution guide](/docs/guide/infrastructure/remote-execution) covers setup and caching dependency installation separately.
+
+You can stop there. The rest of your project keeps building and running as before.
+
+## Then use it for your project
+
+For supported native projects, Struo reads the existing definition and derives the build graph. That includes Cargo, Xcode, Swift packages, Mix, and Nx. You don't add build files or run an init step.
+
+For a Cargo project, replace `cargo build` with `struo build` from the directory containing your root `Cargo.toml`. You keep your manifests, lockfile, and Rust toolchain; Struo reads the project and caches its build actions locally. Once you connect a remote cache provider, the same command shares those results with your teammates and CI.
+
+For a Cargo workspace with dependencies, build scripts, and tests, here's how `struo build my-cli` works:
 
 <figure data-part="pipeline-diagram" style="margin: 2rem 0;">
 <svg viewBox="0 0 1000 250" width="100%" role="img" aria-label="Struo building a Cargo workspace in five steps. Discovery finds Cargo.toml at the workspace root. Resolution runs cargo metadata and emits a target per crate, test, build script, and locked package. Analysis creates one rustc action per crate, with build.rs as its own action. Scheduling runs actions concurrently within a resource budget. Execution reuses cached results and runs the rest locally or on remote workers." style="font-family: inherit; color: inherit;">
@@ -75,25 +101,44 @@ Take a Cargo workspace with a few crates, some dependencies from crates.io, a cr
 </svg>
 </figure>
 
-Cargo still decides what the project contains: its members, features, resolved versions, and build scripts. Struo decides how to build it. Each crate compiles in its own `rustc` action, and each build script runs as a separate action whose output goes to the crates that depend on it. Struo fingerprints every action from its command, environment, inputs, and toolchain, which gives you **a cache entry per crate** rather than one for the whole build. When you change one crate, only that crate and the crates that depend on it rebuild.
+Cargo resolves the project; Struo schedules and caches the individual compilation and build-script actions. Results are cached per action rather than for the whole build, so changing one crate doesn't discard the work done for unrelated crates.
 
-Once you connect a cache provider, every machine that builds the project shares those entries. For the actions that still need to run, `struo build --remote --compute <provider>` sends them to a remote worker while your machine schedules the build and caches the results. Remote execution is newer than caching, and we're still working on it.
+For actions that still need to run, `struo build --remote --compute <provider>` sends them to a remote worker while your machine schedules the build and caches the results. Remote execution is newer than caching, and we're still working on it.
 
-The other ecosystems Struo reads follow the same model. When the default behavior doesn't fit your project, you can describe parts of the graph yourself in `struo.toml` or write your own target kinds in Starlark, and keep the native project alongside them. Declaring targets and their dependencies yourself is the normal starting point in Bazel. Struo gives you that control too, but you can start with your native project and take over the parts that need it.
+## Take control with Starlark when you need it
 
-## Trusting the cache
+For more control, you can define the build graph yourself. This can help you optimize graph loading or connect components written in different languages. Targets and dependencies go in `struo.toml`; Starlark defines how to build them.
 
-A cache entry per crate is only worth having if its results are correct. When a step reads a file it didn't declare, a cache hit can return an outdated result, and a remote worker can fail because the file isn't there. Build systems call the goal hermeticity: every step depends only on what it declares.
+Inside a custom Starlark target kind, you could declare this action:
 
-An imported graph doesn't guarantee that a dependency declares everything it uses. Builds can read installed SDKs or system libraries, and some dependencies access the network. Struo includes declared inputs and toolchain identity in its fingerprints, and we're exploring checks for undeclared dependencies. `struo query validate-actions` runs a target's actions in a private sandbox and reports undeclared reads and writes it can detect, along with suggested repairs. It isn't a complete audit of everything a process can access. Agents can run the same check over MCP to catch problems before the results enter a shared cache.
+```python
+generated = declare_output("api.ts")
+run_action(
+    argv = ["python3", "tools/generate.py", "api/schema.json", generated],
+    inputs = ["tools/generate.py", "api/schema.json"],
+    outputs = [generated],
+)
+```
+
+It runs a Python generator to produce a TypeScript file that another target can use. Struo tracks the inputs and caches the result. This excerpt shows just the action; the [Starlark reference](/docs/reference/modules) explains how to define the full target kind.
+
+You can define one part of the graph or all of it. The caching and execution stay the same.
+
+Organizations are building their own systems too. Shopify is developing [Tectonix on Nix for its World monorepo](https://www.socallinuxexpo.org/scale/23x/presentations/tectonix-bedrock-shopifys-monorepo). We don't know its eventual shape, but we're confident systems like it will need caching and distributed execution. We want Struo to be an option for teams taking that route.
 
 ## Built for agents
 
-The agent that writes a change also needs to know whether the build succeeded and what to fix if it failed. Struo exposes its graph through MCP, so an agent can discover target kinds, query dependencies, validate an edit, and run a build through tool calls. We're also building a protocol for live run events to let agents follow progress and failures without parsing terminal output.
+You can ask an agent to run the same script:
+
+> Run the tests in scripts/test.sh and tell me whether they passed and whether the result came from cache.
+
+With Struo's MCP server connected and execution enabled through `struo mcp --allow-run`, the agent calls the `struo_exec_script` tool with the script's path. Struo returns the exit status, cache hit or miss, and command output as structured data. The agent doesn't have to work those out by reading terminal logs.
+
+Agents can also query the graph and validate edits. We're building live run events so they can follow progress too.
 
 ## Connecting a provider
 
-We care as much about setting this up as we do about running the build. Connecting a project to a provider takes one command:
+For Tuist, connecting a project takes one command:
 
 ```sh
 struo connect --provider tuist --create
@@ -101,14 +146,16 @@ struo connect --provider tuist --create
 
 It signs you in if needed, creates the project, and records the binding in `struo.toml` without storing credentials in the repository. Teammates and CI sign in with `struo auth login` or a token.
 
-Struo is open source under the MIT license, and the provider contract is documented. If you run infrastructure that should plug in, we'd welcome a contribution. We want teams to choose a provider for the service it offers, without changing their project to suit it.
+Struo is MIT-licensed, and the provider contract is documented.
 
 ## Why we're building it now
 
-We couldn't find a tool that let teams keep their project definitions, use different infrastructure providers, and give agents structured access to the work. A few years ago, we wouldn't have attempted to build one ourselves. Supporting native project formats across this many toolchains would have been too much work for a team our size.
+A few years ago, we wouldn't have attempted this ourselves. Supporting native project formats across this many toolchains would have been too much work for a team our size.
 
-Agents changed what we could take on. We use them heavily to build Struo and test its importers against open source projects. They make it possible for us to cover more formats, but they don't remove the need to check the results. There will be gaps. Struo can export your project's manifests, with every other file left empty, together with a drafted issue, so you can report one without sharing your code. Fixes are welcome too.
+We use agents heavily to build Struo and check it against open source projects. There will be gaps. You can report them using Struo's reproduction export, which includes project manifests but leaves source files empty. Contributions are welcome too.
 
-[Mitchell Hashimoto wrote](https://x.com/mitchellh/status/2074225453217505494), "The pursuit of excellence does not need justification." We share that feeling about developer tools. Agents have reduced the cost of building them, and we want to put that time into making Struo easier to use, from the first build to connecting a provider and diagnosing a failure. We're excited that a team our size can now attempt this.
+[Mitchell Hashimoto wrote](https://x.com/mitchellh/status/2074225453217505494), "The pursuit of excellence does not need justification." Agents have given us room to pursue a better developer experience, from the first script to a custom build system.
 
-It would be a dream for us if native toolchains caught up and teams could get these capabilities without another build tool. Until then, we want to help them use compute more efficiently across the infrastructure available to them. Give Struo a try on the project you already have, and tell us where it falls short.
+It would be a dream for us if native toolchains caught up and teams no longer needed another build tool for this. We'd be happy to see Struo help teams use a competitor's infrastructure too. **We want builds and tests to be faster and more efficient for everyone**, whether they use Tuist or not.
+
+If you provide caching or compute infrastructure, email [pedro@tuist.dev](mailto:pedro@tuist.dev). We'd love to work with you to make connecting Struo to your infrastructure as easy as possible for teams using it.

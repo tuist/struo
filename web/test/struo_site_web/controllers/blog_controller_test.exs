@@ -9,7 +9,7 @@ defmodule StruoSiteWeb.BlogControllerTest do
 
     assert response =~ "Ideas for building once"
     assert response =~ ~s(data-part="blog-entry")
-    assert response =~ "Automation needs a git"
+    assert response =~ "Builds are the new bottleneck"
     refute response =~ "Writing in progress"
   end
 
@@ -30,16 +30,16 @@ defmodule StruoSiteWeb.BlogControllerTest do
   test "GET /blog/:slug includes complete social image metadata", %{conn: conn} do
     response =
       conn
-      |> get(~p"/blog/automation-needs-a-git")
+      |> get(~p"/blog/keep-your-graph-own-your-build")
       |> html_response(200)
 
     assert response =~ ~s(property="og:image:type" content="image/jpeg")
     assert response =~ ~s(property="og:image:width" content="1920")
     assert response =~ ~s(property="og:image:height" content="1080")
-    assert response =~ ~s(property="og:image:alt" content="Automation needs a git")
+    assert response =~ ~s(property="og:image:alt" content="Builds are the new bottleneck")
     assert response =~ ~s(name="twitter:image:width" content="1920")
     assert response =~ ~s(name="twitter:image:height" content="1080")
-    assert response =~ ~s(name="twitter:image:alt" content="Automation needs a git")
+    assert response =~ ~s(name="twitter:image:alt" content="Builds are the new bottleneck")
   end
 
   test "GET /blog/feed.xml returns the Really Simple Syndication feed", %{conn: conn} do
@@ -50,7 +50,7 @@ defmodule StruoSiteWeb.BlogControllerTest do
     assert response =~ "<title>Struo blog</title>"
     assert response =~ "<item>"
     assert response =~ "<dc:creator>"
-    assert response =~ "Automation needs a git"
+    assert response =~ "Builds are the new bottleneck"
   end
 
   test "GET /blog/feed.atom returns the full Atom feed", %{conn: conn} do
@@ -61,7 +61,7 @@ defmodule StruoSiteWeb.BlogControllerTest do
     assert response =~ "<feed xmlns=\"http://www.w3.org/2005/Atom\">"
     assert response =~ "<entry>"
     assert response =~ "<author>"
-    assert response =~ "Automation needs a git"
+    assert response =~ "Builds are the new bottleneck"
   end
 
   test "marketing image generation includes blog cards" do
@@ -69,6 +69,6 @@ defmodule StruoSiteWeb.BlogControllerTest do
     files = Enum.map(pages, & &1.file)
 
     assert "blog.jpg" in files
-    assert "blog-automation-needs-a-git.jpg" in files
+    assert "blog-keep-your-graph-own-your-build.jpg" in files
   end
 end

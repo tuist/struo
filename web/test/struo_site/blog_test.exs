@@ -10,7 +10,8 @@ defmodule StruoSite.BlogTest do
     slugs = Enum.map(Blog.all_posts(), & &1.slug)
 
     refute slugs == []
-    assert "automation-needs-a-git" in slugs
+    assert "keep-your-graph-own-your-build" in slugs
+    refute "automation-needs-a-git" in slugs
   end
 
   test "clamps pages beyond the last available page" do
