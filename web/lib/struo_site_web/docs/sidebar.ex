@@ -190,7 +190,11 @@ defmodule StruoSiteWeb.Docs.Sidebar do
             slug: "/docs/guide/infrastructure/http-cache",
             icon: "http-cache"
           },
-          %Item{label: "LangSmith", slug: "/docs/guide/infrastructure/langsmith"},
+          %Item{
+            label: "LangSmith",
+            slug: "/docs/guide/infrastructure/langsmith",
+            icon: "langsmith"
+          },
           %Item{
             label: "Microsandbox",
             slug: "/docs/guide/infrastructure/microsandbox",

@@ -63,6 +63,8 @@ resolver or Starlark target kind implementation, or behind a dedicated
 toolchain guide/reference page so future ecosystems can plug into the
 same shape instead of requiring parallel CLI or MCP surfaces.
 
+When adding an infrastructure provider, include its docs and sidebar logo in the same change. Follow the provider documentation checklist in `web/AGENTS.md`.
+
 ## Graph Modules
 
 Struo exposes a doc-less surface for coding agents: an agent should be

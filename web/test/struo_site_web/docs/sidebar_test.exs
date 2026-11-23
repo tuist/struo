@@ -59,7 +59,7 @@ defmodule StruoSiteWeb.Docs.SidebarTest do
              "Docker" => "docker",
              "E2B" => "e2b",
              "HTTP Cache" => "http-cache",
-             "LangSmith" => nil,
+             "LangSmith" => "langsmith",
              "Microsandbox" => "microsandbox",
              "Northflank" => "northflank",
              "Object Storage" => "object-storage",
@@ -73,6 +73,14 @@ defmodule StruoSiteWeb.Docs.SidebarTest do
 
     labels = Enum.map(providers.items, & &1.label)
     assert labels == Enum.sort(labels)
+
+    css = File.read!("assets/docs/docs.css")
+
+    for provider <- providers.items do
+      assert is_binary(provider.icon)
+      assert Path.wildcard("priv/static/docs/icons/#{provider.icon}.*") != []
+      assert css =~ ~s([data-icon="#{provider.icon}"])
+    end
 
     refute Enum.any?(
              infrastructure.items,

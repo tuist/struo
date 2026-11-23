@@ -59,12 +59,12 @@ defmodule StruoSiteWeb.DocsLiveTest do
                "#docs-sidebar a[href='#{provider.slug}'] [data-selected]"
              )
 
-      if provider.icon do
-        assert has_element?(
-                 view,
-                 "#docs-sidebar a[href='#{provider.slug}'] [data-selected] [data-icon='#{provider.icon}']"
-               )
-      end
+      assert is_binary(provider.icon)
+
+      assert has_element?(
+               view,
+               "#docs-sidebar a[href='#{provider.slug}'] [data-selected] [data-icon='#{provider.icon}']"
+             )
     end
 
     for {path, title} <- [

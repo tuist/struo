@@ -215,6 +215,7 @@ p {
 #docs-sidebar [data-part="nav-item-icon"][data-icon="opensandbox"],
 #docs-sidebar [data-part="nav-item-icon"][data-icon="sprites"],
 #docs-sidebar [data-part="nav-item-icon"][data-icon="tensorlake"],
+#docs-sidebar [data-part="nav-item-icon"][data-icon="langsmith"],
 #docs-sidebar [data-part="nav-item-icon"][data-icon="microsandbox"],
 #docs-sidebar [data-part="nav-item-icon"][data-icon="e2b"],
 #docs-sidebar [data-part="nav-item-icon"][data-icon="daytona"],
@@ -248,6 +249,9 @@ p {
 }
 #docs-sidebar [data-part="nav-item-icon"][data-icon="tensorlake"] {
   background-image: url("/docs/icons/tensorlake.svg");
+}
+#docs-sidebar [data-part="nav-item-icon"][data-icon="langsmith"] {
+  background-image: url("/docs/icons/langsmith.svg");
 }
 #docs-sidebar [data-part="nav-item-icon"][data-icon="microsandbox"] {
   background-image: url("/docs/icons/microsandbox.png");
