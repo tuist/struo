@@ -52,16 +52,10 @@ pub(super) async fn execute(
         ("/tmp/struo-stderr", Destination::Stderr),
     ] {
         let file = output_archive_file(workspace)?;
-        capture_client.limits.max_archive_bytes = client.limits.max_archive_bytes.min(remaining);
-        let phase = capture_client
-            .download(
-                sandbox,
-                origin,
-                remote_path,
-                file.path(),
-                command.lease.as_ref(),
-                1,
-            )
+        capture_client.limits.max_archive_bytes = remaining;
+        // Execution retains the upfront capture reservation, separate from transfer staging.
+        capture_client
+            .download(sandbox, origin, remote_path, file.path(), None, 1)
             .await?;
         remaining = remaining.saturating_sub(
             tokio::fs::metadata(file.path())
@@ -73,7 +67,6 @@ pub(super) async fn execute(
             .await
             .map_err(file_error)?;
         digests.push(stream::to_cache(input, destination, cache, stream_to_parent).await?);
-        drop(phase);
     }
     Ok(ActionResult {
         exit_code,
