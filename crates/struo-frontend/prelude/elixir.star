@@ -1859,17 +1859,21 @@ normalize = fn value, recur ->
   end
 end
 
-[project_file, lockfile, mix_env, package_root] = System.argv()
+[project_file, lockfile, package_root | mix_envs] = System.argv()
 project_dir = File.cd!(Path.dirname(project_file), fn -> File.cwd!() end)
 
 unless Code.ensure_loaded?(:json) and function_exported?(:json, :encode, 1) do
   raise "Mix dependency resolution requires Erlang 27 or newer for :json.encode/1"
 end
 
-payload =
-  Mix.Project.in_project(:struo_dependency_resolver, project_dir, [env: String.to_atom(mix_env)], fn _project ->
+resolve = fn mix_env ->
+  env = String.to_atom(mix_env)
+  Mix.env(env)
+  # A distinct project name per environment makes Mix evaluate the root
+  # mix.exs again, so module attributes that read Mix.env/0 at compile time
+  # see this environment, as they would in a separate Mix invocation.
+  Mix.Project.in_project(:"struo_dependency_resolver_#{mix_env}", project_dir, [env: env], fn _project ->
     Mix.Dep.clear_cached()
-    lock = Mix.Dep.Lock.read(lockfile)
 
     dependencies =
       Mix.Dep.load_and_cache()
@@ -1893,16 +1897,60 @@ payload =
         }
       end)
 
-    %{
-      "manifest" => File.read!(project_file),
-      "lockfile" => if(File.regular?(lockfile), do: File.read!(lockfile), else: ""),
-      "mix_env" => mix_env,
-      "lock" => normalize.(lock, normalize),
-      "dependencies" => dependencies
-    }
+    {dependencies, Mix.Dep.Lock.read(lockfile)}
+  end)
+end
+
+# One environment failing must not fail its siblings, as it would not when
+# each ran in its own Mix invocation.
+attempt = fn mix_env ->
+  try do
+    {:ok, resolve.(mix_env)}
+  catch
+    kind, reason -> {:error, Exception.format(kind, reason, __STACKTRACE__)}
+  end
+end
+
+# Dependency projects stay cached between environments, which is what makes
+# one VM cheaper than one per environment. Mix caches them by application
+# alone, so a dependency loaded under a different Mix environment than
+# before would reuse a project compiled for the old one; such an
+# environment is resolved again without those cached projects.
+{environments, lock, _loaded} =
+  Enum.reduce(mix_envs, {%{}, nil, %{}}, fn mix_env, {environments, previous_lock, loaded} ->
+    result =
+      with {:ok, {dependencies, _lock}} = resolved <- attempt.(mix_env) do
+        moved =
+          for dependency <- dependencies,
+              Map.get(loaded, dependency["app"], dependency["mix_env"]) != dependency["mix_env"],
+              do: dependency["app"]
+
+        if moved == [] do
+          resolved
+        else
+          Enum.each(moved, &Mix.State.delete_cache({:app, String.to_atom(&1)}))
+          attempt.(mix_env)
+        end
+      end
+
+    case result do
+      {:ok, {dependencies, lock}} ->
+        loaded = Map.merge(loaded, Map.new(dependencies, &{&1["app"], &1["mix_env"]}))
+        {Map.put(environments, mix_env, %{"dependencies" => dependencies}), lock, loaded}
+
+      {:error, message} ->
+        {Map.put(environments, mix_env, %{"error" => message}), previous_lock, loaded}
+    end
   end)
 
-payload |> :json.encode() |> IO.binwrite()
+%{
+  "manifest" => File.read!(project_file),
+  "lockfile" => if(File.regular?(lockfile), do: File.read!(lockfile), else: ""),
+  "lock" => normalize.(lock, normalize),
+  "environments" => environments
+}
+|> :json.encode()
+|> IO.binwrite()
 """
 
 def _mix_read_locked_graph(ctx):
@@ -1935,13 +1983,17 @@ def _mix_read_locked_graph(ctx):
         if graph.get("struo_inputs") != expected_inputs:
             fail(ctx["label"]["id"] + ": Mix graph snapshot `" + graph_file + "` input binding does not match resolver_inputs")
         return graph
+    # Sibling dependency graphs of one project, one per Mix environment, pass
+    # the same environment list, so they issue an identical command and
+    # host_command runs Mix once for all of them.
+    mix_envs = sorted(_unique((ctx["attrs"].get("_mix_resolve_envs") or []) + [mix_env]))
     toolchain = _elixir_mix_toolchain(worker = False)
     resolver_home = workspace_root() + "/.struo/tmp/mix-resolver"
     env = _elixir_action_env(toolchain)
     env["MIX_HOME"] = resolver_home + "/mix"
     env["MIX_ARCHIVES"] = resolver_home + "/archives"
     env["HEX_HOME"] = resolver_home + "/hex"
-    env["MIX_ENV"] = mix_env
+    env["MIX_ENV"] = mix_envs[0]
     env["HEX_OFFLINE"] = "true"
     content = host_command([
         toolchain["elixir"],
@@ -1950,10 +2002,19 @@ def _mix_read_locked_graph(ctx):
         "--",
         _mix_workspace_path(ctx, manifest),
         _mix_workspace_path(ctx, lockfile),
-        mix_env,
         _mix_workspace_path(ctx, "."),
-    ], env = env, cwd = _mix_workspace_path(ctx, "."))
-    graph = json_decode(content)
+    ] + mix_envs, env = env, cwd = _mix_workspace_path(ctx, "."))
+    resolved = json_decode(content)
+    environment = resolved["environments"][mix_env]
+    if environment.get("error") != None:
+        fail(ctx["label"]["id"] + ": Mix dependency resolution failed for MIX_ENV=" + mix_env + ":\n" + environment["error"])
+    graph = {
+        "manifest": resolved["manifest"],
+        "lockfile": resolved["lockfile"],
+        "mix_env": mix_env,
+        "lock": resolved["lock"],
+        "dependencies": environment["dependencies"],
+    }
     if ctx["files"].get(lockfile) == None:
         for dependency in graph.get("dependencies") or []:
             if not dependency.get("path_dependency"):
@@ -3354,6 +3415,15 @@ def _mix_workspace_resolver(ctx):
     applications = {}
     dependency_targets = {}
     project_inputs = _mix_workspace_project_inputs(ctx)
+    resolved_environments = [
+        environment
+        for environment in sorted(metadata.keys())
+        if has_lock or [
+            dependency
+            for dependency in metadata[environment]["deps"]
+            if dependency.get("active") and dependency.get("path") != None
+        ]
+    ]
 
     for environment in sorted(metadata.keys()):
         environment_metadata = metadata[environment]
@@ -3385,6 +3455,7 @@ def _mix_workspace_resolver(ctx):
                 "config_entry": config_entry,
                 "target_prefix": "mix-" + environment,
                 "_mix_path_only": not has_lock,
+                "_mix_resolve_envs": resolved_environments,
             }
             targets.append({
                 "name": dependency_target,
@@ -3602,6 +3673,7 @@ _MIX_WORKSPACE_ATTRS = [
 
 _MIX_DEPENDENCIES_ATTRS = [
     attr("_mix_path_only", "bool", default = "false", docs = "Resolver-owned marker allowing an absent lockfile only when every active dependency is workspace-local.", configurable = False),
+    attr("_mix_resolve_envs", "list<string>", default = "[]", docs = "Resolver-owned Mix environments of the same project resolved together with mix_env in one Mix invocation.", configurable = False),
     attr("manifest", "string", default = "mix.exs", docs = "Package-relative Mix project manifest used to select the active dependency graph.", configurable = False),
     attr("lockfile", "string", default = "mix.lock", docs = "Package-relative Mix lockfile. Resolution fails when the file is absent, and never updates it.", configurable = False),
     attr("resolver_inputs", "list<string>", default = "[]", docs = "Package-relative text globs supplied to the resolver. Defaults to srcs when empty or omitted; set this when build sources include binary or large files.", configurable = False),

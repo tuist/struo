@@ -392,6 +392,46 @@ PY
     The status should be success
   End
 
+  exercise_environment_specific_dependency_graphs() {
+    mkdir -p "$WORKSPACE/.git" "$WORKSPACE/app/lib" "$WORKSPACE/first/lib" "$WORKSPACE/second/lib"
+    cat > "$WORKSPACE/app/mix.exs" <<'EX'
+defmodule App.MixProject do
+  use Mix.Project
+  @env Mix.env()
+  def project, do: [app: :app, version: "0.1.0", deps: deps()]
+  defp deps do
+    first = [{:first, path: "../first", env: if(@env == :test, do: :test, else: :prod)}]
+    if @env == :test, do: first ++ [{:second, path: "../second"}], else: first
+  end
+end
+EX
+    cat > "$WORKSPACE/first/mix.exs" <<'EX'
+defmodule First.MixProject do
+  use Mix.Project
+  @env Mix.env()
+  def project, do: [app: :first, version: "0.1.0", deps: if(@env == :test, do: [{:second, path: "../second"}], else: [])]
+end
+EX
+    cat > "$WORKSPACE/second/mix.exs" <<'EX'
+defmodule Second.MixProject do
+  use Mix.Project
+  def project, do: [app: :second, version: "0.1.0"]
+end
+EX
+    native_struo -C "$WORKSPACE" query 'MATCH (t:Target)-[:DEPENDS_ON]->(d:Target) WHERE t.id CONTAINS "/mix-" RETURN t.id, d.id' > "$SPEC_ROOT/edges.json" 2> "$SPEC_ROOT/edges.err" || { cat "$SPEC_ROOT/edges.err"; return 1; }
+    grep -q '"rows":\[\["app/mix-test-first","app/mix-test-second"\]\]' "$SPEC_ROOT/edges.json" || { cat "$SPEC_ROOT/edges.json"; return 1; }
+    native_struo -C "$WORKSPACE" query targets > "$SPEC_ROOT/targets.json" 2>> "$SPEC_ROOT/edges.err" || { cat "$SPEC_ROOT/edges.err"; return 1; }
+    grep -q '"id":"app/mix-dev-first"' "$SPEC_ROOT/targets.json" || { cat "$SPEC_ROOT/targets.json"; return 1; }
+    grep -q '"id":"app/mix-test-second"' "$SPEC_ROOT/targets.json" || { cat "$SPEC_ROOT/targets.json"; return 1; }
+    ! grep -q '"id":"app/mix-dev-second"' "$SPEC_ROOT/targets.json" || { cat "$SPEC_ROOT/targets.json"; return 1; }
+  }
+
+  It 'resolves each Mix environment with the dependencies that environment selects'
+    Skip if 'Mix toolchain unavailable on this host' mix_tools_unavailable
+    When call exercise_environment_specific_dependency_graphs
+    The status should be success
+  End
+
   It 'reports actual failing tests instead of a successful empty invocation'
     Skip if 'Mix toolchain unavailable on this host' mix_tools_unavailable
     prepare_native_workspace
