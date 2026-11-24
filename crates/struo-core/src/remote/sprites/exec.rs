@@ -181,7 +181,7 @@ impl Client {
                                     .and_then(|code| i32::try_from(code).ok())
                                     .ok_or_else(|| api_error("invalid exit code"))?
                             }
-                            Some("session_info" | "port_opened" | "port_closed") => {}
+                            Some("debug" | "session_info" | "port_opened" | "port_closed") => {}
                             _ => return Err(api_error("unexpected command event")),
                         }
                     }

@@ -74,6 +74,12 @@ async fn mock(
                 }
                 server_state.lock().unwrap().commands.push(args);
                 let mut ws = tokio_tungstenite::accept_async(socket).await.unwrap();
+                ws.send(Message::Text(
+                    r#"{"type":"debug","msg":"session_created cmd=printf","pid":5,"t_ms":3}"#
+                        .into(),
+                ))
+                .await
+                .unwrap();
                 if is_action {
                     let hold = server_state.lock().unwrap().hold_action.clone();
                     if let Some((arrived, release)) = hold {
@@ -93,9 +99,22 @@ async fn mock(
                 }
                 let code = if is_action { exit } else { Some(0) };
                 if let Some(code) = code {
-                    ws.send(Message::Binary(vec![3, code].into()))
+                    ws.send(Message::Text(
+                        r#"{"type":"debug","msg":"normal_exit exit_code=0 wait_err=nil","pid":5,"t_ms":15}"#
+                            .into(),
+                    ))
                         .await
                         .unwrap();
+                    let exit = if is_action {
+                        Message::Text(
+                            serde_json::json!({"type": "exit", "exit_code": code})
+                                .to_string()
+                                .into(),
+                        )
+                    } else {
+                        Message::Binary(vec![3, code].into())
+                    };
+                    ws.send(exit).await.unwrap();
                 }
                 let _ = ws.close(None).await;
                 continue;
