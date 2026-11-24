@@ -1,50 +1,43 @@
 # Remote Execution
 
-Remote execution in Struo means that the script contract stays in the
-repository while the process runs in a fresh environment supplied by an
-infrastructure provider.
+Run Struo commands, annotated scripts, and build graph actions in fresh sandboxes
+from an execution provider, with inputs, outputs, and caching declared in your
+repository.
 
-The important boundary is the action, not the test framework. Vitest is the
-program being run. Infrastructure providers supply the environment in which
-it runs. See [Infrastructure](/guide/infrastructure#available-providers) for the
-available execution and caching capabilities.
+The action stays the boundary: your repository declares what an action reads,
+runs, and produces, and the provider only supplies the environment it runs in.
+Cache hits never reach the provider.
 
-Declared build graphs can also dispatch command actions with
-`struo build --remote --compute <provider>`. Struo keeps dependency scheduling and
-caching on the coordinator; each uncached command runs through the selected
-adapter. Start with [Docker execution](/guide/infrastructure/docker) for local
-validation, including the toolchain-matching requirements and current limits.
-Graph filesystem operations remain on the coordinator; Docker applies command
-directory setup inside the worker. Selecting a provider does not add a warm
-worker pool or a distributed artifact service.
+## Run a command remotely
 
-## What Moves To The Machine
+Name an execution provider in the repository root `struo.toml` and select it as
+the default:
 
-For each remote action, Struo performs this lifecycle:
+```toml
+[infrastructures.remote_tests]
+kind = "e2b"
+template = "vitest-node-22"
 
-1. Resolve the named provider and requested environment reference. Use an
-   immutable image or template when reproducibility matters; a tag or label
-   alone does not establish immutable identity.
-2. Create a fresh sandbox.
-3. Package only the declared input files, directories, executable modes, and
-   safe symbolic links. A link is safe when it resolves inside a declared
-   input or to a directory that holds declared inputs, such as a workspace
-   package linked from `node_modules`.
-4. Transfer that package into a clean workspace directory in the sandbox.
-5. Run the declared argument list with its working directory, selected
-   environment variables, resources, and timeout.
-6. After a successful exit, retrieve only the declared outputs into a local
-   staging area and validate them before installation.
-7. Delete the sandbox, whether the action succeeded or failed.
+[infrastructure.execution]
+provider = "remote_tests"
+```
 
-Provider access keys configure the transport. They are not placed in the
-action environment or included in the action identity.
+Then run a literal command through it:
 
-## Run Real Vitest Tests
+```sh
+struo exec --remote -- node --version
+```
 
-Treat dependency installation and testing as separate actions. The install
-script uses the [npm package manager](https://www.npmjs.com/), consumes the
-package manifests, and produces `node_modules`:
+Pick the provider whose environment fits your work from the
+[provider list](/guide/infrastructure/#available-providers); each guide shows
+its `kind` and required fields.
+
+## Run scripts remotely
+
+Annotated scripts select a provider with `# struo remote "<name>"`. Treat
+dependency installation and testing as separate actions. This install script
+uses [npm](https://www.npmjs.com/), reads the package manifests, and produces
+`node_modules`:
 
 ```sh
 #!/bin/sh
@@ -74,152 +67,97 @@ The test script depends on that action and consumes its output:
 ```
 
 The provider environment supplies Node.js, npm, and basic operating-system
-tools. The install action supplies the exact repository dependencies. Its
-`node_modules` output becomes a declared input to the test action, including
-package-manager symbolic links and executable modes.
+tools; the install action supplies the exact repository dependencies, including
+package-manager symbolic links and executable modes. A lockfile change reruns
+installation. A source or test change reruns only the test action.
 
-This split means a package-lock change invalidates installation. A source or
-test change invalidates the test action without forcing installation to run
-again.
+## Run build graph actions remotely
 
-## Choose A Provider
+Declared build graphs dispatch each uncached command action to the selected
+provider:
 
-Use [Docker](/guide/infrastructure/docker) to distribute graph command actions
-across fresh containers with a locally prepared image. Use
-[Microsandbox](/guide/infrastructure/microsandbox) to test the contract on
-a supported local computer. Use [E2B](/guide/infrastructure/e2b) when you have
-a prepared hosted template. Use [Daytona](/guide/infrastructure/daytona) when
-you want Struo to start from a container image.
-Use [Boat](/guide/infrastructure/boat) to start from a saved Linux snapshot.
-Use [Sprites](/guide/infrastructure/sprites) for a disposable Fly.io Linux
-environment without a custom image or template.
-Use [Runloop](/guide/infrastructure/runloop) with a prepared Devbox Blueprint ID.
-Use [Blaxel](/guide/infrastructure/blaxel) for disposable hosted VMs with
-a prepared Blaxel image.
-Use [Tuist](/guide/infrastructure/tuist#run-actions-on-tuist-workers) to run
-graph actions on a Tuist project's remote execution workers.
+```sh
+struo build --remote --compute <provider>
+```
 
-These adapters implement the same declared input and output boundary. E2B,
-Daytona, and Runloop use one archive for each transfer so large dependency trees do not
-require one network request per file. The hosted image or template must
-provide `tar` for unpacking and packing those archives.
+`struo run --remote` does the same for a target's `run` capability. Struo keeps
+dependency scheduling and caching on your computer, and graph analysis must
+select tools that exist in the provider's environment. Start with
+[Docker](/guide/infrastructure/docker) to validate this locally in fresh
+containers, or use [Tuist workers](/guide/infrastructure/tuist) for a hosted
+fleet.
 
-## Executors And Resource Budgets
+## Choose a provider per invocation
 
-An executor describes how an action runs. Its resource domain describes the
-capacity it consumes. Native processes and local Microsandbox virtual machines
-share the host's CPU and memory budget, even though Microsandbox uses the same
-prepared-command boundary as the hosted providers. Microsandbox guest memory
-and CPU settings come from the admitted host reservation. The default memory
-estimate is 250 MiB, so an undeclared guest no longer silently receives the
-runtime's larger default allocation. Guest memory is rounded down to whole
-mebibytes; a reservation below one mebibyte cannot start a guest.
+`--compute <provider>` with `--remote` selects a different named execution
+provider for one command. Omit `--remote` to run on the current computer.
 
-E2B and Daytona use a separate shared quota for outstanding requests. All
-hosted provider aliases share that quota, so adding another name does not add
-capacity within that scheduler. Its default is the number of default-sized
-local actions that fit in the host budget. These budgets belong to a shared
-scheduler within one process, not a machine-wide or account-wide quota.
-Separate CLI invocations do not share them. The service schedules its own physical machines; Struo does not
-reserve the remote guest's CPU or memory estimate on your computer.
+A named infrastructure with `kind = "local"` selects native execution with its
+usual sandbox and network policies. Provider names are part of action identity,
+so results from different providers, or from a `local` binding, are cached
+separately.
 
-A hosted request still reserves a fixed host-memory estimate for input
-packaging, transfers, stream capture, and output validation. `--memory-limit`
-controls admission against these estimates, not kernel-enforced process memory.
-Hosted control responses, protocol frames, archive entries, and metadata have
-explicit size limits. E2B streams command output to the cache with backpressure;
-Daytona redirects the streams to temporary guest files and downloads them through
-bounded local staging. Oversized or stalled transfers fail instead of growing
-without a bound. Archive staging is shared by cloned schedulers, and outputs are
-validated before publication. These limits bound the relevant buffers and staged
-files, not the full process's resident memory or the remote guest's memory.
-A quiet command is not a stalled transfer, including during setup. Transfer
-inactivity defaults to a 30-second bound. Once the upload's file payload is
-produced, waiting for the provider to drain and acknowledge it has a separate
-five-minute bound. A declared action timeout bounds reconciliation and the whole
-hosted work sequence. Cleanup runs outside that deadline with its own bounds.
+## What happens to each action
 
-Cache probes do not reserve action memory. Restoring cached outputs uses a
-smaller, streaming-buffer estimate and does not need a host CPU slot or a remote
-request slot. Named shared-resource slots are shared within an invocation
-across resource domains for the entire action, including hosted execution.
+For every uncached remote action, Struo:
 
-A named infrastructure with `kind = "local"` selects native execution, including
-its usual sandbox and network policies. It retains a separate cache identity
-from an otherwise identical command without that binding. Provider names,
-resource estimates, and environment bindings remain part of action identity;
-Struo does not yet claim that different providers run equivalent environments.
+1. Creates a fresh sandbox from the configured image, template, or snapshot.
+   Use an immutable reference when reproducibility matters; a tag alone does
+   not pin the environment.
+2. Transfers only the declared input files and directories, with executable
+   modes and symbolic links that resolve inside declared inputs.
+3. Runs the declared arguments with the declared working directory, selected
+   environment variables, resources, and timeout.
+4. After a successful exit, downloads only the declared outputs and validates
+   them before installing them locally.
+5. Deletes the sandbox, whether the action succeeded or failed.
 
-Sandbox-provider adapters currently cannot enforce `--network deny` or
-stdout/stderr path redirection, or a non-default output-symlink policy. Struo
-rejects these requirements instead of
-silently ignoring them. Selecting one executor never implicitly falls back to
-another executor on a command or infrastructure failure. Explicit execution
-account/project requirements are also rejected until an adapter can enforce
-them; the configured access key selects the current hosted account.
+Provider access keys configure the transport only. They are not placed in the
+action environment or included in the action identity.
 
-Native Linux network denial requires Linux 5.11 or later, seccomp, and permission
-to mark inherited descriptors close-on-exec. If enforcement is unavailable, the
-action is refused. Plain Unix socket reads and writes remain available, but
-`recvmsg`, descriptor passing, and batched messaging are blocked. Tools using
-those IPC APIs can fail under network denial. An outside process can still proxy
-requests over an allowed Unix socket; this is socket isolation, not proof that
-no external service performed network work.
+E2B, Daytona, and Runloop transfer each direction as one archive, so their
+image or template must provide `tar`. These adapters upload the complete set of
+declared inputs on every cache miss. The Tuist adapter uploads only the input
+blobs the project cache is missing and reads outputs back by digest, as
+[Bazel remote execution](https://bazel.build/remote/rbe) does.
 
-## Machine Cleanup
+## Budget memory
 
-Struo waits for provider deletion after every normal success or failure. It
-also schedules deletion if the executing task is cancelled while a Tokio
-runtime is still active. Execution-budget leases stay with that cleanup task
-until the cleanup attempt completes, rather than being returned as soon as the
-foreground task stops. Before creation, hosted actions persist an ownership
-intent in workspace runtime state and tag the sandbox with a unique operation
-marker. Creation has an owner independent of the caller, so a late response after
-cancellation still registers cleanup. Failed deletion and uncertain creation
-retain their records for bounded reconciliation on a later hosted action.
-Reconciliation skips live owners and never deletes a sandbox without confirming
-its current exact operation marker. HTTP refusal statuses do not establish that
-creation had no side effects, so those intents remain journaled. An empty listing
-under changed credentials cannot prove that an old sandbox is gone.
+`--memory-limit` bounds how much work Struo admits at once on your computer.
+Each local action reserves its declared memory estimate, 250 MiB by default.
+Microsandbox guests receive that reservation as their memory and CPU
+allocation. A hosted action reserves a fixed amount of local memory for
+packaging and transfers; the provider schedules the remote machine's own CPU
+and memory. These budgets apply within one Struo invocation, not across
+invocations or accounts.
 
-The journal admits at most 256 records and 576 directory entries before paid
-creation. Unresolvable records consume that allowance and eventually refuse new
-work rather than risking duplicate creation or deleting another owner's guest.
-Provider lifetime policies remain necessary: a lost journal, credential rotation,
-runtime shutdown, or rejected delete can still leave an orphan. A client quota is
-not a physical fleet guarantee.
+## Limitations
 
-Microsandbox cleanup gives graceful stop up to ten seconds, then escalates to
-kill and wait for up to five seconds. Removing a stopped guest's persisted state
-has another ten-second limit. A kill timeout reports that the VM may still be
-running and leaves its persisted state intact. Local VMs have no hosted lifetime
-safety net, so an interrupted creation or failed kill may require manual cleanup.
+- Sandbox providers cannot enforce `--network deny`, stdout or stderr path
+  redirection, or a non-default output symlink policy. Struo rejects actions
+  that require them instead of ignoring the requirement.
+- Explicit execution account or project requirements are rejected; the
+  configured access key selects the hosted account.
+- Struo never falls back to another executor when a command or the
+  infrastructure fails.
+- Selecting a provider does not add a warm worker pool or a distributed
+  artifact service.
+- Transfers that make no progress for 30 seconds fail. A quiet command is not a
+  stalled transfer.
+- If a provider refuses to delete a sandbox after a successful action, the
+  action fails. Interrupted runs, rotated credentials, or a lost workspace can
+  still leave a sandbox behind, so keep the provider's own lifetime or cleanup
+  policy enabled. Struo retries cleanup of sandboxes it created on a later
+  hosted action. Local Microsandbox VMs have no such policy and may need manual
+  cleanup after an interrupted run.
+- Locally, `--network deny` needs Linux 5.11 or later with seccomp; Struo
+  refuses the action when it cannot enforce the denial.
 
-The hosted providers add a second line of defense:
+## Next steps
 
-- E2B receives a finite lifetime and a kill-on-timeout policy.
-- Daytona receives an ephemeral policy with immediate deletion after stop.
-
-If the provider refuses a delete request after an otherwise successful action,
-Struo reports the action as failed. On an action failure, Struo preserves the
-original failure and records a cleanup failure in its internal log.
-
-## How This Compares With Bazel
-
-[Bazel remote execution](https://bazel.build/remote/rbe) asks which
-content-addressed values are missing and uploads only those values. That is the
-right transport for a large shared worker fleet because unchanged files do not
-cross the network again.
-
-The Tuist adapter uses this protocol: it uploads only the input blobs the
-project cache is missing and reads outputs back by digest.
-
-The E2B and Daytona adapters currently upload one complete archive of the
-declared inputs for each cache miss. This gives Struo the same correctness
-boundary, but it is not yet as bandwidth-efficient as Bazel. The provider
-interface leaves room for a missing-content exchange so a future adapter can
-deduplicate files without changing script annotations.
-
-Struo also keeps the executor boundary wider than the Bazel protocol. A local
-micro-virtual-machine, a hosted sandbox service, and a content-addressed worker
-fleet can all consume the same prepared action.
+- [Artifacts](/guide/infrastructure/artifacts), to publish the immutable
+  products of your builds.
+- [Docker](/guide/infrastructure/docker), to validate remote graph dispatch on
+  your own computer.
+- [Execution provider contract](/reference/infrastructure/execution), for the
+  exact boundary a provider must satisfy.

@@ -37,6 +37,7 @@ defmodule StruoSiteWeb.Router do
     get "/blog/feed.xml", BlogController, :rss
     get "/blog/feed.atom", BlogController, :atom
     get "/sitemap.xml", SitemapController, :index
+    get "/llms.txt", LlmsController, :index
   end
 
   scope "/", StruoSiteWeb do

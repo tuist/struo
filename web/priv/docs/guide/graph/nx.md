@@ -1,155 +1,147 @@
----
-prev: false
-next: false
----
+# Nx Workspaces
 
-# Nx
+Build and test an existing Nx workspace with Struo: it reads projects and tasks from Nx, then caches each task and runs it without `nx run`.
 
-Struo can read an existing [Nx](https://nx.dev) workspace, derive a typed
-build graph from its projects and tasks, and schedule each task through
-Struo's cache and remote execution. You can query, build, and test the
-workspace without translating anything into `struo.toml`.
+You do not translate anything into `struo.toml`. Nx stays the source of truth
+for projects, tasks, and `dependsOn`; Struo schedules and caches the work.
 
-## Start With an Existing Nx Workspace
+## Prerequisites
 
-### Check the Toolchain
-
-Struo invokes Node.js and the local Nx binary. Confirm both are available and
-that your workspace's dependencies are installed:
+Struo invokes Node.js and the workspace's Nx binary. Confirm both are
+available:
 
 ```sh
 node --version
 nx --version
 ```
 
-If the repository pins Node with [mise](https://mise.jdx.dev/) or similar,
-install and activate that configuration first. Struo prefers the workspace
-copy of Nx (under `node_modules/nx`) over one on `PATH`, so a plain
-`npm install`, `pnpm install`, or `yarn install` is normally enough.
+If the repository pins Node.js with [mise](https://mise.jdx.dev/) or a similar
+tool, install and activate it first. Struo prefers the workspace copy of Nx
+under `node_modules/nx`, so install dependencies with your package manager
+(`npm install`, `pnpm install`, or `yarn install`).
 
-### Preview the Derived Graph
+## Start from an existing project
 
-From the directory that contains `nx.json`, inspect the match and the
-emitted targets:
+### Inspect the derived graph
+
+From the directory that contains `nx.json`, check the match and list the
+targets:
 
 ```sh
 struo query workspace
 struo query targets --kind nx_task
 ```
 
-No `struo.toml` is required, and these commands do not write one. The
-`nx_workspace` seed calls Nx's full project-graph API at load time, retaining
-external package metadata needed by plugin executors, and emits one target
-per project and task pair: `nx_test` for
-tests and `nx_task` for other tasks. Root dotenv files load with the installed
-Nx version's precedence and variable expansion before graph construction.
-Dependency edges honor Nx's `dependsOn`, including the upstream `^` form
-and the object form.
+These commands do not write a `struo.toml`. Struo emits one target per project
+and task pair, such as `my_app__build`: `nx_test` for tasks named `test` and
+`nx_task` for the rest. Dependencies follow Nx's `dependsOn`, including the
+upstream `^` form and the object form. Root dotenv files load the same way the
+installed Nx version loads them.
 
-By default, Struo emits the `build`, `test`, and `lint` tasks for every
-project. Adjust the filter through the seed's `targets` attribute, or set
-it to the empty list to include every task in the graph. Tasks required
-by `dependsOn` are retained transitively even when their names are outside
-the filter, so a build that depends on `compile` keeps its prerequisite.
-Upstream dependencies traverse projects without the requested task until
-they reach a project that defines it.
-
-### Build a Target
-
-Struo schedules and caches each task itself instead of routing back through
-`nx run`. For a task whose Nx executor is `nx:run-commands` or
-`nx:run-script`, Struo reads the resolved command from the graph and runs
-it directly, so cache keys, remote execution, and insights all live in
-Struo:
+### Build a task
 
 ```sh
 struo build my_app__build
 ```
 
-The first run is a cache miss and executes the underlying command. A
-second run with unchanged inputs is a cache hit and completes without
-rerunning that command.
+The first run is a cache miss and executes the task. A second run with
+unchanged inputs is a cache hit and restores the task's outputs without
+rerunning it.
 
-Nx declares potential outputs, including coverage directories that may not
-exist unless coverage is enabled. Struo caches the existing matches in a
-task-owned snapshot and restores them to their original workspace paths.
-Missing matches are valid for Nx tasks; other Struo action outputs remain
-required. Glob patterns use the workspace's installed Nx matcher.
-Generated Vite caches under `node_modules/.vite` are excluded from inputs,
-so a test runner's timing records do not invalidate its next run.
-
-## Executor Coverage
-
-Nx tasks describe how their work runs through an `executor` string.
-Coverage falls into three groups today:
-
-- `nx:run-commands` and its aliases (`@nx/run-commands:run-commands`,
-  `@nrwl/run-commands:run-commands`, `@nx/workspace:run-commands`,
-  `@nrwl/workspace:run-commands`) run natively. Struo extracts the shell
-  command from the executor's `options.command` or `options.commands` and
-  runs it under a POSIX shell on Linux and macOS, or `cmd.exe` on Windows.
-  `options.args` are forwarded unless `forwardAllArgs` disables forwarding
-  for the task or an individual command.
-- `nx:run-script` runs natively when the graph carries a resolved
-  `metadata.runCommand`. Nx populates that field with the exact
-  package-manager invocation (for example `pnpm run build`), which Struo
-  runs as a single command from the project directory.
-- Plugin executors run through the installed Nx `runExecutor` API, using
-  the resolved project graph and default configuration. Struo owns the
-  dependency schedule, action hashing, output snapshots, and cache. It does
-  not invoke `nx build`, `nx test`, or Nx's task runner.
-
-Commands do not inherit your shell's `PATH`, so changing it does not
-invalidate cached tasks. Their `PATH` holds the project-local
-`node_modules/.bin` directories, the directories of Node.js and of the
-workspace's package manager (from the root `packageManager` field or the
-lockfile), and the system directories. A command that needs a tool installed
-anywhere else can declare `{"env": "PATH"}` among the task's `inputs`, which
-passes your shell's `PATH` through as a keyed input. Commands do not receive
-`HOME` either, so tools fall back to the account's home directory; declare
-`{"env": "HOME"}` to pass yours through. Struo does not install
-SDKs, restore NuGet packages, or download browser binaries.
-
-Struo conservatively hashes workspace sources and installed dependencies,
-excluding declared generated outputs and runtime caches. This covers shared
-configuration and cross-project sources, but can invalidate more tasks than
-Nx's fine-grained named inputs. Output tokens such as `{options.outputPath.base}`
-resolve against the task's default configuration before snapshotting.
-
-### Run Tests
+### Run tests
 
 ```sh
 struo test
 ```
 
-Tasks named `test` become `nx_test` targets, exposing one normalized, cacheable
-suite batch per project. Both application and library suites run by default.
-Struo runs the resolved command or plugin executor, records its exit status
-and duration, and retains its log. A failed command produces a failed suite.
-Suite units do not offer case listing, case filtering, or within-suite
-sharding. Native runner output remains in the log; individual assertions are
-not imported into the normalized suite result.
+Each project's `test` task becomes one cacheable suite. Both application and
+library suites run by default. Struo records the exit status, duration, and
+log; a failed command produces a failed suite.
 
-## Configuration
+## Choose which tasks to include
 
-`nx_workspace` accepts a small number of attributes:
+By default Struo emits the `build`, `test`, and `lint` tasks of every project,
+plus every task they depend on. A build that depends on `compile` keeps that
+prerequisite even though `compile` is not in the list. Upstream `^`
+dependencies skip projects that do not define the task.
 
-- `targets` selects which task names to emit. Defaults to `build`, `test`,
-  and `lint`. Set it to the empty list to include every task in the graph.
-- `graph_file` points at a checked-in Nx project-graph JSON snapshot.
-  Include external package nodes when executing plugins. Struo reads the
-  snapshot directly instead of invoking Nx. This is useful in environments
-  that do not install Node.js and `node_modules/nx`, such as documentation
-  builds and reproducibility tests.
+To change the selection, declare an [`nx_workspace`](/reference/prelude/nx_workspace)
+target and set `targets`. An empty list includes every task:
 
-`nx_task` carries the per-task attributes Struo needs to run the underlying
-command: `project`, `task`, `project_root`, resolved `commands`, and their
-`command_cwd`, `command_env`, and `outputs`. The seed's resolver fills
-these from the Nx graph, so you rarely edit them by hand.
+```toml
+[[target]]
+name = "nx"
+kind = "nx_workspace"
+srcs = ["nx.json", "package.json"]
 
-## Update Workflow
+[target.attrs]
+resolver_inputs = ["nx.json", "package.json", "**/project.json", "**/package.json"]
+targets = []
+```
 
-Nx remains authoritative for its own graph. When you update `nx.json`,
-add or remove a project, or bump `dependsOn`, Struo picks up the change on
-the next graph load. The workspace's package manager still owns installing
-Node.js dependencies. Struo neither installs them nor updates lock files.
+Set `graph_file` to a checked-in Nx project-graph JSON snapshot to load the
+graph without Node.js or `node_modules/nx`. Include external package nodes in
+the snapshot when tasks use plugin executors.
+
+## How tasks run
+
+Struo runs each task itself and never calls `nx build`, `nx test`, or Nx's
+task runner. How it runs depends on the task's executor:
+
+- `nx:run-commands` and its aliases (`@nx/run-commands:run-commands`,
+  `@nrwl/run-commands:run-commands`, `@nx/workspace:run-commands`,
+  `@nrwl/workspace:run-commands`) run the command from `options.command` or
+  `options.commands` in a POSIX shell on Linux and macOS, or `cmd.exe` on
+  Windows. `options.args` are forwarded unless `forwardAllArgs` is false.
+- `nx:run-script` runs the package-manager command Nx resolved in
+  `metadata.runCommand`, from the project directory.
+- Other executors, including plugins, run through the installed Nx
+  `runExecutor` API with the task's default configuration.
+
+Nx `outputs` are treated as possible outputs. Struo caches the paths that exist
+after a run and restores them to the same place; a missing match, such as a
+coverage directory when coverage is off, is not an error.
+
+## Inputs and environment
+
+Struo hashes the workspace sources and installed dependencies, excluding
+declared outputs and runtime caches such as `node_modules/.vite`. This is more
+conservative than Nx's named inputs, so a change can rerun more tasks than Nx
+would.
+
+Tasks do not inherit your shell's `PATH`, so changing it does not invalidate
+the cache. Their `PATH` holds the `node_modules/.bin` directories, the
+directories of Node.js and of the workspace's package manager, and the system
+directories. To use a tool installed elsewhere, add `{"env": "PATH"}` to the
+task's Nx `inputs`; your `PATH` then becomes part of the cache key. `HOME` is
+not passed either; add `{"env": "HOME"}` when a task needs it.
+
+## Keep Nx authoritative
+
+When you edit `nx.json`, add or remove a project, or change `dependsOn`, Struo
+picks up the change on the next graph load. Your package manager
+still installs dependencies and updates lock files.
+
+## Limitations
+
+- Test suites do not support case listing, case filtering, or sharding within
+  a suite. Individual assertions are not imported; native output stays in the
+  log.
+- Struo does not install SDKs, restore NuGet packages, or download browser
+  binaries that tasks expect.
+
+## Target kinds
+
+- [`nx_workspace`](/reference/prelude/nx_workspace): the workspace seed and
+  its `targets` and `graph_file` attributes.
+- [`nx_task`](/reference/prelude/nx_task): one project task.
+- [`nx_test`](/reference/prelude/nx_test): one project's test suite.
+
+## Next steps
+
+- [Turborepo](/guide/graph/turborepo): the same workflow for Turborepo
+  workspaces.
+- [Testing and scheduling](/guide/graph/testing): plan affected tests and
+  replay them on CI workers.
+- [Remote execution](/guide/infrastructure/remote-execution): send uncached
+  work to a configured execution provider.

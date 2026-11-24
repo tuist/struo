@@ -1,9 +1,11 @@
 # Docker Execution
 
-Docker provides a local way to exercise the same action boundary used by hosted
-execution providers. With `struo build --remote`, Struo schedules ready compiler
-actions independently, transfers their declared inputs, and collects their
-declared outputs. Dependencies still determine when each action can start.
+Run Struo build actions in fresh local Docker containers to test remote
+execution on your own machine before moving to a hosted provider.
+
+With `struo build --remote`, Struo schedules ready actions independently,
+transfers their declared inputs into containers, and collects their declared
+outputs. Dependencies still determine when each action can start.
 
 **Capabilities:** local container execution through Struo's remote-execution
 interface. Docker does not provide shared caching; configure it separately.
@@ -20,7 +22,7 @@ docker image inspect --format '{{.Id}}' your-build-image
 
 ## Configuration
 
-Configure that exact `sha256:` ID in the root `struo.toml`:
+Configure that exact `sha256:` ID in the repository root `struo.toml`:
 
 ```toml
 [infrastructures.workers]
@@ -35,66 +37,35 @@ Tags and shortened IDs are rejected. Struo does not pull images implicitly.
 Changing the image changes the execution binding and partitions cached results.
 The example value above is a placeholder, not a runnable image ID.
 
+Docker needs no credentials beyond the coordinator's access to the Docker
+daemon.
+
 ## Usage
+
+Build a target with its actions running in containers:
 
 ```sh
 struo build --remote --compute workers your_target
 ```
 
-Omit `--compute workers` when the default execution provider is configured.
-Omit `--remote` for the existing local build path. `--remote` cannot be combined
-with reproducibility trials.
+Omit `--compute workers` to use the workspace's default execution provider.
+Omit `--remote` for the local build path. `--remote` cannot be combined with
+reproducibility trials.
 
 The build header names the selected provider. Add `-v` to see each completed
 action's name, target, execution or cache status, and duration.
 
 Graph analysis still runs on the coordinator. Generic toolchains need matching
-coordinator and worker tool paths. For Apple targets, an image-bound toolchain
-description supports Xcode resolution on macOS with compilation on Linux, as
-described below. Compilation target and worker operating system are separate:
-cross-compilation requires an appropriate toolchain and SDK in the image.
+coordinator and worker tool paths. Compilation target and worker operating
+system are separate: cross-compilation requires an appropriate toolchain and SDK
+in the image.
 
-The coordinator needs access to Docker. Action containers receive neither a
-host workspace mount nor the Docker socket. Do not give untrusted code control
-of the coordinator or its Docker access. Docker is a development execution
-backend, not a hostile multi-tenant isolation guarantee.
-
-## Limits and cleanup
-
-Docker workers share Struo's host admission budget with local actions and also
-reserve capacity against the Docker daemon's reported CPUs and two thirds of
-its memory. This accounts for Docker VM capacity when it is smaller than the
-coordinator's memory. Provider aliases using the same daemon share this worker
-budget within the process. Containers receive the admitted worker CPU and
-memory limits, including a matching memory-plus-swap limit, and reservations
-remain held through deletion. Target kinds can declare command resources with
-[`run_action`](/reference/modules/); undeclared requests use Struo's defaults.
-If deletion fails, host CPU, memory, exclusive slots, and daemon reservations
-remain held while Struo retries cleanup.
-
-Each action snapshots its Docker endpoint and TLS configuration. Changing the
-current Docker context does not redirect that action or its cleanup. Ownership
-is tied to the daemon identity; an empty listing from another daemon cannot
-release a live worker's reservation.
-
-Struo creates a fresh writable container for each uncached command, validates
-returned outputs before installing them, and awaits container cleanup. Failed
-or cancelled operations retain ownership records when cleanup is uncertain.
-Declared `clean_paths` and `create_dirs` apply inside the worker after input
-staging. Struo does not copy private coordinator scratch files as implicit inputs.
-Unsupported action policies fail rather than silently running locally or
-weakening their requirements. Cache hits can restore outputs without starting
-a container.
-
-Archive transfers have progress-stall limits and an overall deadline.
-
-## Resolve Xcode On Mac And Compile On Linux
+## Resolve Xcode on Mac and compile on Linux
 
 Keep the original Xcode project and its `xcode_workspace` target on the Mac.
 Struo resolves native targets and source-package dependencies there, then sends
 declared sources, headers, generated files, and dependency outputs to workers.
 There is no graph export step or manual source checkout inside each worker.
-Only required declared inputs are transferred, not the entire working tree.
 
 The immutable Linux image must already contain Linux-compatible Swift, Clang,
 Darwin SDK tools and resources, and `rcodesign`. Copying Xcode's macOS compiler
@@ -136,23 +107,42 @@ Independent compile actions use separate containers. Outputs return to the
 Mac, and a subsequent build can restore them from cache without new workers.
 The description and image selection both participate in cache identity.
 
-This initial slice supports ordinary C/Swift libraries and applications with
-ad-hoc signing. It does not make arbitrary Xcode projects Linux-compatible.
-Swift macro compilation, SwiftPM build-tool plugins, explicit modules, Catalyst,
-test runtimes, simulator execution, and production signing are not supported
-by this cross-host path. Unsupported features fail rather than selecting Mac
-tools silently. Resource processing requires compatible tools in the image.
+This path supports ordinary C/Swift libraries and applications with ad-hoc
+signing. It does not make arbitrary Xcode projects Linux-compatible. Swift
+macro compilation, SwiftPM build-tool plugins, explicit modules, Catalyst, test
+runtimes, simulator execution, and production signing are not supported.
+Unsupported features fail rather than selecting Mac tools silently. Resource
+processing requires compatible tools in the image.
 
-## Current Boundaries
+## Limits and cleanup
 
-This backend demonstrates per-action dispatch, not a production fleet service.
-It reuses an already available immutable image, but does not maintain a pool of
-running workers. Each uncached action transfers a bounded archive; intermediate
-outputs return through the coordinator before downstream actions receive them.
-There is no worker-to-worker CAS transfer, cross-provider placement, or native
-macOS worker support in Docker. Those require additional lifecycle, artifact,
-and placement contracts rather than a different image setting.
+- Docker is a development execution backend, not a production fleet or a
+  hostile multi-tenant isolation guarantee. Action containers receive neither a
+  host workspace mount nor the Docker socket, but do not give untrusted code
+  control of the coordinator or its Docker access.
+- There is no pool of warm workers. Each uncached action transfers a bounded
+  archive, and intermediate outputs return through the coordinator before
+  downstream actions receive them. Docker does not provide macOS workers.
+- Docker workers share Struo's memory budget with local actions and also
+  reserve capacity against the Docker daemon's reported CPUs and two thirds of
+  its memory, which matters when a Docker VM is smaller than the host.
+  Containers receive the admitted CPU and memory limits. Target kinds can
+  declare command resources with [`run_action`](/reference/modules/).
+- Unsupported action policies fail rather than silently running locally or
+  weakening their requirements. Archive transfers have progress-stall limits
+  and an overall deadline.
 
-See [Remote Execution](/guide/infrastructure/remote-execution) and the
-[execution provider contract](/reference/infrastructure/execution) for the
-shared behavior and integration requirements.
+Struo creates a fresh container for each uncached command and removes it
+afterwards. Cache hits restore outputs without starting a container. If removal
+fails, Struo keeps the action's resource reservation and retries cleanup.
+Changing the current Docker context mid-run does not redirect a running action
+or its cleanup.
+
+## Next steps
+
+- [Remote Execution](/guide/infrastructure/remote-execution): understand the
+  declared input and output boundary every provider shares.
+- [Infrastructure](/guide/infrastructure#available-providers): choose a hosted
+  provider when local validation passes.
+- [Execution provider contract](/reference/infrastructure/execution): see what
+  every execution provider guarantees.

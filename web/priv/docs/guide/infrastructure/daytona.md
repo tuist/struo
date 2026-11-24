@@ -1,21 +1,25 @@
-# Daytona
+# Daytona Sandboxes
 
-[Daytona](https://www.daytona.io/docs/en/sandboxes/) provides hosted sandboxes
-with process and filesystem operations. Struo creates one sandbox for each
-action that misses the cache, transfers declared inputs, runs the command,
-retrieves declared outputs, and deletes the sandbox.
+[Daytona](https://www.daytona.io/docs/en/sandboxes/) provides hosted sandboxes.
+Struo runs each uncached action in a Daytona sandbox built from a container
+image, then deletes it.
+
+Struo transfers declared inputs, runs the command, retrieves declared outputs,
+and deletes the sandbox.
 
 **Capabilities:** remote execution. Configure shared caching separately.
 
 ## Prerequisites
 
-Use a Daytona account and API key with sandbox access. Prepare a Linux image
-with the tools your actions need, including `tar`.
+- A Daytona account and API key with sandbox access.
+- A Linux container image with the stable tools your actions need, including
+  `tar`. Keep repository dependencies such as `node_modules` in the action
+  graph so a lockfile change invalidates the right action.
 
 ## Configuration
 
-Choose a Linux container image that contains the stable tools shared by your
-actions. A Vitest workflow can use a pinned Node.js image:
+Bind the image in the repository root `struo.toml`. A Vitest workflow can use a
+pinned Node.js image:
 
 ```toml
 [infrastructures.remote_tests]
@@ -26,9 +30,7 @@ image = "node:22.18.0-bookworm"
 provider = "remote_tests"
 ```
 
-Struo asks Daytona to build the sandbox environment from that image. The image
-must provide `tar`. Repository dependencies remain declared action outputs and
-inputs, so changing a package lock invalidates the correct action.
+Struo asks Daytona to build the sandbox environment from that image.
 
 ### Authentication
 
@@ -41,43 +43,65 @@ export DAYTONA_API_KEY=...
 `STRUO_DAYTONA_API_KEY` takes precedence when both variables are present. Struo
 does not forward the key to the action process.
 
+Self-hosted or test endpoints can override the control and toolbox addresses
+with `STRUO_DAYTONA_CONTROL_URL` and `STRUO_DAYTONA_TOOLBOX_URL`.
+
 ## Usage
 
-Use the workspace default:
-
-```sh
-struo exec --remote -- node --version
-```
-
-Or select the provider for one invocation:
+Run a literal command on the provider:
 
 ```sh
 struo exec --remote --compute remote_tests -- node --version
 ```
 
-An annotated script can select it with:
+Omit `--compute remote_tests` to use the workspace's default execution provider.
+
+### Run an annotated test script
+
+Save this script as `scripts/test.sh`:
 
 ```sh
+#!/bin/sh
 # struo remote "remote_tests"
+# struo cwd ".."
+# struo input "../node_modules"
+# struo input "../package.json"
+# struo input "../tests"
+# struo output "../reports"
+
+node node_modules/vitest/vitest.mjs run \
+  --reporter=json --outputFile=reports/vitest.json
 ```
 
-See [Remote Execution](/guide/infrastructure/remote-execution) for a two-action
-Vitest example.
+Run it:
 
-Daytona's command endpoint returns standard output and standard error as one
-combined result. Struo exposes that result as standard output.
+```sh
+struo exec --script -- sh scripts/test.sh
+```
+
+Declare any additional source, configuration, or setup files your tests read.
+Native dependencies must match the guest's Linux architecture and runtime. To
+produce `node_modules` in a separate cacheable action, see
+[Remote Execution](/guide/infrastructure/remote-execution).
 
 ## Limits and cleanup
 
-Struo marks each Daytona sandbox as ephemeral and sets immediate deletion after
-stop. It also sends an explicit delete request after success, command failure,
-timeout, or transfer failure. The ephemeral policy is a provider-side safety
-net if the client disappears first. Daytona describes this behavior in its
-[sandbox lifecycle guide](https://www.daytona.io/docs/en/sandboxes/#ephemeral-sandboxes).
+- Daytona returns standard output and standard error as one combined result.
+  Struo exposes it as standard output.
+- The sandbox stops automatically after an interval derived from the action
+  timeout, with extra time for provisioning and transfers. Actions without an
+  explicit timeout use Daytona's short-lived execution policy.
 
-The sandbox receives an automatic stop interval derived from the action
-timeout, with extra time for provisioning and transfers. Actions without an
-explicit timeout use Daytona's short-lived execution policy.
+Struo sends an explicit delete request after success, command failure, timeout,
+or transfer failure. It also marks each sandbox as ephemeral with immediate
+deletion after stop, so Daytona removes it if the client disappears first. See
+Daytona's [sandbox lifecycle guide](https://www.daytona.io/docs/en/sandboxes/#ephemeral-sandboxes).
 
-Self-hosted or test endpoints can override the control and toolbox addresses
-with `STRUO_DAYTONA_CONTROL_URL` and `STRUO_DAYTONA_TOOLBOX_URL`.
+## Next steps
+
+- [Remote Execution](/guide/infrastructure/remote-execution): split dependency
+  installation and tests into separate cacheable actions.
+- [Infrastructure](/guide/infrastructure#available-providers): pick a cache
+  provider so other machines reuse remote results.
+- [Execution provider contract](/reference/infrastructure/execution): see what
+  every execution provider guarantees.

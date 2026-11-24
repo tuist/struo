@@ -1,13 +1,10 @@
----
-prev: false
-next: false
----
+# Zig Builds and Tests
 
-# Zig
+Build, run, test, and cache Zig modules, executables, and static or shared
+libraries with Struo, including locked `build.zig.zon` packages and C interop.
 
-Struo can describe Zig modules, build and run executables, run host tests, and
-produce static or shared libraries. This guide uses one math module from a
-binary and a test target.
+Zig targets are declared in `struo.toml`. This guide uses one math module from
+a binary and a test target, then adds locked packages and libraries.
 
 ## Prerequisites
 
@@ -19,10 +16,15 @@ mise exec -- zig version
 ```
 
 Zig targets resolve `zig` from the command search path by default. Set the
-`zig` attribute for a different executable. Set `zig_version` when analysis
-should reject a compiler whose reported version does not match the project.
+`zig` attribute to use a different executable. Set `zig_version` to reject a
+compiler whose reported version does not match the project.
 
-## Declare a Module, Binary, and Test
+The chosen compiler must include LLVM support for the requested target,
+because Zig compilation uses the LLVM backend by default.
+
+## Declare targets
+
+### Declare a module, binary, and test
 
 Create `tools/hello/struo.toml`:
 
@@ -70,12 +72,65 @@ tools/hello/
 The binary and test import the module with `@import("math")`. The
 `import_name` and `deps` entry make that name explicit.
 
-## Import Locked Zig Packages
+### Query before building
+
+Inspect the targets and their capabilities:
+
+```sh
+struo query targets --kind zig_library
+struo query capabilities tools/hello/math
+struo query capabilities tools/hello/hello
+struo query capabilities tools/hello/math_tests
+struo query schema zig_binary
+struo query schema zig_test
+```
+
+The module exposes `build` but does not compile an artifact by itself; its
+consumers compile it as part of their whole program. The binary exposes
+`build` and `run`, and the test exposes `build` and `test`.
+
+### Build and run
+
+Build the executable and its module:
+
+```sh
+struo build tools/hello/hello
+```
+
+The executable appears at `.struo/out/tools/hello/hello/hello`, with `.exe`
+added on Windows, and Zig documentation at
+`.struo/out/tools/hello/hello/hello.docs`.
+
+Run the same binary:
+
+```sh
+struo run tools/hello/hello
+```
+
+The binary can receive `args`, `env`, and declared `data` inputs. Run output,
+including `stdout.log` and `run.json`, is stored under
+`.struo/out/tools/hello/hello/run/`. Runs are not replayed from the cache, so
+each invocation executes the program again.
+
+### Run the test
+
+Build and execute the host test target:
+
+```sh
+struo test tools/hello/math_tests
+```
+
+Results and logs appear under `.struo/out/tools/hello/math_tests/test/`,
+including `test_results.json` and `zig-test.log`.
+
+## Manage dependencies
+
+### Import locked Zig packages
 
 Use [`zig_dependencies`](/reference/prelude/zig_dependencies) when the project
-already declares packages in `build.zig.zon`. Zig's package manifest remains
-the source of truth for dependency aliases, local paths, lazy packages, source
-locations, and content multihashes.
+already declares packages in `build.zig.zon`. Zig's package manifest stays the
+source of truth for dependency aliases, local paths, lazy packages, source
+locations, and content hashes.
 
 ```toml
 [[target]]
@@ -101,16 +156,11 @@ deps = ["zig_dependencies"]
 main = "src/main.zig"
 ```
 
-Struo reads the locked package graph and emits one queryable `zig_package`
-target per package instance. Local path dependencies are resolved relative to
-the manifest that declares them, and the normalized materialized source root is
-part of their identity. The same relative spelling in two parent packages
-therefore cannot collapse distinct dependencies. Remote packages are expected
-under the vendor directory, keyed by their Zig content multihash when present.
-Verify those directories through Zig's native fetch workflow before committing
-them. Ordinary builds do not fetch or update packages, and their action keys
-include the actual source contents. Resolution fails explicitly when a graph
-exceeds 10,000 package instances.
+Struo emits one queryable `zig_package` target per package instance. Local path
+dependencies resolve relative to the manifest that declares them. Remote
+packages are expected under the vendor directory, keyed by their Zig content
+hash. Verify them with Zig's native fetch workflow before committing them;
+ordinary builds never fetch or update packages.
 
 The conventional public module path is `src/root.zig`. Use `module_paths` when
 a package exposes another module:
@@ -120,13 +170,10 @@ a package exposes another module:
 special_package = "third_party/zig/special/source/main.zig"
 ```
 
-Use `package_paths` to map an alias or content multihash to a different
-materialized source directory. This is useful when an existing vendoring
-layout cannot be changed. Run Zig's native package fetch workflow explicitly
-when the lock or vendored source set changes, then review the expanded graph
-with `struo query targets --kind zig_package`.
+Use `package_paths` to map an alias or content hash to a different source
+directory when an existing vendoring layout cannot change.
 
-Build and run a first-party consumer after inspecting the imported packages:
+Inspect the imported packages, then build and run the consumer:
 
 ```sh
 struo query targets --kind zig_package
@@ -135,135 +182,93 @@ struo run hello
 ```
 
 The bundled dependency starter imports a locked `math` package and prints its
-answer, `42`, from the local binary. Compilation fails if the dependency set
-does not propagate both the edge-local import alias and the package module, so
-this run verifies the complete provider handoff.
+answer, `42`.
 
-## Query Before Building
+### Connect C and C++ libraries
 
-Inspect the targets and their capabilities:
+Zig binary, test, module, static-library, and shared-library targets accept a
+[`c_library`](/reference/prelude/c_library) dependency and receive its headers,
+definitions, archives, dynamic libraries, and linker options.
 
-```sh
-struo query targets --kind zig_library
-struo query capabilities tools/hello/math
-struo query capabilities tools/hello/hello
-struo query capabilities tools/hello/math_tests
-struo query schema zig_binary
-struo query schema zig_test
-```
+[`zig_c_library`](/reference/prelude/zig_c_library) exposes C headers as an
+importable Zig module and needs at least one C header from its dependencies.
+Add it only when Zig source needs translated C declarations, not just a
+linked archive.
 
-The module exposes `build` but does not compile an artifact by itself. Its
-binary and test consumers compile it as part of their whole program. The
-binary exposes `build` and `run`; the test exposes `build` and `test`.
-
-Zig compilation selects the LLVM backend with `-fllvm` by default. The chosen
-compiler must include LLVM support for the requested target. Struo propagates
-compiler errors rather than silently falling back to another backend.
-
-Explicit `-fno-llvm` flags in `zigopt`, `zigopts`, or `linkopts` are preserved,
-but compilation and documentation actions bypass the cache. Debug information
-is preserved by default, and these unstripped actions also bypass caching:
-LLVM debugging and symbol metadata can differ between otherwise identical
-compilations. Explicit `strip = true`, `strip_debug_symbols = true`, or a
-root-module `-fstrip` flag permits caching with LLVM; any `-fno-strip` override
-keeps caching disabled. Struo never strips debug information automatically.
-
-Zig's self-hosted backend can produce different executable bytes even with
-debug information stripped. A stable action key does not establish byte
-reproducibility. Use `struo build --verify-reproducible` to check the declared
-outputs of a particular target and compiler configuration. This remains an
-observation, not a universal determinism guarantee for arbitrary source code.
-
-## Build and Run
-
-Build the executable and its module:
-
-```sh
-struo build tools/hello/hello
-```
-
-The executable appears at `.struo/out/tools/hello/hello/hello`, with `.exe`
-added on Windows. Zig documentation appears at
-`.struo/out/tools/hello/hello/hello.docs`. Optional assembly and compiler
-representation outputs are produced only when their corresponding attributes
-are enabled.
-
-Run the same binary:
-
-```sh
-struo run tools/hello/hello
-```
-
-The binary can receive `args`, `env`, and declared `data` inputs. Run output is
-stored under `.struo/out/tools/hello/hello/run/`, including `stdout.log` and
-`run.json`. Running is not replayed from the action cache, so each invocation
-executes the program again.
-
-## Run the Test
-
-Build and execute the host test target:
-
-```sh
-struo test tools/hello/math_tests
-```
-
-The compiled test binary appears under
-`.struo/out/tools/hello/math_tests/math_tests`. Results and logs appear under
-`.struo/out/tools/hello/math_tests/test/`, including `test_results.json`,
-`zig-test.log`, and `native_results.txt`.
-
-Zig test execution is host-only. A cross-target test binary can be built, but
-running it requires a platform runner outside `zig_test`.
-
-## Build Libraries and Choose Configuration
+## Build libraries and configured variants
 
 Use [`zig_static_library`](/reference/prelude/zig_static_library) or
 [`zig_shared_library`](/reference/prelude/zig_shared_library) when another
-native target needs a linkable artifact. Both can consume the `math` module
-through `deps` and can emit documentation with the library.
+native target needs a linkable artifact. Both consume the `math` module
+through `deps` and can emit documentation.
 
-Configured variants keep build choices on the target:
+Configured variants keep build choices such as `mode`, `threaded`, and
+`zig_version` on the target:
 
 - [`zig_configure`](/reference/prelude/zig_configure) builds a static or shared
-  library with attributes such as `mode`, `threaded`, and `zig_version`.
-- [`zig_configure_binary`](/reference/prelude/zig_configure_binary) provides
-  the same configuration shape for an executable.
-- [`zig_configure_test`](/reference/prelude/zig_configure_test) provides it for
-  a test target.
+  library.
+- [`zig_configure_binary`](/reference/prelude/zig_configure_binary) builds an
+  executable.
+- [`zig_configure_test`](/reference/prelude/zig_configure_test) builds a test.
 
-Use the base kinds until the project needs one of those explicit settings.
+Use the base kinds until the project needs one of those settings. To generate a
+Zig module with a host tool at build time, use
+[`zig_generated_library`](/reference/prelude/zig_generated_library).
 
-## Connect C and C++ Libraries
+## Cache Zig builds
 
-Zig binary, test, module, static-library, and shared-library targets accept a
-[`c_library`](/reference/prelude/c_library) dependency. They receive its
-headers, include directories, definitions, archives, dynamic libraries, and
-linker options.
+Zig preserves debug information by default, and Struo never strips it
+automatically. Unstripped compilations bypass the cache, because LLVM debug
+metadata can differ between otherwise identical builds. Set `strip = true` or
+`strip_debug_symbols = true`, or pass `-fstrip` for the root module, to make
+compilation cacheable:
 
-[`zig_c_library`](/reference/prelude/zig_c_library) exposes C headers as an
-importable Zig module. It requires at least one C header from its dependencies.
-Add this bridge only when Zig source needs translated C declarations, rather
-than only linking a native archive.
+```toml
+[target.attrs]
+main = "src/main.zig"
+strip = true
+```
 
-## Target References and Limitations
+A `-fno-strip` override keeps caching disabled, and an explicit `-fno-llvm`
+flag in `zigopt`, `zigopts`, or `linkopts` also bypasses the cache.
 
-Start with the references used by this guide:
+A stable cache key does not prove byte-for-byte reproducibility. Check the
+declared outputs of a target with:
 
-- [`zig_dependencies`](/reference/prelude/zig_dependencies)
-- [`zig_package`](/reference/prelude/zig_package)
+```sh
+struo build tools/hello/hello --verify-reproducible
+```
+
+## Limitations
+
+- Test execution is host-only. A cross-target test binary can be built, but
+  running it requires a platform runner outside `zig_test`.
+- Compiler errors from a missing LLVM backend are reported as is; Struo does
+  not fall back to another backend.
+- Module import renames must identify exactly one dependency. Unknown or
+  ambiguous names fail validation.
+- Package resolution fails when a graph exceeds 10,000 package instances.
+
+## Target kinds
+
 - [`zig_library`](/reference/prelude/zig_library)
 - [`zig_binary`](/reference/prelude/zig_binary)
 - [`zig_test`](/reference/prelude/zig_test)
+- [`zig_dependencies`](/reference/prelude/zig_dependencies)
+- [`zig_package`](/reference/prelude/zig_package)
+- [`zig_static_library`](/reference/prelude/zig_static_library)
+- [`zig_shared_library`](/reference/prelude/zig_shared_library)
+- [`zig_c_library`](/reference/prelude/zig_c_library)
+- [`zig_generated_library`](/reference/prelude/zig_generated_library)
+- [`zig_configure`](/reference/prelude/zig_configure),
+  [`zig_configure_binary`](/reference/prelude/zig_configure_binary), and
+  [`zig_configure_test`](/reference/prelude/zig_configure_test)
 
-The [target kind index](/reference/prelude/) links the static, shared,
-configured, and C-bridge kinds. Module import renames must identify exactly one
-dependency; unknown or ambiguous names fail validation. Cross-target tests can
-be built but cannot run through the host-only test capability.
+## Next steps
 
-## Next
-
-Add a [`c_library`](/reference/prelude/c_library) dependency when the example
-needs native headers or an archive, then query the binary again before
-building. Once the module graph builds, runs, and tests, continue with
-[Memory](/guide/memory/) to inspect the durable context recorded for those
-actions.
+- [C and C++](/guide/graph/c): declare the native library a Zig target links
+  or translates.
+- [Testing and Scheduling](/guide/graph/testing): select and schedule tests
+  across the graph.
+- [Memory](/guide/memory/): inspect the durable context Struo records for
+  builds and tests.

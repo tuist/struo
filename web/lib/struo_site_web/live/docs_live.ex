@@ -60,6 +60,7 @@ defmodule StruoSiteWeb.DocsLive do
            not_found: false,
            meta_description: meta_description(page),
            canonical_url: Endpoint.url() <> current_slug,
+           markdown_url: Endpoint.url() <> markdown_href(current_slug),
            head_image: og_image_url(OgImage.slug_to_filename(segments))
          )}
 

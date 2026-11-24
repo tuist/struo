@@ -1,23 +1,26 @@
 # Microsandbox
 
-[Microsandbox](https://github.com/microsandbox/microsandbox) runs a command in
-an isolated micro-virtual-machine on the local computer. It is useful for
-validating the same declared input and output contract used by the hosted E2B
-and Daytona executors.
+[Microsandbox](https://github.com/microsandbox/microsandbox) runs commands in
+local micro-VMs. Struo uses it to run actions in isolation on your own machine
+with the same contract as hosted providers.
+
+It is useful for validating declared inputs and outputs locally before moving
+to a hosted executor such as E2B or Daytona.
 
 **Capabilities:** local micro-VM execution through Struo's remote-execution
 interface. Configure shared caching separately.
 
 ## Prerequisites
 
-Use Linux or Apple Silicon macOS with the virtualization support required by
-[Microsandbox](https://github.com/microsandbox/microsandbox). Prepare an image
-containing the runtime and tools your actions need.
+- Linux or Apple Silicon macOS with the virtualization support required by
+  [Microsandbox](https://github.com/microsandbox/microsandbox). On Linux this
+  needs KVM.
+- An image containing the runtime and tools your actions need.
 
 ## Configuration
 
-Give the infrastructure a name based on its role. The name is a policy label,
-not the name of the test framework:
+Bind the image in the repository root `struo.toml`. Name the infrastructure
+after its role, not the test framework:
 
 ```toml
 [infrastructures.remote_tests]
@@ -28,81 +31,68 @@ image = "node:22.18.0-alpine"
 provider = "remote_tests"
 ```
 
-The provider definition selects the Microsandbox executor adapter and the
-image that supplies tools such as [Node.js](https://nodejs.org/). Pin the image
-to an immutable digest for reproducible shared workflows.
+The image supplies tools such as [Node.js](https://nodejs.org/). Pin it to an
+immutable digest for reproducible shared workflows. Microsandbox runs locally
+and needs no credentials.
 
 ## Usage
 
-Run one command through the configured provider:
+Run a literal command on the provider:
 
 ```sh
-struo exec --remote -- node --version
+struo exec --remote --compute remote_tests -- node --version
 ```
 
-### Select the provider from a script
+Omit `--compute remote_tests` to use the workspace's default execution provider.
 
-An annotated script can name the same infrastructure directly:
+### Run an annotated test script
+
+Save this script as `scripts/test.sh`:
 
 ```sh
 #!/bin/sh
 # struo remote "remote_tests"
-# struo input "../src"
-# struo input "../tests"
-# struo output "../coverage"
 # struo cwd ".."
-
-./node_modules/.bin/vitest run
-```
-
-Struo resolves `remote_tests` through the root manifest. The command uses the
-Node.js executable from the configured image. Struo does not copy a
-machine-specific interpreter path or import the host tool environment.
-
-### Model package dependencies as an action
-
-The image should contain tools that are stable across many actions. Repository
-dependencies belong in the action graph. For example, an install script can
-use the [npm package manager](https://www.npmjs.com/) to produce `node_modules`:
-
-```sh
-#!/bin/sh
+# struo input "../node_modules"
 # struo input "../package.json"
-# struo input "../package-lock.json"
-# struo output "../node_modules"
-# struo cwd ".."
-# struo remote "remote_tests"
+# struo input "../tests"
+# struo output "../reports"
 
-npm clean-install
+node node_modules/vitest/vitest.mjs run \
+  --reporter=json --outputFile=reports/vitest.json
 ```
 
-The test script then declares the install script as a dependency:
+Run it:
 
 ```sh
-# struo needs "./install.sh"
+struo exec --script -- sh scripts/test.sh
 ```
 
-Struo runs the install action first. Its declared `node_modules` output becomes
-a declared input of the test action and contributes to that action's cache
-identity. A cache hit can restore the dependency output without running the
-installer again.
+The command uses the Node.js executable from the configured image; Struo does
+not copy host interpreter paths or the host tool environment. Declare any
+additional files your tests read. Struo rejects symbolic links that escape the
+declared input trees.
 
-This is preferable to copying the host's `node_modules` by default. Package
-trees can contain platform-specific native files and symbolic links into a
-package manager store. If an existing workflow must copy such a tree, declare
-it as an `input`; Struo transfers it recursively and rejects symbolic links that
-escape the declared input trees.
+Copying the host's `node_modules` can bring in platform-specific native files
+and links into a package manager store. Prefer producing it in a separate
+cacheable install action, as shown in
+[Remote Execution](/guide/infrastructure/remote-execution).
 
 ## Limits and cleanup
 
-The Microsandbox executor starts with a clean workspace. Before execution,
-Struo creates the declared working directory and transfers only declared input
-files, directories, and safe symbolic links. After a successful command, Struo
-retrieves only declared outputs and installs them into the workspace through a
-staging directory.
+- Each action starts in a clean workspace that contains only declared inputs.
+- Struo retrieves only declared outputs after a successful command and installs
+  them through a staging directory.
+- Microsandbox is available through Struo on Linux and Apple Silicon macOS only.
 
-Struo stops the micro-virtual-machine and removes its persisted state after
-success, failure, or timeout.
+Struo stops the micro-VM and removes its persisted state after success,
+failure, or timeout.
 
-Microsandbox is currently available through Struo on Linux and Apple Silicon
-macOS.
+## Next steps
+
+- [Remote Execution](/guide/infrastructure/remote-execution): split dependency
+  installation and tests into separate cacheable actions.
+- [E2B Sandboxes](/guide/infrastructure/e2b): run the same actions on a hosted
+  provider.
+- [Execution provider contract](/reference/infrastructure/execution): see what
+  every execution provider guarantees.

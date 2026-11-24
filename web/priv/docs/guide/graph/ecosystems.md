@@ -1,14 +1,14 @@
----
-next: false
----
+# Ecosystems and Target Kinds
 
-# Ecosystems
+Choose the Struo target kinds for your language, platform, or build system,
+import locked third-party dependencies, and adopt typed, cached builds one
+boundary at a time.
 
 An ecosystem is a set of target kinds for one language, platform, or build
 domain. It gives Struo enough information to validate dependencies, explain
 what a target can do, and cache work from declared inputs and outputs.
 
-## Choose Between a Typed Target and a Script
+## Choose between a typed target and a script
 
 Use an ecosystem target kind when Struo should understand the artifact and its
 relationships. This is a good fit when you want to:
@@ -19,23 +19,73 @@ relationships. This is a good fit when you want to:
 - expose focused build, run, and test operations to coding agents.
 
 Use a [script target](/guide/scripted/) when the workflow is still exploratory
-or the native feature you need has not been modeled. A native package manager
-can remain the source of truth while a typed dependency target imports its
-locked result into Struo. Scripts still participate in the graph, so a project
-can begin there and adopt typed targets one boundary at a time.
+or the native feature you need has not been modeled. Scripts still participate
+in the graph, so a project can begin there and adopt typed targets one
+boundary at a time.
 
-An existing build system can use the same bridge. For CMake,
+An existing build system can stay in charge behind a typed target. For CMake,
 [`cmake_project`](/reference/prelude/cmake_project) wraps configure and build
-as a typed coarse action, while
+as one coarse action, while
 [`cmake_workspace`](/reference/prelude/cmake_workspace) imports a checked
 configured graph for queries. CMake remains authoritative in both cases.
 
-## Import Locked Third-Party Graphs
+## Find your ecosystem guide
+
+Each full guide starts from a first project, queries before building, and
+lists current limitations:
+
+- [Bazel](/guide/graph/bazel) builds and tests an existing Bazel workspace
+  without a Struo manifest while Bazel keeps its native graph and cache.
+- [Apple](/guide/graph/apple) covers libraries, frameworks, applications, and
+  tests written in Swift, Objective-C, C, and C++.
+- [Xcode Projects](/guide/graph/apple/xcode) derives Apple targets from an
+  existing `.xcodeproj` or `.xcworkspace` instead of declaring them.
+- [Swift Packages](/guide/graph/swift-packages) covers locked package import,
+  static products, and Apple consumers.
+- [Android](/guide/graph/android) covers resources, Java and Kotlin libraries,
+  application packages, and host or device tests.
+- [C and C++](/guide/graph/c) covers headers, source compilation, static
+  libraries, and native consumers.
+- [CMake](/guide/graph/cmake) covers coarse native execution, exact products,
+  checked graph snapshots, and incremental adoption.
+- [Container Images](/guide/graph/containers) builds an existing Dockerfile as
+  a discovered image target.
+- [Elixir](/guide/graph/elixir) covers compiled applications and ExUnit tests.
+- [Kotlin](/guide/graph/kotlin) covers Java virtual machine libraries and
+  binaries, Android Kotlin sources, and Kotlin/Native Apple frameworks.
+- [Go](/guide/graph/go) covers package archives, executables, tests, cgo,
+  cross-compilation, and locked vendored modules.
+- [Rust](/guide/graph/rust) starts from an existing `Cargo.toml`, then covers
+  libraries, binaries, tests, procedural macros, Cargo dependencies, and
+  native mobile outputs.
+- [React Native](/guide/graph/react-native) covers New Architecture
+  dependencies, native modules, JavaScript bundles, Apple and Android
+  applications, and Fast Refresh.
+- [Nx](/guide/graph/nx) reads an existing Nx workspace and runs its
+  `nx:run-commands` and `nx:run-script` tasks through Struo.
+- [Turborepo](/guide/graph/turborepo) reads an existing Turborepo workspace
+  and runs each package script through Struo, locally or on remote workers.
+- [Zig](/guide/graph/zig) covers modules, binaries, tests, libraries, and C or
+  C++ dependencies.
+
+Test-only integrations have focused reference pages with declarations,
+starters, and first-run commands:
+
+- [pytest](/reference/prelude/pytest_test) for Python.
+- [Ruby Specification](/reference/prelude/rspec_test) and
+  [Minitest](/reference/prelude/minitest_test) for Ruby.
+- [Vitest](/reference/prelude/vitest_test) and
+  [Jest](/reference/prelude/jest_test) for JavaScript and TypeScript.
+
+The [target kind index](/reference/prelude/) lists the schema, dependencies,
+capabilities, outputs, and limitations of every kind.
+
+## Import locked third-party graphs
 
 Dependency targets do not replace package managers. The native manager owns
-manifest semantics, version selection, registry policy, and lock updates. Struo
-imports the locked result, creates one queryable target per package instance,
-and connects those targets to first-party consumers.
+manifest semantics, version selection, registry policy, and lock updates.
+Struo imports the locked result, creates one queryable target per package
+instance, and connects those targets to first-party consumers.
 
 | Ecosystem | Import target | Locked input | First-party consumer |
 | --- | --- | --- | --- |
@@ -46,103 +96,22 @@ and connects those targets to first-party consumers.
 | React Native | [`react_native_dependencies`](/reference/prelude/react_native_dependencies) | `package.json`, an npm, pnpm, Yarn, or Bun lockfile, and an optional native-module snapshot | Metro bundles or Apple and Android applications |
 | Zig | [`zig_dependencies`](/reference/prelude/zig_dependencies) | `build.zig.zon` package records | Zig modules, binaries, libraries, or tests |
 
-The update workflow is deliberately separate from an ordinary build:
+Updating dependencies is separate from an ordinary build:
 
 1. Use the native manager to update the manifest and lock file.
 2. Fetch or vendor the exact sources and verify their native integrity values.
 3. Query the imported package targets before building a consumer.
 4. Build or run a first-party target whose `deps` includes the dependency set.
 
-Ordinary builds do not update lock files. Cargo, Mix, and Zig integrations
-expect exact sources to be materialized before graph execution. Swift supports
-local packages or a complete vendored package-manager scratch tree. Use one of
-those Swift layouts to keep network access and mutable registry state outside
-compile actions. Live inspection of an unvendored remote Swift package requires
-an explicit `allow_network = true`. Struo disables automatic version selection,
-but it does not independently sandbox Swift Package Manager network access when
-a vendored scratch tree is incomplete. In every case, the actual source
-contents remain part of action keys.
+Ordinary builds never update lock files, and source contents always remain
+part of action keys. Cargo, Mix, and Zig expect exact sources to be present
+before the build. Swift supports local packages or a complete vendored
+package-manager scratch tree, which keeps network access out of compile
+actions. Inspecting an unvendored remote Swift package requires an explicit
+`allow_network = true`, and Struo does not sandbox Swift Package Manager
+network access when a vendored scratch tree is incomplete.
 
-## Full Ecosystem Guides
-
-Full build ecosystems have incremental guides with a first project,
-query-before-build workflow, current limitations, and follow-up steps:
-
-- [Bazel](/guide/graph/bazel) builds and tests an existing Bazel workspace
-  without a Struo manifest while Bazel retains its native graph and cache.
-- [Apple](/guide/graph/apple) covers libraries, frameworks, applications, and
-  tests written in Swift, Objective-C, C, and C++.
-- [Xcode Projects](/guide/graph/apple/xcode) covers reading an existing
-  `.xcodeproj` or `.xcworkspace` and deriving those Apple targets from it
-  instead of declaring them.
-- [Swift Packages](/guide/graph/swift-packages) covers locked package import,
-  static products, and Apple consumers.
-- [Android](/guide/graph/android) covers resources, Java and Kotlin libraries,
-  application packages, and host or device tests.
-- [C and C++](/guide/graph/c) covers headers, source compilation, static
-  libraries, and native consumers.
-- [CMake](/guide/graph/cmake) covers coarse native execution, exact products,
-  checked graph snapshots, and incremental adoption.
-- [Container Images](/guide/graph/containers) builds an existing Dockerfile as
-  a discovered image target, with optional Struo configuration for custom paths
-  and cache policy.
-- [Elixir](/guide/graph/elixir) covers compiled applications and ExUnit tests.
-- [Kotlin](/guide/graph/kotlin) covers Java virtual machine libraries and
-  binaries, Android Kotlin sources, and Kotlin/Native Apple frameworks.
-- [Go](/guide/graph/go) covers package archives, executables, tests, cgo,
-  cross-compilation, and locked vendored modules.
-- [Rust](/guide/graph/rust) starts from an existing `Cargo.toml`, then covers
-  optional manifest adoption, libraries, binaries, tests, procedural macros,
-  Cargo dependencies, and native mobile outputs.
-- [React Native](/guide/graph/react-native) covers New Architecture
-  dependencies, native modules, JavaScript bundles, Apple and Android
-  applications, and Fast Refresh.
-- [Nx](/guide/graph/nx) reads an existing Nx workspace, derives one Struo
-  target per project and task, and schedules `nx:run-commands` and
-  `nx:run-script` tasks directly through Struo.
-- [Turborepo](/guide/graph/turborepo) reads an existing Turborepo
-  workspace, derives one Struo target per package and task, and runs each
-  package script directly through Struo, locally or on remote workers.
-- [Zig](/guide/graph/zig) covers modules, binaries, tests, libraries, and C or
-  C++ dependencies.
-
-## Test Runner References
-
-Test-only integrations have focused reference pages with prerequisites,
-copyable declarations, runnable starters, and first-run commands:
-
-- [pytest](/reference/prelude/pytest_test) covers Python test discovery,
-  exact execution, and automatic file or case batching.
-- [Ruby Specification](/reference/prelude/rspec_test) and
-  [Minitest](/reference/prelude/minitest_test) cover Ruby test suites.
-- [Vitest](/reference/prelude/vitest_test) and
-  [Jest](/reference/prelude/jest_test) cover JavaScript and TypeScript test
-  suites.
-
-Continue with [Testing and Scheduling](/guide/graph/testing) for the shared
-first-run workflow, affected selection, exact execution, and automatic
-batching across these runners.
-
-Use the [target kind index](/reference/prelude/) after choosing an ecosystem.
-It lists the exact schema, dependencies, capabilities, outputs, and current
-limitations for every kind.
-
-## Shared Mobile Code
-
-Some target kinds cross platform boundaries while preserving normal graph
-dependencies:
-
-- [`swift_android_library`](/reference/prelude/swift_android_library) packages
-  Swift code for an Android application.
-- [`kotlin_apple_framework`](/reference/prelude/kotlin_apple_framework)
-  produces a Kotlin/Native framework for an Apple target.
-- [`rust_mobile_library`](/reference/prelude/rust_mobile_library) produces the
-  Apple or Android native library variant requested by its consumer.
-
-Use these after the application builds without shared code. That sequence
-keeps toolchain and linking problems separate from the first graph setup.
-
-## Adopt an Ecosystem Incrementally
+## Adopt an ecosystem incrementally
 
 1. Pick the smallest artifact that has stable inputs and outputs.
 2. Declare one target and run `struo query schema <kind>`.
@@ -152,17 +121,32 @@ keeps toolchain and linking problems separate from the first graph setup.
 6. Keep unsupported edges behind scripts until a typed target kind covers
    them.
 
-This sequence leaves the native package manager or build system in place for
-the parts Struo does not own. A project does not need to move an entire
-ecosystem at once.
+The native package manager or build system stays in place for the parts Struo
+does not own, so a project does not need to move an entire ecosystem at once.
 
-A coding harness can also fetch the authoritative external rule or plugin,
-query Struo's live module-authoring contract, and maintain that local target
-kind for the project. This is useful when the project needs a narrow dependency
-slice and a general built-in integration would be unnecessary. See
+A coding harness can also read an external rule or plugin and maintain a
+narrow local target kind for the project. See
 [Coding harnesses](/guide/harness#adopt-an-unfamiliar-external-rule).
 
-## Check the Boundary Before Adopting
+## Share code across mobile platforms
+
+Some target kinds cross platform boundaries while keeping normal graph
+dependencies:
+
+- [`swift_android_library`](/reference/prelude/swift_android_library) packages
+  Swift code for an Android application.
+- [`kotlin_apple_framework`](/reference/prelude/kotlin_apple_framework)
+  produces a Kotlin/Native framework for an Apple target.
+- [`rust_mobile_library`](/reference/prelude/rust_mobile_library) produces the
+  Apple or Android native library variant requested by its consumer.
+
+The `native-mobile-shared-code-e2e` starter wires an Android application to
+Swift and Rust native libraries, and an Apple application to a Kotlin/Native
+framework and the same Rust library. Add shared code only after the
+application builds without it, so toolchain and linking problems stay separate
+from the first graph setup.
+
+## Check the boundary before adopting
 
 Feature coverage varies by ecosystem. Before moving a production workflow,
 check the target kind reference for:
@@ -176,52 +160,48 @@ check the target kind reference for:
 
 Unsupported does not have to mean blocked. Keep that behavior in a script,
 define a checked-in local module, or contribute the missing typed behavior.
-The important part is to keep the boundary visible so readers and agents can
-tell which system owns each step.
 
-## Report a Native Graph That Loads Wrong
+## Report a native graph that loads wrong
 
-When Struo derives a project's graph from its native manifests and the result
-fails to load, or its targets, sources, or dependency edges disagree with what
-the native build system builds, export a redacted reproduction:
+When a graph derived from native manifests fails to load, or its targets,
+sources, or dependency edges disagree with the native build system, export a
+redacted reproduction:
 
 ```sh
 struo query graph-repro
 ```
 
-The export lands in `.struo/graph-repro`. Its `workspace` directory mirrors
-every native project Struo discovered: manifests and lockfiles keep their
-contents, and every other file is empty at the same path, so the graph loads
-the same way without any source code. Credentials in URLs, such as a private
-registry's, are replaced with `<redacted>` in copied files. `repro.json` records the Struo version,
-the host platform, and the graph Struo loaded or the error that stopped it, with
-absolute workspace and home directory paths replaced by `$WORKSPACE` and
-`$HOME`, and the values of environment attributes replaced with `<redacted>`.
-Running the export again replaces only the files an earlier export wrote.
+The export lands in `.struo/graph-repro`:
 
-The export also drafts the report. `ISSUE.md` holds an issue for the
-[Struo repository](https://github.com/tuist/struo/issues) built only from the
-facts above, and `graph-repro.tar.gz` packs the whole export to attach to it.
-The command prints a link that opens the issue prefilled. Nothing is shared
-until you open it.
+- `workspace/` mirrors every discovered native project. Manifests and
+  lockfiles keep their contents; every other file is empty at the same path.
+  Credentials in URLs are replaced with `<redacted>`.
+- `repro.json` records the Struo version, host platform, and the loaded graph
+  or loading error, with workspace and home paths and environment attribute
+  values redacted.
+- `ISSUE.md` drafts an issue for the
+  [Struo repository](https://github.com/tuist/struo/issues), and
+  `graph-repro.tar.gz` packs the export to attach to it.
 
-Review the copied files and `repro.json` before opening the issue, since a
-manifest or an attribute can still name private hosts or hold a secret the
-export did not recognize. Then describe what the native build system builds
-that Struo gets wrong, open the issue, and attach the archive. With the GitHub
-CLI:
+The command prints a link that opens the issue prefilled; nothing is shared
+until you open it. Review the copied files and `repro.json` first, since a
+manifest can still name a private host or hold a secret the export did not
+recognize. Then describe what the native build system does differently and
+attach the archive in the browser. With the GitHub CLI:
 
 ```sh
 gh issue create --repo tuist/struo --title "..." --body-file .struo/graph-repro/ISSUE.md
 ```
 
-GitHub accepts attachments only in the browser, so add the archive there.
+Agents connected through `struo mcp --allow-run` can run the same export with
+the `struo_export_graph_repro` tool, and resolver errors tell them to offer it
+instead of changing your project to work around the gap.
 
-Most of the time a coding agent finds the gap first. When a resolver fails in
-a way it does not explain itself, the error carries a repair that tells the agent not to change the project to
-work around it, and to offer you this export and the issue it drafts instead. The repair appears in
-human output, in the structured error of `--format json`, and in
-[`struo mcp`](/reference/mcp/) tool errors. Agents connected through `struo mcp --allow-run`
-can run the export with the `struo_export_graph_repro` tool, and are told to
-suggest it when a graph loads without errors but disagrees with the native
-build system.
+## Next steps
+
+- [Typed Build Graph](/guide/graph/): declare a first target and connect
+  dependencies.
+- [Testing and scheduling](/guide/graph/testing): run tests across these
+  ecosystems with affected selection and batching.
+- [Target kind index](/reference/prelude/): look up the exact contract of a
+  kind.

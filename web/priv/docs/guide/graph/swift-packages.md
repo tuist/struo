@@ -1,135 +1,11 @@
----
-prev: false
-next: false
----
+# Build Swift Packages
 
-# Swift Packages
+Build, test, and cache Swift Package Manager packages with Struo by reading
+`Package.swift` directly, with no `struo.toml` and no migration step.
 
-Struo reads `Package.swift` and derives first-party package targets as Struo
-targets. Swift Package Manager remains authoritative for manifests, version
-selection, and `Package.resolved`; Struo uses that information to build and
-cache the targets it derives.
-
-## Start From a Native Package
-
-Struo recognizes `Package.swift` automatically and lowers first-party package
-targets into the existing Apple target kinds. This works without `struo.toml`:
-
-```sh
-struo query workspace
-struo query targets
-struo build
-struo test
-```
-
-The generated `swift_package_workspace` seed reads the package manifest and
-derives first-party libraries, executables, macros, binary targets, and tests.
-Discovery skips generated `.build` and `.swiftpm` directories and does not
-write `struo.toml`. `struo build` selects the package workspace when it is the
-only discovered build root. `struo test` runs first-party test bundles and
-excludes test bundles that belong only to resolved packages. Use `struo test
---all` when you intentionally want the complete resolved test graph.
-
-Local path dependencies within the workspace are followed transitively,
-including sibling packages and shared dependencies reached through several
-products. An entirely local graph does not need `Package.resolved` and does not
-run dependency resolution.
-If a local dependency introduces a remote package, Swift Package Manager still
-resolves that package through the root package's lockfile.
-
-## Keep Swift Package Manager Commands
-
-For explicit module builds, add `explicit_modules = true` to your
-`swift_package_workspace` seed's attributes. Optional
-`dependency_check = "error"` checks source imports against declared package
-dependencies. Struo propagates these settings through the resolved package
-graph; `Package.swift` remains the source of target and dependency declarations.
-See [explicit Apple modules](/guide/graph/apple#explicit-modules-and-dependency-checks)
-for requirements and current limits.
-
-Struo can sit behind the `swift` command for one native [Swift Package
-Manager](https://www.swift.org/documentation/package-manager/) package. Add
-this mise wrapper, then run `mise reshim` and activate mise in the shell that
-starts the build:
-
-```toml
-[wrappers.swift]
-command = "struo"
-args = ["swift", "--"]
-```
-
-Struo routes the default debug build and test forms into the native graph:
-
-```sh
-swift build
-swift test
-```
-
-`swift build` builds the package seed and its resolved products. `swift test`
-runs each first-party test bundle once through Struo, excluding test targets
-that belong to resolved dependencies. `-q` or `--quiet`,
-`-c debug` or `--configuration debug`, and `--package-path .` are also
-supported.
-
-For troubleshooting without mise, call the compatibility surface directly and
-put the separator before the Swift Package Manager arguments:
-
-```sh
-struo swift -- test
-```
-
-Every other request, including release builds, filters, package subcommands,
-plugins, and a package path outside the current directory, invokes the system
-`swift` executable with its original arguments and exit status. This preserves
-Swift Package Manager behavior until the request has an exact Struo equivalent.
-
-For locked source-control dependencies, native package lowering materializes
-the pinned sources during graph loading, then compiles them directly through
-Struo's Apple target kinds. See
-[`swift_package_workspace`](/reference/prelude/swift_package_workspace) for
-its complete contract.
-
-When the Xcode workspace resolver lowers package sources into Apple targets,
-compiler language and access-control flags follow the manifest tools version.
-Struo adds the semantic package name only for tools version 5.9 or newer, where
-package-scoped access is part of the manifest contract. Older manifests remain
-isolated by module.
-
-Native package lowering preserves `linkerSettings` for linked libraries,
-frameworks, and unsafe linker flags, together with platform, configuration, and
-trait conditions. It also honors `.treatAllWarnings(as:)` independently for
-Swift, C, and C++ settings.
-
-Manifest evaluation observes a hash of the inherited environment, so toggling
-variables that select targets or plugins invalidates cached resolution. The
-hash does not store environment names or values. This is conservative: even
-unrelated environment changes invalidate resolution. Build receipt fast paths
-also require an unchanged inherited environment.
-
-Xcode's discovery-only scan for local package products skips unreadable
-manifests with a warning, for example templates containing placeholders.
-Manifests referenced by the graph must still load successfully.
-
-Build-tool plugins execute before native compilation. Swift Package Manager
-compiles the plugins and their host tools, evaluates the commands, and runs
-prebuild commands to discover their outputs. Struo then schedules the declared
-build commands with their argument vectors, inputs, outputs, environment, and
-working directory. Generated sources, headers, and resources become inputs to
-the consuming target. Commands without outputs still run when the package uses
-Swift tools version 6 or newer, including validation tools that fail the build.
-
-Plugin planning uses only the consuming package as a workspace root, with local
-mirrors and authoritative pins for its source-control dependencies. Missing pins
-fail planning instead of selecting new versions. It does not build the
-application's ordinary package products. Planning and plugin commands inherit
-the host environment, run locally without sandboxing, and bypass the action
-cache. Native compilation and packaging retain their normal content-addressed
-caching. SwiftPM may also evaluate plugins on other targets in the consuming
-package while planning, including test targets. This integration is tested
-against Apple Swift 6.3.3 and uses SwiftPM's unsupported multi-root and native
-planning interfaces, whose formats may change between toolchains. See
-[`swift_package_build_tools`](/reference/prelude/swift_package_build_tools)
-for its contract and compatibility limits.
+Swift Package Manager remains authoritative for manifests, version selection,
+and `Package.resolved`. Struo builds the first-party targets and pinned
+dependencies it derives from them as Apple targets.
 
 ## Prerequisites
 
@@ -151,46 +27,165 @@ TOOLCHAINS=your.toolchain.bundle.identifier struo build
 
 Check the selection with `TOOLCHAINS=your.toolchain.bundle.identifier xcrun
 swift --version`. The selected compiler must support the package's
-`swift-tools-version`.
+`swift-tools-version`. A toolchain installed beside Xcode supplies the compiler,
+macros, and Swift Testing, while Xcode still supplies the linker and SDK.
 
-A Swift toolchain installed beside Xcode contributes the compiler and the
-macros it loads, while Xcode still contributes the linker and the software
-development kit. Struo resolves each of those separately, so builds that mix
-them link and expand macros against matching tools. Swift Testing follows the
-same rule: when the selected compiler ships its own copy, tests compile and
-link against that one rather than the version Xcode publishes.
+If a first-party Apple target does not build yet, start with the
+[Apple guide](/guide/graph/apple). Package problems are easier to diagnose once
+the compiler, SDK, linker, and code signing work.
 
-Start with the [Apple guide](/guide/graph/apple) if a first-party Apple target
-does not build yet. Package integration is easier to diagnose after the local
-compiler, software development kit, linker, and code-signing path work.
+## Start from an existing project
 
-## Packages With Remote Dependencies
+### Build and test
 
-Native package lowering uses `Package.resolved` to materialize each
-source-control dependency at its pinned revision. When a package declares
-dependencies but does not commit the lockfile, Struo asks Swift Package Manager
-to resolve them and uses the generated lockfile. It then derives and compiles
-the dependency targets directly, so Swift Package Manager does not build a
-separate dependency graph. Registry dependencies are not supported by this
-native path yet.
+Struo recognizes `Package.swift` automatically. From the package directory:
 
-The ordinary workflow stays the same:
+```sh
+struo query workspace
+struo query targets
+struo build
+struo test
+```
+
+Struo supplies a `swift_package_workspace` seed and derives first-party
+libraries, executables, macros, binary targets, and tests. Discovery skips the
+generated `.build` and `.swiftpm` directories and does not write `struo.toml`.
+
+`struo build` selects the package when it is the only discovered build root.
+`struo test` runs first-party test bundles only. Use `struo test --all` when
+you want the complete resolved test graph, including dependencies' tests.
+
+### Keep swift commands
+
+Struo can sit behind the `swift` command for one package. Add this
+[mise](https://mise.jdx.dev/) wrapper, then run `mise reshim` and activate mise
+in the shell that starts the build:
+
+```toml
+[wrappers.swift]
+command = "struo"
+args = ["swift", "--"]
+```
+
+Struo routes the default debug build and test forms into its graph:
+
+```sh
+swift build
+swift test
+```
+
+`swift build` builds the package and its resolved products. `swift test` runs
+each first-party test bundle once. `-q` or `--quiet`, `-c debug` or
+`--configuration debug`, and `--package-path .` are also supported.
+
+Every other request, including release builds, filters, package subcommands,
+plugins, and a package path outside the current directory, invokes the system
+`swift` with its original arguments and exit status.
+
+To troubleshoot without mise, call the compatibility command directly and put
+the separator before the Swift Package Manager arguments:
+
+```sh
+struo swift -- test
+```
+
+## Manage dependencies
+
+### Local packages
+
+Local path dependencies inside the workspace are followed transitively,
+including sibling packages and shared dependencies reached through several
+products. An entirely local graph needs no `Package.resolved` and does not run
+dependency resolution.
+
+### Remote packages
+
+Struo checks out each source-control dependency at the revision pinned in
+`Package.resolved` and compiles its targets directly; Swift Package Manager does
+not build a separate dependency graph. When the lockfile is not committed,
+Struo asks Swift Package Manager to resolve it first. If a local dependency
+introduces a remote package, it is resolved through the root package's
+lockfile.
+
+Registry dependencies work the same way. Struo reads the registry pin from
+`Package.resolved` and compiles the package Swift Package Manager downloaded
+for that version. When the download is missing, Struo runs
+`swift package resolve` once to fetch it. Configure the registry and its
+credentials with Swift Package Manager as usual, for example with
+`swift package-registry set` and `swift package-registry login`.
+
+There is no initialization step:
 
 ```sh
 struo query targets
 struo build SwiftPackage_MyPackage_MyLibrary
 ```
 
-There is no Struo initialization step. A first build can access the network when
-Swift Package Manager must create `Package.resolved` or Struo must materialize a
-pinned source dependency.
+A first build can access the network when `Package.resolved` must be created or
+a pinned source-control or registry dependency must be fetched. Struo reuses a checkout that already
+contains the pinned commit.
 
-Struo reuses a checkout that already contains the pinned commit. Otherwise it
-tries a shallow fetch and retries without a depth limit when the server does
-not support shallow clients.
+### Traits
 
-Struo preserves package traits requested by dependencies, including traits that
-enable other traits and conditional requests. Code guarded by a dependency's
-opt-in trait is compiled with that trait enabled. Explicit empty trait lists
-disable defaults for that dependency declaration; requests from other packages
-are still combined according to Swift Package Manager's rules.
+Struo applies package traits requested by dependencies, including traits that
+enable other traits and conditional requests. An explicit empty trait list
+disables defaults for that dependency declaration; requests from other packages
+are combined according to Swift Package Manager's rules.
+
+## Explicit modules and dependency checks
+
+Add `explicit_modules = true` to the `swift_package_workspace` seed's
+attributes to build modules as separate cacheable actions. Optional
+`dependency_check = "error"` checks source imports against declared package
+dependencies. Struo propagates both settings through the resolved package
+graph, while `Package.swift` remains the source of target and dependency
+declarations. See
+[explicit Apple modules](/guide/graph/apple#explicit-modules-and-dependency-checks)
+for requirements and limits.
+
+## Build-tool plugins
+
+Build-tool plugins run before compilation. Swift Package Manager compiles the
+plugins and their host tools and runs prebuild commands; Struo then schedules
+the declared build commands. Generated sources, headers, and resources become
+inputs to the consuming target. Commands without outputs still run for Swift
+tools version 6 or newer, so validation tools can fail the build.
+
+Plugin planning uses the consuming package's pinned dependencies, and missing
+pins fail planning instead of selecting new versions. Planning and plugin
+commands inherit the host environment, run locally without sandboxing, and are
+not cached; compilation and packaging are cached as usual. Swift Package
+Manager may also evaluate plugins on other targets in the package while
+planning, including test targets. See
+[`swift_package_build_tools`](/reference/prelude/swift_package_build_tools) for
+its contract.
+
+## Limitations
+
+- Any change to the inherited environment invalidates cached manifest
+  resolution, even when the changed variable is unrelated, because manifests
+  can read the environment.
+- Build-tool plugin support is tested against Apple Swift 6.3.3 and relies on
+  Swift Package Manager interfaces whose formats may change between toolchains.
+- When an Xcode project scans for local package products, unreadable manifests
+  such as templates with placeholders are skipped with a warning. Manifests the
+  graph references must still load.
+
+## Target kinds
+
+- [`swift_package_workspace`](/reference/prelude/swift_package_workspace): the
+  package seed and its complete contract.
+- [`swift_package_build_tools`](/reference/prelude/swift_package_build_tools):
+  build-tool plugin commands.
+- [`swift_package_dependencies`](/reference/prelude/swift_package_dependencies)
+  and [`swift_package_pin`](/reference/prelude/swift_package_pin): resolved
+  dependencies.
+- Derived targets use the [Apple target kinds](/guide/graph/apple#target-kinds).
+
+## Next steps
+
+- [Apple](/guide/graph/apple): declare Apple targets directly and ship
+  applications.
+- [Xcode Projects](/guide/graph/apple/xcode): build an Xcode project that
+  depends on these packages.
+- [Testing and Scheduling](/guide/graph/testing): select and report test runs.

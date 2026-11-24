@@ -1,12 +1,13 @@
-# Coding Harnesses
+# Connect Coding Agents to Struo with MCP
 
-Struo can be the automation substrate for a coding harness. The harness does not
-need Struo-specific prompt templates or built-in target kinds for every
-toolchain. It connects to the
-[Model Context Protocol](https://modelcontextprotocol.io/) server, discovers
-the available target kinds and examples, creates or edits workspace files,
-validates the loaded graph, runs a capability, and checks the resulting
-evidence.
+Connect Codex, Claude Code, or another coding agent to Struo's MCP server so it
+can query, edit, validate, build, test, and run your project with cached actions.
+
+The agent harness connects to the
+[Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server,
+discovers the available target kinds and examples, creates or edits workspace
+files, validates the loaded graph, runs a capability, and checks the resulting
+evidence. It does not need Struo-specific prompt templates.
 
 ## Connect Struo
 
@@ -67,7 +68,7 @@ target count, any graph loading error, and the next relevant calls. This avoids
 writing files under the harness working directory when the server was
 configured for a different directory.
 
-## Run Headlessly with Codex and Claude
+## Run headlessly with Codex and Claude
 
 Headless clients cannot stop to approve a tool call. Struo marks
 `struo_apply_edit` as destructive because one edit operation can delete a target.
@@ -130,7 +131,7 @@ identifiers with `struo_query_targets`; execution tools also resolve `./Target`
 from the configured workspace even when the server process was started
 elsewhere.
 
-## Create and Run a Typed Graph
+## Create and run a typed graph
 
 Use this loop for requests such as “build an Android app with Struo” or “add a
 Rust command-line tool with Struo”:
@@ -167,7 +168,7 @@ scratch. After `struo_apply_edit`, always use `struo_validate_workspace` because
 table validation cannot detect missing dependencies, incompatible providers,
 unmatched source patterns, or dependency cycles.
 
-## Adopt Existing Test Runners
+## Adopt existing test runners
 
 Use this loop when a repository already runs tests through pytest, Ruby
 Specification, Minitest, Vitest, Jest, or another native runner:
@@ -209,7 +210,7 @@ checks the Android application package output. Android-specific behavior
 remains in the target kind, so the harness follows the same loop for other
 ecosystems.
 
-## Adopt an Unfamiliar External Rule
+## Adopt an unfamiliar external rule
 
 The built-in catalog is a shortcut, not the boundary of what a harness can
 model. When a requested node comes from an unsupported rule, plugin, or build
@@ -254,7 +255,7 @@ does not claim that an arbitrary fetched rule is compatible. The harness must
 interpret the source, validate the generated module, and prove the requested
 capability by executing it and checking its outputs.
 
-## Run an Annotated Script
+## Run an annotated script
 
 Use scripts when the requested automation is one executable action rather than
 a typed multi-target graph:
@@ -272,7 +273,7 @@ a typed multi-target graph:
 This route executes the same annotated script contract as `struo exec --script`.
 It also materializes declared outputs when a prior action result is reused.
 
-## Compare Fresh Executions
+## Compare fresh executions
 
 Cache reuse and repeated execution answer different questions. To check for
 observed divergence, set `verify_reproducible: true` on `struo_build_target` or
@@ -290,37 +291,25 @@ execute the selected work twice, including its dependencies. For example:
 ```
 
 This returns a `struo.verification.v1` report instead of the normal cached
-execution response. Each trial starts from the same whole-workspace snapshot
-at the same private path, with a separate, initially empty local Struo cache.
-Script dependencies and fingerprints run in each trial. Trial artifacts are
-retained without replacing outputs in the original workspace.
+execution response. Read `success` for the pass or fail decision, then inspect
+`execution_succeeded`, `artifacts_match`, and `logs_match` separately. Do not
+substitute the stricter `reproducible` field for `success`, because it also
+requires matching logs.
 
-Read `success` for the check's pass/fail decision, then inspect
-`execution_succeeded`, `artifacts_match`, and `logs_match` separately. Identical
-failures never pass. With declared artifacts, log-only drift is advisory;
-without artifacts, logs determine the comparison. Do not substitute the stricter
-`reproducible` field for `success`, because it also requires matching logs.
+Call `struo_query_verification` with the returned `id` to read the retained
+report again without executing anything. It is also available on a read-only
+server and matches `struo query verification <ID> --format json`.
 
-Call `struo_query_verification` with the returned `id` to read the same retained
-report without executing anything again. This inspection tool is also available
-on a read-only server. It matches `struo query verification <ID> --format json`.
-Use `trial_directories` and `artifact_differences` to inspect the retained files
-instead of guessing from log differences. These local reports are not published
-as durable project evidence automatically.
+Report a passing result as "no divergence observed in two trials," not proof of
+reproducibility. See the [report reference](/reference/mcp/#verification-reports)
+for the JSON contract and the
+[script guide](/guide/scripted/caching#check-repeated-execution) for what the
+trials isolate and retain.
 
-Report a passing result as “no divergence observed in two trials,” not proof of
-reproducibility. Host toolchains, host tool caches, absolute paths, network
-services, and external side effects are not isolated. Clock, randomness, and
-scheduling behavior are not perturbed or controlled. See the
-[report reference](/reference/mcp/#verification-reports) for the JSON contract
-and [script guide](/guide/scripted/caching#check-repeated-execution) for snapshot
-limits, retained files, local-only execution, and network policy.
+## Use project memory safely
 
-## Use Project Memory Safely
-
-Struo evidence is durable provenance for completed actions. It records the
-subject, status, action and input digests, cache decision, exit code, captured
-stream digests, and creation time.
+[Evidence](/guide/memory/evidence) is durable provenance for completed actions:
+subject, status, digests, cache decision, and exit code.
 
 Evidence is historical. A prior passing record does not prove that current
 inputs are unchanged. Use it to understand what ran and to correlate results,
@@ -328,7 +317,7 @@ then invoke the relevant build, run, test, or script capability when the user
 needs a current result. The action cache decides whether that invocation can be
 reused safely.
 
-## Follow Build and Test Progress
+## Follow build and test progress
 
 A harness that runs `struo build` or `struo test` in a shell can show progress
 while the command runs. Set `STRUO_PROGRESS` to a file path, and Struo appends one
@@ -358,7 +347,7 @@ Struo never fails a run because it cannot write the file. Commands that run
 several targets one after another, such as `struo build` without a target, start
 a new snapshot sequence for each target in the same file.
 
-## Completion Contract
+## Check before reporting success
 
 A harness should report success only after all of these are true:
 
@@ -370,9 +359,13 @@ A harness should report success only after all of these are true:
 - important declared outputs exist and have the expected content or type; and
 - matching evidence can be queried for the completed action.
 
-The [Model Context Protocol reference](/reference/mcp/) documents transport and
-error behavior. The generated [tool catalog](/reference/mcp/tools) is the exact
-tool contract served at runtime. The [module reference](/reference/modules/)
-defines the target kind authoring surface, while the
-[memory reference](/reference/memory/) defines the evidence records that close
-the validation loop.
+## Next steps
+
+- [Model Context Protocol reference](/reference/mcp/): transport, handshake,
+  and error behavior.
+- [Tool catalog](/reference/mcp/tools): the exact tool contract served at
+  runtime.
+- [Module reference](/reference/modules/): the target kind authoring surface
+  used by project-local modules.
+- [Memory](/guide/memory/): the evidence records that close the validation
+  loop.

@@ -1,14 +1,12 @@
----
-next:
-  text: Infrastructure
-  link: /guide/infrastructure/
----
+# Cache CLI
 
-# Manual Cache Access
+Use `struo cache` to store blobs and record action results from your own
+scripts and tools when they must look up or populate the Struo cache themselves.
 
-Annotated scripts are the usual way to cache automation because Struo owns the
-lookup, execution, and output restoration. Use `struo cache` when an existing
-tool must perform those steps itself or when you need to inspect the cache.
+[Annotated scripts](/guide/scripted/) are the usual way to cache automation,
+because Struo owns the lookup, execution, and output restoration. Use manual
+access when an existing tool must perform those steps itself or when you need
+to inspect the cache.
 
 Struo exposes two related stores:
 
@@ -18,7 +16,7 @@ Struo exposes two related stores:
 
 An action result can therefore point to blobs without duplicating their bytes.
 
-## Store And Retrieve A Blob
+## Store and retrieve a blob
 
 Put a file or standard input into the blob cache. The command prints its
 [BLAKE3](https://www.blake3.io/) content digest:
@@ -41,7 +39,7 @@ is absent. In [JavaScript Object Notation
 output, it always exits with status zero and reports whether the blob is
 present.
 
-## Record An Action Result
+## Record an action result
 
 The action cache derives its key from ordered input declarations. This
 [Bash](https://www.gnu.org/software/bash/) script runs tests with the
@@ -82,7 +80,7 @@ struo cache action put "${artifact_inputs[@]}" \
 Read the action result with `--format json` to obtain the output digest, then
 pass that digest to `struo cache blob get` when restoring the artifact.
 
-## Input Declarations
+## Input declarations
 
 | Declaration | Meaning |
 | --- | --- |
@@ -95,7 +93,7 @@ pass that digest to `struo cache blob get` when restoring the artifact.
 Input order is significant. Declaring `a` followed by `b` produces a different
 key from declaring `b` followed by `a`.
 
-## Command Summary
+## Command summary
 
 | Command | Purpose |
 | --- | --- |
@@ -111,9 +109,11 @@ key from declaring `b` followed by `a`.
 Blob reads and action lookups use the remote provider configured for the
 workspace when the requested data is not available locally.
 
-## Next
+## Next steps
 
-Continue to [Infrastructure](/guide/infrastructure/) to keep the local workflow
-while sharing cache records with other machines. Use the
-[cache command reference](/reference/cli/cache) for every flag and output
-format.
+- [Cache command reference](/reference/cli/cache): every flag and output
+  format.
+- [Infrastructure](/guide/infrastructure/): share cache records with other
+  machines while keeping the local workflow.
+- [Caching scripted workflows](/guide/scripted/caching): let Struo own lookup
+  and restoration instead.

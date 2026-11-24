@@ -1,13 +1,17 @@
-# Artifacts
+# Build Artifacts
 
-**Artifacts are immutable build products. Publishing sends them to your
-configured infrastructure.** Struo builds, packages and publishes the content;
-the provider decides how people download, install, serve or run it.
+Package build outputs such as applications, command-line tools, and static sites
+as immutable artifacts, export them, and publish them to local or remote
+infrastructure.
 
-An application, command-line program, server, static site, dataset or report
-can be an artifact. No container runtime or running web server is required.
+Struo builds, packages, and publishes the content; the provider decides how
+people download, install, serve, or run it. An artifact can also be a server,
+dataset, or report. No container runtime or running web server is required.
 
-## Package explicitly selected content
+## Declare an artifact
+
+The `artifact` target kind packages selected files. This target packages a
+static site and declares how it can be served:
 
 ```toml
 [[target]]
@@ -25,8 +29,13 @@ index = "index.html"
 
 `artifact` creates a deterministic ZIP with package-relative paths. Its
 `file_mode` defaults to 420 (0644); use 493 (0755) for executable files.
-Permissions are declared, not inferred from the packaging host. Custom target
-kinds can export existing file outputs directly or declare mixed-mode archives.
+Permissions are declared, not inferred from the machine that packages them.
+Custom target kinds can export existing file outputs directly; see the
+[module contract](/reference/modules/#artifact-providers).
+
+## Export and publish
+
+Inspect what a target exports, write it to a directory, or publish it:
 
 ```sh
 struo query artifacts site
@@ -34,47 +43,14 @@ struo artifact export site --output dist
 struo artifact publish site --provider local
 ```
 
-Export returns the immutable root descriptor and a self-contained directory.
-Local publication retains the package separately from the action cache and
-writes a publication receipt after all content is present. Repeating it repairs
-missing or changed content. Deleting the workspace still deletes local
-publications; use an external export destination for longer retention.
-
-## Content describes what it is
-
-Each artifact has named payloads, each with a SHA-256 digest, byte size and
-media type. A manifest binds payloads to optional versioned interfaces. An
-artifact set groups named variants with explicit selectors. Neither target
-paths, Git revisions, tracks, credentials nor infrastructure URLs are part of
-an individual artifact's content identity.
-
-Exported packages contain `index.json` and `blobs/sha256/<digest>` files.
-The root describes an `once.artifact_set.v1` document; members refer to
-`once.artifact.v1` manifests, which refer to payloads. JSON object keys use
-stable ordering and compact UTF-8 serialization. Consumers verify every
-descriptor's digest and size before trusting content.
-
-An interface has `payload` and `spec` fields. Unknown interfaces survive
-export and remain downloadable; they never grant permission to execute a
-command or dynamically load a handler. Examples of consumption contracts:
-
-- **Download:** No interface required. Retain arbitrary bytes.
-- **Static site:** `dev.struo.static-http.v1` declares the archive `root` and
-  `index`. Never serve private sibling files.
-- **CLI:** A producer-owned executable contract declares entrypoint, arguments,
-  OS, architecture and required runtime content.
-- **Server:** A producer-owned process contract adds ports, readiness and
-  runtime requirements. Secrets and assigned addresses come from infrastructure.
-- **Application:** A producer-owned installation contract declares the package,
-  platform, runtime compatibility and installation requirements.
-
-Consumption interfaces are declarations. Struo does not implement static hosting,
-CLI installation or server activation. An executable alone is not a complete
-runtime closure. A compatible consumer must validate its supported contract,
-unpack safely, isolate untrusted content, bind secrets with authorization,
-allocate resources, and own routing, access, retention and cleanup.
+Export writes a self-contained directory and returns its immutable root
+descriptor. Local publication keeps the package separately from the action cache
+and writes a publication receipt once all content is present. Repeating it
+repairs missing or changed content.
 
 ## Choose publication infrastructure
+
+Select the provider that receives publications in the root `struo.toml`:
 
 ```toml
 [infrastructure.artifacts]
@@ -82,61 +58,87 @@ name = "local"
 ```
 
 `artifacts` is the capability being configured; `name` selects its provider.
-The built-in `local` provider needs no separate definition. Named provider
-definitions can be reused by the capabilities they support.
-
-Cache, execution and artifact bindings are independent. Publication is explicit
-unless build publication is opted into and authorized. A cache hit does not
-skip publication, and publication does not run the published content.
-An absent artifact binding is an error unless `--provider` selects one.
+The built-in `local` provider needs no separate definition. Without this
+binding, `struo artifact publish` fails unless `--provider` selects one.
 `--track` adds distribution context without rebuilding different content.
 
-Provider-specific configuration, authentication, supported formats and limits
-live in each provider's guide. See [Tuist](/guide/infrastructure/tuist#publish-application-previews)
-for an artifact receiver that also projects supported applications into previews.
+Cache, execution, and artifact bindings are independent. A cache hit does not
+skip publication, and publication does not run the published content.
+Provider-specific configuration, authentication, supported formats, and limits
+live in each provider's guide. [Tuist](/guide/infrastructure/tuist) receives
+artifacts and turns supported applications into previews.
 
 ## Publish after successful builds
 
-Select targets in the workspace configuration:
+List the targets to publish automatically in the root `struo.toml`:
 
 ```toml
 [infrastructure]
 publish_on_build = ["application"]
 ```
 
-Then explicitly publish and authorize the configured remote destination:
+Then publish once explicitly and authorize the configured destination for
+automatic publication:
 
 ```sh
 struo artifact publish application --allow-on-build
 struo build application
 ```
 
-Authorization is local machine state, not repository configuration. It binds
-the canonical workspace path, target and exact service endpoint to the stable
-destination returned by the service. Changing any of them requires explicit
-authorization again. A copied checkout or another machine is not authorized
-by the committed policy alone.
+After all requested builds succeed, Struo publishes requested targets listed in
+`publish_on_build`. The producing target kind must also approve automatic
+publication through `struo.artifact_info.v2`; the older v1 declaration never
+approves it.
 
-After all requested builds succeed, Struo considers only requested targets
-listed in `publish_on_build` that expose the artifact capability. The producer
-must also approve automatic publication of its entire exported closure through
-`struo.artifact_info.v2`. Older v1 declarations default to no approval.
-Without the policy or local authorization, builds make no artifact-publication
-network requests. A changed stable destination is rejected before content upload.
+Authorization is local machine state, not repository configuration. It covers
+this checkout's path, the target, and the exact service destination. Moving the
+checkout, using another machine, or changing the destination requires
+authorizing again. Without the policy or the authorization, builds make no
+publication network requests.
 
-Remote publication sends the full immutable closure: the artifact set, every
-member manifest and every payload, including unknown interfaces. Its intent
-contains the root descriptor, target, optional track and Git revision. Before
-uploading, Struo looks up the intent's remote receipt and verifies its key, root
-and destination. Replaying the same retained intent returns that receipt without
-uploading content again. An unconfirmed completion is an error; replay the same
-intent to recover its receipt rather than assuming success. Retention and expiry
-are receiver policies, not a promise of permanent byte availability.
+Remote publication uploads the full artifact set and is idempotent: repeating
+the same publication returns the existing receipt without uploading content
+again. If Struo cannot confirm completion it reports an error; rerun the same
+command to recover the receipt. Different targets, tracks, or revisions produce
+separate publications even when their content is equal.
+
+## Describe how content is consumed
+
+Each artifact has named payloads with a SHA-256 digest, size, and media type.
+Interfaces bind a payload to a versioned consumption contract with `payload`
+and `spec` fields:
+
+- **Download:** no interface. Consumers retain the bytes.
+- **Static site:** `dev.struo.static-http.v1` declares the archive `root` and
+  `index`. Consumers never serve files outside the root.
+- **CLI, server, or application:** a producer-owned contract declares the
+  entrypoint, platform, ports, or installation requirements a consumer needs.
+
+Interfaces are declarations. Unknown interfaces survive export and stay
+downloadable, but never grant permission to run a command. Target paths, Git
+revisions, tracks, credentials, and infrastructure URLs are not part of an
+artifact's content identity.
+
+Exported packages contain `index.json` and `blobs/sha256/<digest>` files. The
+root describes a `once.artifact_set.v1` document whose members refer to
+`once.artifact.v1` manifests, which refer to payloads. Consumers verify every
+descriptor's digest and size before trusting content.
+
+## Use artifacts from an agent
+
+The MCP server exposes the same operations:
+
+- `struo_query_artifacts` inspects capability support and the provider shape.
+- `struo_export_artifacts` mirrors local export.
+- `struo_publish_artifacts` mirrors explicit publication.
+
+Export and publish require `struo mcp --allow-run`. Authorize the destination
+before asking an agent to publish.
 
 ## Publication service contract
 
-Remote adapters supply an authenticated service endpoint. The protocol is
-independent of consumption interfaces and never interprets application metadata:
+A remote artifact provider exposes an authenticated HTTP endpoint. The protocol
+never interprets application metadata:
 
 - `GET <endpoint>` returns `{"schema":"once.publication_service.v1","destination":"<stable destination>"}`.
 - `GET <endpoint>/publications/<key>` returns a receipt, 404 for an unknown
@@ -161,24 +163,32 @@ independent of consumption interfaces and never interprets application metadata:
 compact UTF-8 JSON with recursively sorted object keys. Both optional values
 are present as strings or `null`; descriptor sizes are nonnegative integers.
 A successful commit or lookup returns exactly `schema`, `key`, `root`,
-`destination` and `url`, with schema `once.publication_receipt.v1`. The URL is
-absolute HTTPS, except same-origin HTTP for local development. It contains no
-embedded credentials. Publication schemas are versioned separately from artifact
-and consumption schemas.
+`destination`, and `url`, with schema `once.publication_receipt.v1`. The URL is
+absolute HTTPS, except same-origin HTTP for local development, and contains no
+embedded credentials.
 
-Struo uploads each distinct locally exported digest, never server-selected local
-files. Responses are bounded to one mebibyte, and redirects are not followed.
-Other statuses and malformed or mismatching receipts are errors. An upload
-conflict is successful only if a separate lookup confirms the same publication.
-The client does not automatically retry ambiguous writes. Different targets,
-tracks or revisions produce different intents even when their content is equal.
+Struo uploads each distinct exported digest, never files the server selects.
+Responses are limited to one mebibyte, and redirects are not followed. Other
+statuses and malformed or mismatching receipts are errors. An upload conflict
+succeeds only if a separate lookup confirms the same publication. The client
+does not retry ambiguous writes automatically.
 
-## Use the same surface from an agent
+## Limitations
 
-- `struo_query_artifacts` inspects capability support and the provider shape.
-- `struo_export_artifacts` mirrors local export.
-- `struo_publish_artifacts` mirrors explicit publication.
+- Struo does not host static sites, install command-line tools, or start
+  servers. A compatible consumer validates the contract, unpacks safely,
+  isolates untrusted content, binds secrets, and owns routing, access,
+  retention, and cleanup.
+- Local publications live in the workspace and are deleted with it. Export to
+  an external destination for longer retention.
+- Retention and expiry of remote publications are receiver policies, not a
+  promise of permanent availability.
 
-The last two require `struo mcp --allow-run`. Authorize the selected destination
-before asking an agent to publish. See the [module contract](/reference/modules/#artifact-providers)
-to add artifact support to another target kind.
+## Next steps
+
+- [Triggers](/guide/infrastructure/triggers), to choose which targets CI
+  builds and tests when a branch changes.
+- [Tuist](/guide/infrastructure/tuist), to publish applications as installable
+  previews.
+- [`struo artifact` reference](/reference/cli/artifact), for every export and
+  publish option.

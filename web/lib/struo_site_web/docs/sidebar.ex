@@ -70,6 +70,34 @@ defmodule StruoSiteWeb.Docs.Sidebar do
     end
   end
 
+  @doc """
+  The navigation trail to a page: its group, any parent items, then the page,
+  each as `%{label:, slug:}` with `slug` nil for entries without their own page.
+  Empty when the page is not in the navigation.
+  """
+  def trail(slug) do
+    slug
+    |> tab_for_slug()
+    |> tree_for_tab()
+    |> Enum.find_value([], fn %Group{label: label, slug: group_slug, items: items} ->
+      cond do
+        group_slug == slug -> [%{label: label, slug: slug}]
+        path = item_trail(items, slug) -> [%{label: label, slug: group_slug} | path]
+        true -> nil
+      end
+    end)
+  end
+
+  defp item_trail(items, slug) do
+    Enum.find_value(items, fn %Item{label: label, slug: item_slug, items: children} ->
+      cond do
+        item_slug == slug -> [%{label: label, slug: slug}]
+        path = item_trail(children, slug) -> [%{label: label, slug: item_slug} | path]
+        true -> nil
+      end
+    end)
+  end
+
   @doc "A group's pages in reading order: its own page, when it has one, then its items'."
   def pages(%Group{slug: slug, label: label, items: items}) do
     page = if is_binary(slug), do: [%Item{label: label, slug: slug}], else: []
@@ -86,12 +114,11 @@ defmodule StruoSiteWeb.Docs.Sidebar do
   def guide_tree do
     [
       %Group{
-        label: "Start Here",
+        label: "Get Started",
         slug: "/docs/guide",
         items: [
           %Item{label: "Getting Started", slug: "/docs/guide/getting-started"},
-          %Item{label: "Why Struo", slug: "/docs/guide/why"},
-          %Item{label: "Coding Harnesses", slug: "/docs/guide/harness"}
+          %Item{label: "Why Struo", slug: "/docs/guide/why"}
         ]
       },
       %Group{
@@ -99,7 +126,7 @@ defmodule StruoSiteWeb.Docs.Sidebar do
         slug: "/docs/guide/scripted",
         items: [
           %Item{label: "Caching", slug: "/docs/guide/scripted/caching"},
-          %Item{label: "Manual Cache Access", slug: "/docs/guide/scripted/runtime"}
+          %Item{label: "Cache CLI", slug: "/docs/guide/scripted/runtime"}
         ]
       },
       %Group{
@@ -156,26 +183,26 @@ defmodule StruoSiteWeb.Docs.Sidebar do
             label: "Unchanged Builds",
             slug: "/docs/guide/local-execution/unchanged-builds"
           },
-          %Item{label: "The Sound of Your Build", slug: "/docs/guide/local-execution/sound"},
           %Item{
             label: "Terminal Integration",
             slug: "/docs/guide/local-execution/terminal-controls"
-          }
+          },
+          %Item{label: "The Sound of Your Build", slug: "/docs/guide/local-execution/sound"}
         ]
       },
       %Group{
         label: "Infrastructure",
         slug: "/docs/guide/infrastructure",
         items: [
+          %Item{label: "Connect a Project", slug: "/docs/guide/infrastructure/connect"},
+          %Item{label: "Remote Execution", slug: "/docs/guide/infrastructure/remote-execution"},
+          %Item{label: "Artifacts", slug: "/docs/guide/infrastructure/artifacts"},
+          %Item{label: "Triggers (Experimental)", slug: "/docs/guide/infrastructure/triggers"},
+          %Item{label: "Buildkite (Example)", slug: "/docs/guide/infrastructure/buildkite"},
           %Item{
             label: "Become a Provider",
             slug: "/docs/guide/infrastructure/providers"
-          },
-          %Item{label: "Artifacts", slug: "/docs/guide/infrastructure/artifacts"},
-          %Item{label: "Connect A Project", slug: "/docs/guide/infrastructure/connect"},
-          %Item{label: "Remote Execution", slug: "/docs/guide/infrastructure/remote-execution"},
-          %Item{label: "Triggers (Experimental)", slug: "/docs/guide/infrastructure/triggers"},
-          %Item{label: "Buildkite (Example)", slug: "/docs/guide/infrastructure/buildkite"}
+          }
         ]
       },
       %Group{
@@ -202,14 +229,18 @@ defmodule StruoSiteWeb.Docs.Sidebar do
         ]
       },
       %Group{
-        label: "Memory",
-        slug: "/docs/guide/memory",
+        label: "Coding Agents",
         items: [
-          %Item{label: "Evidence", slug: "/docs/guide/memory/evidence"}
+          %Item{label: "Coding Harnesses", slug: "/docs/guide/harness"},
+          %Item{
+            label: "Memory",
+            slug: "/docs/guide/memory",
+            items: [%Item{label: "Evidence", slug: "/docs/guide/memory/evidence"}]
+          }
         ]
       },
       %Group{
-        label: "Language Libraries",
+        label: "SDKs",
         slug: "/docs/guide/sdk",
         items: [
           %Item{label: "Rust", slug: "/docs/guide/sdk/rust", icon: "rust"},
@@ -225,7 +256,7 @@ defmodule StruoSiteWeb.Docs.Sidebar do
   def reference_tree do
     [
       %Group{
-        label: "References",
+        label: "Reference",
         slug: "/docs/reference",
         items: [
           %Item{label: "Manifest", slug: "/docs/reference/manifest"},
@@ -274,10 +305,9 @@ defmodule StruoSiteWeb.Docs.Sidebar do
         label: "Target Kinds",
         slug: "/docs/reference/prelude",
         items: [
-          target_group(
-            "Linting",
-            ~w(ruff_lint eslint_lint golangci_lint swiftlint_lint detekt_lint credo_lint rubocop_lint)
-          ),
+          target_group("Core", ~w(archive_download artifact script)),
+          target_group("Android", ~w(android_resource android_library android_local_test
+                android_instrumentation_test android_binary)),
           target_group(
             "Apple",
             ~w(apple_library apple_system_module swift_macro apple_framework apple_application
@@ -285,43 +315,44 @@ defmodule StruoSiteWeb.Docs.Sidebar do
                 apple_xcframework_import swift_package_workspace swift_package_dependencies swift_package_pin
                 swift_package_build_tools)
           ),
-          target_group("Core", ~w(archive_download artifact script)),
+          target_group("Bazel", ~w(bazel_workspace bazel_target bazel_test bazel_binary)),
+          target_group("C and C++", ~w(c_library)),
+          target_group("CMake", ~w(cmake_workspace cmake_project cmake_target cmake_test)),
           target_group("Containers", ~w(dockerfile_image oci_layer oci_image oci_index
                 oci_pull oci_import oci_load oci_push)),
-          target_group("Shell", ~w(shellspec_test)),
-          target_group("Bazel", ~w(bazel_workspace bazel_target bazel_test bazel_binary)),
-          target_group("Xcode", ~w(xcode_workspace)),
-          target_group("Android", ~w(android_resource android_library android_local_test
-                android_instrumentation_test android_binary)),
           target_group("Cross-platform", ~w(swift_android_library kotlin_apple_framework)),
+          target_group("Elixir", ~w(mix_workspace mix_dependencies mix_package mix_project
+                mix_release elixir_library elixir_test)),
+          target_group(
+            "Go",
+            ~w(go_dependencies go_module go_source go_library go_binary go_test)
+          ),
+          target_group("JavaScript", ~w(javascript_build vitest_test jest_test)),
           target_group(
             "Kotlin",
             ~w(kotlin_jvm_library kotlin_jvm_binary kotlin_jvm_test java_import)
           ),
-          target_group("C and C++", ~w(c_library)),
-          target_group("CMake", ~w(cmake_project cmake_test cmake_workspace cmake_target)),
-          target_group("Elixir", ~w(mix_workspace mix_dependencies mix_package mix_project
-                mix_release elixir_library elixir_test)),
-          target_group("Python", ~w(pytest_test)),
-          target_group("Ruby", ~w(rspec_test minitest_test)),
-          target_group("JavaScript", ~w(javascript_build vitest_test jest_test)),
+          target_group(
+            "Linting",
+            ~w(ruff_lint eslint_lint golangci_lint swiftlint_lint detekt_lint credo_lint rubocop_lint)
+          ),
           target_group("Nx", ~w(nx_workspace nx_task nx_test)),
-          target_group("Turborepo", ~w(turbo_workspace turbo_task turbo_test)),
+          target_group("Python", ~w(pytest_test)),
           target_group(
             "React Native",
             ~w(react_native_dependencies react_native_module
                 react_native_bundle react_native_codegen react_native_autolinking
                 react_native_apple_application react_native_android_application react_native_metro)
           ),
-          target_group(
-            "Go",
-            ~w(go_dependencies go_module go_source go_library go_binary go_test)
-          ),
+          target_group("Ruby", ~w(rspec_test minitest_test)),
           target_group(
             "Rust",
             ~w(cargo_workspace cargo_dependencies rust_library rust_mobile_library
                 rust_binary rust_test rust_crate rust_proc_macro)
           ),
+          target_group("Shell", ~w(shellspec_test)),
+          target_group("Turborepo", ~w(turbo_workspace turbo_task turbo_test)),
+          target_group("Xcode", ~w(xcode_workspace)),
           target_group(
             "Zig",
             ~w(zig_dependencies zig_package zig_library zig_generated_library

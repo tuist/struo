@@ -5,6 +5,7 @@ defmodule StruoSiteWeb.StructuredData do
   the site, the software, and its blog posts to Tuist.
   """
 
+  alias StruoSiteWeb.Docs.Sidebar
   alias StruoSiteWeb.Endpoint
   alias StruoSiteWeb.Layouts
 
@@ -14,7 +15,10 @@ defmodule StruoSiteWeb.StructuredData do
   @doc "The JSON-LD graph for a page, as text that is safe inside a script element."
   def json_ld(assigns) do
     site = Endpoint.url()
-    graph = [organization(), website(site), software(site)] ++ article(assigns, site)
+
+    graph =
+      [organization(), website(site), software(site)] ++
+        article(assigns, site) ++ docs_page(assigns, site)
 
     Jason.encode!(%{"@context" => "https://schema.org", "@graph" => graph}, escape: :html_safe)
   end
@@ -78,4 +82,41 @@ defmodule StruoSiteWeb.StructuredData do
   end
 
   defp article(_assigns, _site), do: []
+
+  # A documentation page is a technical article placed in the docs hierarchy, so
+  # search engines and answer engines can show where it sits.
+  defp docs_page(%{canonical_url: url, current_slug: "/docs/" <> _ = slug} = assigns, site)
+       when is_binary(url) do
+    trail = Enum.filter(Sidebar.trail(slug), & &1.slug)
+
+    crumbs =
+      [%{label: "Documentation", slug: "/docs"} | trail]
+      |> Enum.with_index(1)
+      |> Enum.map(fn {crumb, position} ->
+        %{
+          "@type" => "ListItem",
+          "position" => position,
+          "name" => crumb.label,
+          "item" => site <> crumb.slug
+        }
+      end)
+
+    [
+      %{
+        "@type" => "TechArticle",
+        "@id" => url <> "#article",
+        "url" => url,
+        "headline" => assigns[:page_title],
+        "description" => assigns[:meta_description],
+        "inLanguage" => "en",
+        "about" => %{"@id" => site <> "/#software"},
+        "author" => %{"@id" => @organization_id},
+        "publisher" => %{"@id" => @organization_id},
+        "isPartOf" => %{"@id" => site <> "/#website"}
+      },
+      %{"@type" => "BreadcrumbList", "@id" => url <> "#breadcrumb", "itemListElement" => crumbs}
+    ]
+  end
+
+  defp docs_page(_assigns, _site), do: []
 end

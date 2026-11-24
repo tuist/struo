@@ -1,20 +1,11 @@
----
-prev: false
-next: false
----
+# Go Builds and Tests
 
-# Go
+Build, run, test, cross-compile, and cache Go packages with Struo, including
+vendored modules, cgo, and exported C libraries declared in `struo.toml`.
 
-Struo can build Go source groups, package archives, executables, exported C
-libraries, and tests. It imports vendored modules as typed graph targets, keeps
-ordinary builds offline, supports destination operating system and architecture
-selection, and exposes normalized test results and coverage.
-
-The target kinds adapt the public [Bazel rules_go](https://github.com/bazel-contrib/rules_go)
-and [Buck2 Go prelude](https://github.com/facebook/buck2/tree/main/prelude/go)
-behavior to Struo actions. Struo invokes the Go command directly. Source
-selection, module inputs, generated outputs, cache directories, and test
-artifacts stay visible to the action model.
+Struo models Go packages, executables, and tests as typed targets and invokes
+the Go command directly. Vendored modules become queryable graph targets, and
+ordinary builds stay offline.
 
 ## Prerequisites
 
@@ -25,7 +16,9 @@ mise install
 mise exec -- go version
 ```
 
-## Declare a Module
+## Declare targets
+
+### Declare a module
 
 Create `struo.toml` beside `go.mod`:
 
@@ -72,40 +65,11 @@ coverage = true
 labels = ["unit"]
 ```
 
-`go_source` can group files that another target embeds into the same package.
-Connect it through the `embed` dependency role. Native dependencies used by
+`go_source` groups files that another target embeds into the same package;
+connect it through the `embed` dependency role. Native dependencies used by
 cgo belong under the `cdeps` role.
 
-## Import External Modules
-
-Go remains authoritative for version selection and source verification. Update
-and vendor dependencies before an ordinary Struo build:
-
-```sh
-go mod tidy
-go mod vendor
-```
-
-`go_dependencies` reads the complete requirement graph from a Go 1.17 or newer
-`go.mod`, binds selected versions to source checksums from `go.sum`, and checks
-those selections against `vendor/modules.txt`. It emits one `go_module` target
-for every vendored module that contributes a package. Each generated target
-carries its exact module path, version, source checksum, package list, and
-complete vendored source tree. The Go vendoring workflow verifies source before
-it is committed, while Struo hashes the committed tree into every consuming
-action.
-
-Build and test actions use `-mod=vendor`, `GOPROXY=off`, and `GOSUMDB=off`.
-They cannot fetch missing source. A missing checksum, a version disagreement,
-or a vendored module absent from the complete requirement graph fails while the
-graph loads.
-
-For a `go.work` workspace, set `workspace_file`, include that file and every
-relevant checksum file in `sum_files` and `resolver_inputs`, and create the
-vendor tree with `go work vendor`. Consumers set `go_work` to the same
-workspace-relative file.
-
-## Query, Build, Run, and Test
+### Query before building
 
 Inspect the graph before executing it:
 
@@ -116,7 +80,9 @@ struo query targets --kind go_module
 struo query capabilities Hello
 ```
 
-Then use the shared capability commands:
+### Build, run, and test
+
+Use the shared capability commands:
 
 ```sh
 struo build Hello
@@ -124,13 +90,51 @@ struo run Hello
 struo test GreetingTests
 ```
 
-The test target compiles one native Go test binary, runs it through `go tool
-test2json`, and writes [JavaScript Object Notation](https://www.json.org/json-en.html)
-events, a readable log, and `struo.test_results.v1` output. Exact test names from
-`struo query test-manifest` can be scheduled independently. Coverage writes a
-native Go coverage profile alongside those results.
+The test target compiles one Go test binary and writes
+[JavaScript Object Notation](https://www.json.org/json-en.html) events, a
+readable log, and normalized test results. Exact test names from
+`struo query test-manifest` can be scheduled independently. With `coverage`
+set, a Go coverage profile is written alongside the results.
 
-## Cross-Compile and Export Native Libraries
+### Start from the runnable starter
+
+The `go-comprehensive` starter includes a first-party package, an embedded
+source group, a runnable executable, a Linux cross-compiled executable, exact
+tests with coverage, and the vendored `github.com/pkg/errors` module:
+
+```sh
+struo query example go_binary go-comprehensive --format json
+```
+
+## Manage dependencies
+
+### Import external modules
+
+Go stays authoritative for version selection and source verification. Update
+and vendor dependencies before an ordinary Struo build:
+
+```sh
+go mod tidy
+go mod vendor
+```
+
+`go_dependencies` reads the requirement graph from a Go 1.17 or newer `go.mod`,
+checks the selected versions against `go.sum` and `vendor/modules.txt`, and
+emits one `go_module` target for every vendored module that contributes a
+package. The committed vendored source is part of every consuming action's
+cache key.
+
+Build and test actions run with `-mod=vendor`, `GOPROXY=off`, and
+`GOSUMDB=off`, so they cannot fetch missing source. A missing checksum, a
+version disagreement, or a vendored module absent from the requirement graph
+fails while the graph loads.
+
+For a `go.work` workspace, set `workspace_file`, include that file and every
+relevant checksum file in `sum_files` and `resolver_inputs`, and create the
+vendor tree with `go work vendor`. Consumers set `go_work` to the same
+workspace-relative file.
+
+## Cross-compile and export native libraries
 
 Set `goos` and `goarch` on a binary or library to select its destination:
 
@@ -148,28 +152,39 @@ goarch = "amd64"
 strip = true
 ```
 
-`tags`, `gotags`, and `build_tags` accept the corresponding Bazel and Buck2
-spellings. Compiler, assembler, linker, race detector, memory sanitizer,
-address sanitizer, profile-guided optimization, stripping, and link-time string
-definitions are also available through typed attributes.
+Build tags, compiler, assembler, and linker flags, the race detector,
+sanitizers, profile-guided optimization, and link-time string definitions are
+also typed attributes. See the [`go_binary` reference](/reference/prelude/go_binary).
 
 Set `build_mode` to `c-archive` or `c-shared` to expose a Go `main` package to
-native consumers. Struo returns the generated header and library through its
-generic C provider, including the Android
+native consumers. Struo returns the generated header and library as a C
+provider, including the Android
 [Application Binary Interface](https://developer.android.com/ndk/guides/abis)
 record when `android_abi` is set. Other supported build modes are `exe`, `pie`,
 `plugin`, `shared`, and `archive`.
 
-Cross-compiled executables can be built on the host. `struo run` and `struo test`
-require a binary for the host operating system and architecture. Cross-platform
-cgo also requires destination-compatible `cc` and `c++` commands.
+## Limitations
 
-## Runnable Starter
+- `struo run` and `struo test` require a binary for the host operating system
+  and architecture. Cross-compiled executables can be built but not run.
+- Cross-platform cgo requires destination-compatible `cc` and `c++` commands.
+- Builds never fetch modules. Vendor dependencies with `go mod vendor` or
+  `go work vendor` first.
 
-The `go-comprehensive` starter includes a first-party package, an embedded
-source group, a runnable executable, a Linux cross-compiled executable, exact
-tests with coverage, and the vendored `github.com/pkg/errors` module:
+## Target kinds
 
-```sh
-struo query example go_binary go-comprehensive --format json
-```
+- [`go_dependencies`](/reference/prelude/go_dependencies)
+- [`go_module`](/reference/prelude/go_module)
+- [`go_source`](/reference/prelude/go_source)
+- [`go_library`](/reference/prelude/go_library)
+- [`go_binary`](/reference/prelude/go_binary)
+- [`go_test`](/reference/prelude/go_test)
+- [`golangci_lint`](/reference/prelude/golangci_lint)
+
+## Next steps
+
+- [Linting](/guide/graph/linting): run golangci-lint as a cached graph target.
+- [Testing and Scheduling](/guide/graph/testing): select and schedule exact Go
+  tests across the graph.
+- [Caching](/guide/scripted/caching): share build results across machines
+  with a remote cache.

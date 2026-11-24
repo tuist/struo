@@ -1,9 +1,11 @@
 # Why Struo
 
+Struo makes build and automation work reusable across laptops, CI, and coding
+agents through cached actions and remote execution, without replacing your tools.
+
 You should not have to rebuild the same inputs just because the work moved
 from your laptop to continuous integration, or from one coding agent to
-another. Struo makes that work reusable without asking you to replace every
-working tool in your repository first.
+another.
 
 The idea is simple: describe what an action reads, what it writes, and the
 environment it needs. Struo gives that contract a content-based identity and
@@ -16,7 +18,7 @@ existing repository automation through native project discovery, annotated
 scripts, and typed targets. The migration can start with one useful action,
 not a repository-wide rewrite.
 
-## Agents Change The Shape
+## Agents change the shape
 
 Coding agents push against that model. They can run concurrently across
 worktrees, explore several fixes at once, retry tests, regenerate outputs,
@@ -30,7 +32,7 @@ repositories: stable action identities, deterministic inputs, reusable
 outputs, shared cache storage, and the option to run work somewhere other
 than the current laptop.
 
-## Infrastructure Is Fragmenting
+## Infrastructure is fragmenting
 
 At the same time, new caching and compute infrastructure is emerging to
 serve this need. Some providers focus on artifact storage. Some focus on
@@ -42,7 +44,7 @@ what work should happen, what values affect it, which outputs matter, and
 what an agent can inspect while that work is running, without binding every
 automation workflow to one provider.
 
-## Struo Is The Narrow Waist
+## Struo is the narrow waist
 
 Struo is the [narrow waist](https://en.wikipedia.org/wiki/Hourglass_model)
 between automation needs and the infrastructure that can make those
@@ -75,9 +77,11 @@ your team. Move work to remote execution when its toolchain and runtime needs
 can be supplied by the chosen provider. This keeps performance improvements
 attached to a workflow you can inspect and trust.
 
-## Next
+## Next steps
 
-Continue with [Getting Started](/guide/getting-started) to install Struo and
-reuse the result of a cacheable script. If running work away from the current
-computer is your main interest, read
-[Remote Execution](/guide/infrastructure/remote-execution).
+- [Getting Started](/guide/getting-started): install Struo and reuse the result
+  of a cacheable script.
+- [Remote Execution](/guide/infrastructure/remote-execution): run work away
+  from the current computer.
+- [Coding harnesses](/guide/harness): connect a coding agent to the same cache
+  and graph.

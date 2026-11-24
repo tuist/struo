@@ -1,15 +1,18 @@
 # Become an Infrastructure Provider
 
-This guide walks through integrating a shared-cache service with Struo, from
-defining the service contract to verifying reuse from a fresh local cache.
+Integrate your shared-cache service with Struo: define the service, agree on
+access and limits, build the adapter, validate reuse, and hand off to customers.
+
 Use the [cache provider contract](/reference/infrastructure/cache) for the
-exact operations, formats, and acceptance checks.
+exact operations, formats, and acceptance checks, and the
+[execution provider contract](/reference/infrastructure/execution) if your
+service runs actions.
 
 **Integration requirement:** a new provider currently needs an adapter in
 Struo. Adding a service URL or a new `kind` to `struo.toml` does not register a
 provider. Plan for changes in Struo alongside your service implementation.
 
-## Define the Cache Service
+## Define the cache service
 
 Your service provides two things:
 
@@ -23,7 +26,7 @@ outputs. The service treats action keys and stored output data as opaque: it
 stores and returns bytes rather than interpreting artifacts or deciding when a
 build can reuse them. See [content and action results](/reference/infrastructure/cache#content-and-action-results).
 
-## Agree on Identity, Access, and Limits
+## Agree on identity, access, and limits
 
 Before implementing the integration, decide:
 
@@ -39,12 +42,13 @@ Before implementing the integration, decide:
    refused credentials, malformed responses, or corrupt content. An entry
    whose referenced content has been evicted is a miss, not a partial hit.
 
-## Implement the Adapter and Service Together
+## Implement the adapter and service together
 
 Implement the [provider-neutral cache operations](/reference/infrastructure/cache#provider-neutral-operations)
 and register your provider kind with Struo's manifest parsing and provider
-resolution. The [provider reference](/reference/infrastructure/) maps those
-parts of the code.
+resolution in the [Struo repository](https://github.com/tuist/struo). See
+[integration status](/reference/infrastructure/#integration-status) for what
+Struo supports without an adapter.
 
 Preserve these behaviors in the adapter:
 
@@ -65,7 +69,7 @@ Document how users configure a named provider in `[infrastructures.<name>]`
 and select it through `[infrastructure.cache]`. Use the existing manifest
 structure rather than introducing another configuration file.
 
-## Make Onboarding Optional and Explicit
+## Make onboarding optional and explicit
 
 Start with a manually provisioned account and project, documented credentials,
 and a working cache binding. Automated project creation is not required for
@@ -77,7 +81,7 @@ provisioner and login dispatch support Tuist only; another provider needs its
 own integration, not a copy of Tuist's HTTP routes. See
 [Connect a Project](/guide/infrastructure/connect).
 
-## Validate a Cache Without a Local False Positive
+## Validate a cache without a local false positive
 
 Check that another client can reuse a result stored on your service:
 
@@ -96,7 +100,7 @@ interrupted transfers, and isolation between tenants. The
 [cache acceptance checks](/reference/infrastructure/cache#acceptance-checks)
 describe the expected outcomes. Use disposable data for these tests.
 
-## Handoff Checklist
+## Handoff checklist
 
 Before customers use the integration, publish:
 
@@ -108,6 +112,11 @@ Before customers use the integration, publish:
   tenant isolation, and the failure checks above.
 - Operational ownership and incident procedures for the cache service.
 
-Continue with the [cache provider contract](/reference/infrastructure/cache)
-for implementation details and the [provider reference](/reference/infrastructure/)
-for the code map.
+## Next steps
+
+- [Cache provider contract](/reference/infrastructure/cache), for the exact
+  operations, wire format, and acceptance checks.
+- [Execution provider contract](/reference/infrastructure/execution), if your
+  service also runs actions.
+- [Infrastructure providers](/guide/infrastructure/#available-providers), to see
+  how existing provider guides document setup for customers.

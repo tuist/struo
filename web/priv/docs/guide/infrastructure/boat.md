@@ -1,24 +1,26 @@
 # Boat
 
 [Boat](https://docs.boat.dev/api/v1) provides hosted Linux sandboxes. Struo
-creates a disposable sandbox for an uncached action, uploads declared inputs,
-runs the command, retrieves outputs after an accepted exit, and requests
+runs each uncached action in a disposable Boat sandbox and deletes it
+afterwards.
+
+Struo creates the sandbox from a saved snapshot, uploads declared inputs, runs
+the command, retrieves declared outputs after an accepted exit, and requests
 permanent deletion.
 
 **Capabilities:** remote execution. Configure shared caching separately.
 
 ## Prerequisites
 
-Use a Boat account with sandbox creation, listing, command execution, file
-read/write, and permanent-deletion access. Prepare a saved Linux snapshot with
-your runtime, `sh`, `env`, `rm`, `mkdir`, and `tar`.
-
-Set `BOAT_API_KEY` outside scripts and manifests. `STRUO_BOAT_API_KEY` takes
-precedence. Struo does not forward this key to your command.
+- A Boat account with sandbox creation, listing, command execution, file
+  read/write, and permanent-deletion access.
+- A saved Linux snapshot with your runtime, `sh`, `env`, `rm`, `mkdir`, and
+  `tar`. Prepare it without secrets: Struo attaches no account repositories,
+  secrets, or credentials, but files you placed in the snapshot remain.
 
 ## Configuration
 
-Prepare a saved Boat snapshot containing your tools, then bind its name:
+Bind the saved snapshot by name in the repository root `struo.toml`:
 
 ```toml
 [infrastructures.remote_tests]
@@ -29,29 +31,38 @@ snapshot = "node-tests-v1"
 provider = "remote_tests"
 ```
 
-Select a saved snapshot, not an OCI image. Keep the
-snapshot name stable only while its contents remain unchanged; replacing it
-under the same name does not change Struo's action identity. The guest needs
-`sh`, `env`, `rm`, `mkdir`, and `tar`, plus the runtime your script uses.
+Select a saved snapshot, not an OCI image. Keep the snapshot name stable only
+while its contents remain unchanged; replacing it under the same name does not
+change Struo's action identity.
 
-You can select Boat's current default Linux environment without a saved
-snapshot with `--compute boat`. That default is not an immutable toolchain.
-Struo requests private visibility, disables inherited account environment,
-snapshots and monitoring, and does not attach account repositories, secrets,
-or credentials to the sandbox. It does not inherit an organization's shared
-sandbox visibility default. A saved snapshot can still contain files you placed
-in it; prepare it without secrets.
+You can use Boat's current default Linux environment without a saved snapshot
+by selecting `--compute boat`. That default is not an immutable toolchain.
 
-`STRUO_BOAT_API_URL` overrides the default
-`https://boat.dev/api/v1` endpoint for compatible test services.
+Sandboxes are created with private visibility and without inherited account
+environment, snapshots or monitoring, regardless of your organization's shared
+sandbox defaults.
+
+### Authentication
+
+Set `BOAT_API_KEY` outside scripts and manifests. `STRUO_BOAT_API_KEY` takes
+precedence. Struo does not forward this key to your command.
+
+`STRUO_BOAT_API_URL` overrides the default `https://boat.dev/api/v1` endpoint
+for compatible test services.
 
 ## Usage
+
+Run a literal command on the provider:
 
 ```sh
 struo exec --remote --compute remote_tests -- node --version
 ```
 
-An annotated test script can upload an existing local dependency tree:
+Omit `--compute remote_tests` to use the workspace's default execution provider.
+
+### Run an annotated test script
+
+Save this script as `scripts/test.sh`:
 
 ```sh
 #!/bin/sh
@@ -66,47 +77,51 @@ node node_modules/vitest/vitest.mjs run \
   --reporter=json --outputFile=reports/vitest.json
 ```
 
-Save this as `scripts/test.sh` and run `struo exec --script -- sh scripts/test.sh`.
+Run it:
+
+```sh
+struo exec --script -- sh scripts/test.sh
+```
+
 Declare any additional source, configuration, or setup files your tests read.
 Struo includes declared `node_modules` even when Git ignores it, preserving
 executable modes and safe symbolic links. Native dependencies must match the
-guest's Linux architecture and runtime. A dependency-install action can also
-produce `node_modules`; see [Remote Execution](/guide/infrastructure/remote-execution).
+guest's Linux architecture and runtime. To produce `node_modules` in a separate
+cacheable action, see [Remote Execution](/guide/infrastructure/remote-execution).
 
 ## Limits and cleanup
 
-Struo preserves binary stdout and stderr. Terminal output appears after command
-completion rather than live. Transfers and captures respect Struo's resource
-limits, and Struo validates outputs before installing them.
-
-Boat inherits the saved snapshot's machine size when one is
-selected, otherwise it uses its default size. Struo's resource declarations
-budget coordinator work and do not resize Boat machines.
-Network denial, explicit account/project scoping, path redirection, graph
-filesystem setup, and output-idle timeouts are not supported by this adapter
-and fail closed.
+- Stdout and stderr are preserved as binary and appear after the command
+  completes, not live.
+- Boat uses the saved snapshot's machine size, or its default size without a
+  snapshot. Struo's resource declarations do not resize Boat machines.
+- Network denial, explicit account/project scoping, output path redirection,
+  graph filesystem setup, and output-idle timeouts are not supported and fail
+  instead of running with weaker guarantees.
 
 ### Cleanup and recovery
 
-Struo records ownership before creation and does not retry an uncertain create.
-A later run can discover owned sandboxes and retry cleanup.
-Boat's active wallet can change without changing the API key, so even an empty
-listing or a DELETE returning 404 does not release ownership. Struo retains
-those records until cleanup receives a matching permanent-deletion receipt.
-This can retain records for sandboxes deleted outside Struo; enough unresolved
-records will block new provisioning rather than silently discard ownership.
+Struo requests permanent deletion after success, failure, timeout, or
+cancellation. Boat's accepted deletion ends billing at once and erases stored
+data in the background. Struo logs the deletion operation ID but does not wait
+for erasure; check the operation in Boat if you need purge completion.
 
-Struo requests permanent deletion after
-success, failure, timeout, or cancellation. Cleanup retains admission until
-the bounded deletion attempt settles and keeps failed ownership records for
-recovery. Boat's accepted deletion ends billing and removes the sandbox from
-use at once. Boat then erases stored data in the background. Struo logs the
-deletion operation ID and releases ownership after acceptance; it does not
-wait for or claim completed data erasure. Check the deletion operation in Boat
-if you need purge completion.
+If deletion fails or a create response is lost, Struo keeps an ownership record
+in the workspace's `.struo` runtime state and retries cleanup on a later run.
+Records stay until Boat returns a matching permanent-deletion receipt, even for
+sandboxes you deleted outside Struo. Enough unresolved records block new
+sandboxes rather than silently dropping ownership.
 
-TTL is a fallback: one hour without an action timeout, otherwise the timeout
-rounded up plus five minutes, within Boat's 30-day maximum. TTL archives a
-sandbox rather than requesting permanent deletion. Disabling snapshots avoids
-keeping its disk after a stop, but explicit DELETE remains the cleanup path.
-See Boat's [deletion contract](https://docs.boat.dev/data-retention/delete).
+A time-to-live is a fallback: one hour without an action timeout, otherwise the
+timeout rounded up plus five minutes, within Boat's 30-day maximum. It archives
+a sandbox rather than deleting it permanently. See Boat's
+[deletion contract](https://docs.boat.dev/data-retention/delete).
+
+## Next steps
+
+- [Remote Execution](/guide/infrastructure/remote-execution): split dependency
+  installation and tests into separate cacheable actions.
+- [Infrastructure](/guide/infrastructure#available-providers): pick a cache
+  provider so other machines reuse remote results.
+- [Execution provider contract](/reference/infrastructure/execution): see what
+  every execution provider guarantees.

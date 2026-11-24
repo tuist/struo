@@ -1,13 +1,13 @@
-# Scripted Workflows
+# Cache Existing Scripts with Struo
 
-Scripted workflows bring existing automation into Struo without rewriting it.
-The script remains the source of truth. A small header tells Struo which inputs
-affect the result, which outputs to preserve, and which host values belong in
+Turn an existing shell, Python, or Ruby script into a cached Struo action by
+adding a few header comments that declare its inputs and outputs.
+
+The script remains the source of truth. The header tells Struo which inputs
+affect the result, which outputs to restore, and which host values belong in
 the cache key.
 
-This is the shortest path from an ordinary script to a cacheable Struo action.
-
-## Create A Cacheable Script
+## Create a cacheable script
 
 Suppose a repository turns `message.txt` into `build/greeting.txt`. Save this
 script as `scripts/greet.sh`:
@@ -53,7 +53,7 @@ The second run reports a cache hit and restores `build/greeting.txt` from the
 recorded result. If `message.txt` changes, the input digest changes and the
 script runs again.
 
-## Inspect and Run Through a Coding Harness
+## Inspect the contract
 
 Inspect the parsed contract before execution:
 
@@ -61,23 +61,22 @@ Inspect the parsed contract before execution:
 struo query script scripts/greet.sh
 ```
 
-Coding agents can use the same workflow without reading this guide. The
-[Model Context Protocol](https://modelcontextprotocol.io/) server exposes
-`struo_validate_script` for contract inspection and, when started with
-`--allow-run`, `struo_exec_script` for execution. The execution result
-includes the action digest, cache state, captured streams, and matching
-evidence. Calling it twice with unchanged inputs verifies cache reuse.
+Coding agents can do the same through the MCP server: `struo_validate_script`
+inspects the contract and `struo_exec_script` runs it. See
+[Coding harnesses](/guide/harness#run-an-annotated-script).
 
-## When To Use A Script
+## When to use a script
 
 Use a scripted workflow when one existing executable already owns the work,
 such as asset generation, test setup, packaging, or fixture updates. Move to a
 [typed graph target](/guide/graph/) when the work needs multiple capabilities,
 structured validation, or a shape that tools can inspect and edit.
 
-## Next
+## Next steps
 
-Continue to [Caching](/guide/scripted/caching) to add environment variables,
-tool fingerprints, and dependencies to the script contract. Read
-[Manual Cache Access](/guide/scripted/runtime) only when a script needs to
-manage cache records itself.
+- [Caching scripted workflows](/guide/scripted/caching): add environment
+  variables, tool fingerprints, and dependent scripts to the contract.
+- [Cache CLI](/guide/scripted/runtime): let a script probe and
+  populate the cache itself.
+- [Evidence](/guide/memory/evidence): inspect the records each run leaves
+  behind.

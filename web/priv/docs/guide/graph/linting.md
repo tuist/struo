@@ -1,14 +1,12 @@
-# Linting
+# Linting and Static Analysis
 
-Struo turns static analysis into a graph capability with declared inputs,
-cacheable reports, normalized findings, and an explicit failure policy. Native
-analyzer configuration remains authoritative.
+Run Ruff, ESLint, golangci-lint, SwiftLint, detekt, Credo, and RuboCop through
+Struo with cached reports, normalized findings, and an explicit failure policy.
 
-This solves a problem that a plain analyzer invocation leaves to every caller:
-the analyzer may use a nonzero process code for valid findings, emit a
-tool-specific report, and repeat unchanged work on every machine. Struo records
-the analyzer version, sources, configuration, command, and report as one
-action. A fresh execution and a cache hit produce the same finding result.
+Struo records the analyzer version, sources, configuration, command, and
+report as one cached action, so unchanged code is not analyzed twice and a
+cache hit reports the same findings as a fresh run. Native analyzer
+configuration stays authoritative.
 
 ## Run a complete example
 
@@ -119,14 +117,10 @@ struo lint quality/python/lint --fail-on note
 `--fail-on error` reports warnings without failing. `--fail-on note` also
 gates informational findings.
 
-Many analyzers use a nonzero process code to mean “findings exist.” Their
-target kinds list that code through `success_exit_codes`, so Struo captures the
-valid report instead of treating the process as broken. Unexpected codes, such
-as configuration errors or crashes, fail the action and do not become a
-complete lint result.
-
-This distinction matters for automation: a finding is repairable product
-data, while a broken analysis is missing evidence.
+Many analyzers exit with a nonzero code when findings exist. Struo treats that
+as a valid report. Unexpected codes, such as configuration errors or crashes,
+fail the command instead of producing a lint result, so a broken analysis is
+never mistaken for a clean one.
 
 ## Consume normalized findings
 
@@ -155,17 +149,31 @@ server starts with execution enabled:
 struo mcp --allow-run
 ```
 
-See the [`struo lint` command reference](/reference/cli/lint) for every command
-option.
+
+## Lint the whole workspace
+
+Without a target, `struo lint` lints every workspace-owned target that exposes
+`lint` and runs each one to completion. Add `--all` to include lint-capable
+targets reached through vendored dependencies:
+
+```sh
+struo lint
+struo lint --all --fail-on error
+```
 
 ## Add another analyzer
 
 When no built-in target kind covers a tool, define a project-local Starlark
-module. The [Custom lint target kinds](/reference/modules/linting) guide
-contains:
+module. [Custom lint target kinds](/reference/modules/linting) includes a
+complete implementation, adapter patterns for portable and native reports, and
+a runnable starter returned by `struo query module-contract`.
 
-- a complete provider and action implementation;
-- direct portable-report and native-report adapter patterns;
-- analyzer identity, input, output, and exit-code requirements;
-- a runnable module starter returned by `struo query module-contract`;
-- the validation, execution, cache, and evidence checks for a new tool.
+## Next steps
+
+- [`struo lint` reference](/reference/cli/lint): see every command option.
+- [Custom lint target kinds](/reference/modules/linting): wrap an analyzer
+  Struo does not ship.
+- [Testing and scheduling](/guide/graph/testing): run tests beside your
+  analyzers.
+- [Target kind index](/reference/prelude/): look up each analyzer kind's
+  attributes and starter.

@@ -1,25 +1,40 @@
----
-prev: false
-next: false
----
+# Bazel Workspaces
 
-# Bazel
+Query, build, and test an existing Bazel workspace with Struo: no manifest needed, Bazel keeps analysis, and Struo executes and caches the actions.
 
-Struo reads a [Bazel](https://bazel.build) workspace through `bazel query`,
-exposes every rule as a Struo target, and runs each target's actions
-itself. Bazel handles analysis (target loading, toolchain resolution,
-external repository download via `bazel fetch`, the action graph via
-`bazel aquery`); Struo handles execution, from a shadow execution root
-under `<workspace>/.struo/bazel-shadow/<target>/`. Unsupported internal
-actions fall back to the corresponding native Bazel command. `TestRunner`
-also delegates because its test environment and runfiles mapping are not
-fully described by `aquery`. Delegated commands bypass the Struo action
-cache; Bazel owns their build and test cache reuse.
+Struo reads the workspace through `bazel query` and exposes every rule as a
+Struo target. Bazel still loads targets, resolves toolchains, and downloads
+external repositories. Struo runs the resulting actions itself, and falls back
+to the native `bazel` command for actions it does not support.
 
-## Try an Existing Workspace
+## Prerequisites
+
+Install Bazel, or Bazelisk to use the version pinned by the workspace, and
+check that it resolves in the shell that runs Struo:
+
+```sh
+bazel --version
+```
+
+A workspace that cannot load through the raw `bazel` command cannot load
+through Struo either. When graph loading fails, run the same `bazel query`
+from the workspace root to diagnose it.
+
+Add the Struo cache directory to `.bazelignore` next to `MODULE.bazel`:
+
+```
+.struo
+```
+
+Without that entry, `BUILD.bazel` files that other integrations write under
+`.struo/out/` can be picked up by `bazel query` and fail graph loading.
+
+## Start from an existing project
+
+### Inspect, build, and test
 
 Struo recognizes `MODULE.bazel`, `WORKSPACE.bazel`, and `WORKSPACE`
-automatically. This works without `struo.toml`:
+automatically. From the workspace root, without a `struo.toml`:
 
 ```sh
 struo query targets
@@ -27,37 +42,17 @@ struo build
 struo test
 ```
 
-The generated `bazel_workspace` seed runs
-`bazel query 'kind("rule", //...)' --output=label_kind`, materializes every
-rule as a `bazel_target`, and forwards the label and rule class on
-`bazel_label` and `bazel_rule_kind`. Discovery skips generated
-`bazel-bin`, `bazel-out`, and `bazel-testlogs` directories.
+`struo query targets` lists every rule returned by
+`bazel query 'kind("rule", //...)'`. `struo build` builds the workspace's
+non-test rules, and `struo test` runs its test rules. Discovery skips the
+generated `bazel-bin`, `bazel-out`, and `bazel-testlogs` directories and does
+not write a Struo manifest.
 
-When discovery finds one Bazel workspace, `struo build` builds its non-test
-roots. `struo test` runs the test rules reported by that workspace. Discovery
-does not write an Struo manifest.
+### Keep Bazel commands
 
-## Ignore The Struo Cache
-
-Bazel walks every directory the workspace contains unless the repository
-lists it in
-[`.bazelignore`](https://bazel.build/reference/command-line-reference#flag--noenable_bzlmod).
-Struo writes its cache and outputs under `.struo/`. Add a single line to
-`.bazelignore` next to `MODULE.bazel`:
-
-```
-.struo
-```
-
-Without that entry, checked-in `BUILD.bazel` files under `.struo/out/` from
-other native integrations can be picked up by `bazel query` and fail graph
-loading with a missing rule loader.
-
-## Keep Bazel Commands
-
-Struo can sit behind the `bazel` command for one native workspace. Add this
-mise wrapper, then run `mise reshim` and activate mise in the shell that
-starts the build:
+Struo can sit behind the `bazel` command for one workspace. Add this mise
+wrapper, then run `mise reshim` and activate mise in the shell that starts the
+build:
 
 ```toml
 [wrappers.bazel]
@@ -65,7 +60,7 @@ command = "struo"
 args = ["bazel", "--"]
 ```
 
-Struo routes labeled build and test forms into the native graph:
+Labeled build and test commands then run through the Struo graph:
 
 ```sh
 bazel build //src:kura
@@ -74,36 +69,65 @@ bazel test //src:kura_lib_test
 
 The wrapper accepts one fully qualified label per invocation. Every other
 request, including wildcards (`//...`), extra flags (`--config=debug`),
-queries, and `bazel run`, invokes the system `bazel` executable with its
-original arguments and exit status. This preserves Bazel behavior until the
-request has an exact Struo equivalent.
+queries, and `bazel run`, runs the system `bazel` executable with its original
+arguments and exit status.
 
-For troubleshooting without mise, call the compatibility surface directly and
-put the separator before the Bazel arguments:
+To troubleshoot without mise, call the compatibility command directly and put
+the separator before the Bazel arguments:
 
 ```sh
 struo bazel -- --version
 struo bazel -- query "kind(rule, //:*)"
 ```
 
-Set `STRUO_BAZEL_PATH` to select a specific `bazel` executable when the
-wrapper is active. The default resolution walks `PATH` and honors
+Set `STRUO_BAZEL_PATH` to select a specific `bazel` executable while the
+wrapper is active. By default Struo searches `PATH` and honors
 [`bazelisk`](https://github.com/bazelbuild/bazelisk) shims.
 
-See [`bazel_workspace`](/reference/prelude/bazel_workspace) and
-[`bazel_target`](/reference/prelude/bazel_target) for their complete
-contracts.
+## Choose which rules to include
 
-## Prerequisites
+Declare a [`bazel_workspace`](/reference/prelude/bazel_workspace) target in
+`struo.toml` when the defaults do not fit:
 
-Install Bazel (or Bazelisk, which selects the version pinned by the
-workspace) and verify it resolves in the shell that runs Struo:
+- `query` replaces the default `kind("rule", //...)` expression.
+- `exclude_packages` drops package prefixes from the default query.
+- `test_query` selects which tests a bare `struo test` runs, without removing
+  any targets from the graph.
+- `env` and `test_env` set the environment for Bazel and for native tests.
 
-```sh
-bazel --version
-```
+Struo does not read test filters from `.bazelrc`. If your native suite skips
+tagged tests, declare the matching `test_query`.
 
-The graph loader shells out to `bazel query` during resolution. A Bazel
-workspace that cannot load through the raw `bazel` command cannot load
-through Struo either. Diagnose loader errors with the same `bazel query`
-invocation from the workspace root before revisiting Struo.
+## Limitations
+
+- Compile and link actions are cached only when the workspace declares
+  `toolchain_inputs` covering every host tool, system header, and library the
+  actions use. Without it, those actions run on every build.
+- Actions Struo does not support run through the native `bazel` command. Struo
+  does not cache them; Bazel's own cache applies.
+- Test execution itself is not cached, and Struo does not implement Bazel's
+  flaky-test retries.
+- Bazel targets cannot be authored by hand in `struo.toml`; they always come
+  from the workspace.
+- Native actions can contain absolute host paths, so cached results are not
+  portable across machines. Declaring `toolchain_inputs` does not enable remote
+  execution.
+
+## Target kinds
+
+- [`bazel_workspace`](/reference/prelude/bazel_workspace): the workspace seed,
+  its queries, environment, and caching inputs.
+- [`bazel_target`](/reference/prelude/bazel_target): library-style rules.
+- [`bazel_binary`](/reference/prelude/bazel_binary): rules whose class ends in
+  `_binary`.
+- [`bazel_test`](/reference/prelude/bazel_test): test rules, including
+  per-test coverage.
+
+## Next steps
+
+- [`struo bazel`](/reference/cli/bazel): the full compatibility command
+  reference.
+- [Testing and scheduling](/guide/graph/testing): plan and run Bazel tests with
+  Struo's test commands.
+- [Ecosystems](/guide/graph/ecosystems): export a graph reproduction when the
+  derived graph disagrees with Bazel.

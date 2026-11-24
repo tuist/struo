@@ -1,14 +1,27 @@
----
-prev: false
-next: false
----
+# JavaScript SDK
 
-# JavaScript Software Development Kit
+Use the `@tuist/struo` npm package to store blobs and action results in a
+Struo cache from Node.js or the browser, and dispatch work to tabs or GitLab.
 
-The JavaScript library is the `@tuist/struo` npm package. It exposes cache
-primitives for Node.js applications, tools, and browsers. Script execution
-belongs to the command line and is not part of this library. See the
-[language-library overview](/guide/sdk/) to compare the available bindings.
+The package exposes cache primitives for Node.js and an IndexedDB cache for
+browsers. Script execution belongs to the command line. See the
+[SDK overview](/guide/sdk/) to compare languages.
+
+## Installation
+
+Install the package from npm:
+
+```sh
+npm install @tuist/struo
+```
+
+The package requires Node.js 18 or later and includes prebuilt native Struo
+libraries for supported platforms. Set `STRUO_LIBRARY_PATH` when you need to
+load a custom `libstruo` build.
+
+## Quick start
+
+Store a first blob in the default local cache and read it back:
 
 ```js
 const { Cache } = require("@tuist/struo");
@@ -22,52 +35,67 @@ async function main() {
 }
 ```
 
-## Installation
+In a browser, start from the [browser cache](#browser-cache) instead.
 
-Install the package from npm:
+### Open a cache
 
-```sh
-npm install @tuist/struo
-```
-
-The package includes prebuilt native Struo libraries for supported
-platforms. Set `STRUO_LIBRARY_PATH` when you need to load a custom
-`libstruo` build.
-
-## Node.js Cache
-
-`Cache` can open the default local cache, an explicit local root, or the
-effective provider for a workspace. The default follows the
-[X Desktop Group base-directory convention](https://specifications.freedesktop.org/basedir-spec/latest/):
-its cache root is `$XDG_CACHE_HOME/struo/cas` when `XDG_CACHE_HOME` is set, and
-`$HOME/.cache/struo/cas` otherwise.
-
-`version()` and `digest(bytes)` are synchronous. Cache storage operations
-return promises and must be awaited. When `bytes` is a string, the library
-encodes it using [Unicode Transformation Format, 8-bit](https://www.unicode.org/faq/utf_bom.html#UTF8)
-before hashing or storing it.
-
-| Application programming interface | Use |
+| API | Use |
 | --- | --- |
-| `new Cache()` | Opens the default local cache using the operating-system convention. |
+| `new Cache()` | Opens the [default local cache](/guide/sdk/#choose-a-cache). |
 | `new Cache({ localCacheRoot })` | Opens an isolated local cache at a caller-owned root. |
-| `new Cache({ workspaceRoot })` | Resolves the effective provider for a workspace. |
+| `new Cache({ workspaceRoot })` | Resolves the same effective provider as the command line for a workspace. |
 | `version()` | Synchronously returns the linked Struo version. |
+
+## Blobs
+
+Blobs are content-addressed byte payloads. Bytes can be a `Buffer`,
+`Uint8Array`, or string; strings are encoded as UTF-8 before hashing or
+storing. `digest()` is synchronous; storage methods return promises.
+
+| API | Use |
+| --- | --- |
 | `digest(bytes)` | Synchronously returns the content digest for bytes without writing them to the cache. |
-| `putBlob(bytes)` | Stores bytes and returns a promise for their content digest. |
+| `putBlob(bytes)` | Stores bytes and resolves to their content digest. |
 | `putFile(path)` | Stores a file without loading its complete contents into JavaScript memory. |
-| `getBlob(digest)` | Reads bytes for a digest and returns a promise. |
-| `getBlobToFile(digest, path)` | Writes a blob to a file and returns a promise for its byte count. |
-| `hasBlob(digest)` | Returns a promise for whether a blob exists. |
-| `putActionResult(result, actionDigest)` | Stores a cached result for an action digest and returns a promise. |
-| `getActionResult(actionDigest)` | Returns a promise for a cached result when one exists. |
-| `forgetAction(actionDigest)` | Removes one cached action result and returns a promise. Referenced blobs are left intact. |
-| `stats()` | Returns a promise for local cache statistics. |
+| `getBlob(digest)` | Resolves to the bytes for a digest as a `Buffer`. |
+| `getBlobToFile(digest, path)` | Writes a blob to a file and resolves to its byte count. |
+| `hasBlob(digest)` | Resolves to whether a blob exists. |
 
 Prefer `putFile` and `getBlobToFile` for logs, archives, compiler outputs, and
 other payloads whose size is not tightly bounded.
 
-## Browser Cache
+## Action keys and results
+
+`ActionKey` builds a synchronous, versioned identity from ordered, labeled
+inputs. Input order is significant and must be deterministic:
+
+```js
+const { ActionKey } = require("@tuist/struo");
+
+const source = await cache.putFile("inputs/source");
+const actionDigest = new ActionKey("example.compile")
+  .addBytes("tool", "compiler")
+  .addDigest("source", source)
+  .digest();
+```
+
+Store and read the result of an action you ran yourself. The SDK does not run
+commands:
+
+```js
+const stdout = await cache.putBlob("compiled");
+await cache.putActionResult({ exitCode: 0, stdout }, actionDigest);
+const cached = await cache.getActionResult(actionDigest);
+```
+
+| API | Use |
+| --- | --- |
+| `putActionResult(result, actionDigest)` | Stores a cached result for an action digest. |
+| `getActionResult(actionDigest)` | Resolves to a cached result, or `null` when none exists. |
+| `forgetAction(actionDigest)` | Removes one cached action result and resolves to whether one existed. Referenced blobs are left intact. |
+| `stats()` | Resolves to local cache statistics. |
+
+## Browser cache
 
 Import the browser entry point and await Wasm initialization before creating
 a cache or computing digests:
@@ -90,52 +118,48 @@ key.free();
 await cache.close();
 ```
 
-Browser-aware bundlers also select this entry point for `@tuist/struo`.
-The browser library uses the same Rust implementation of BLAKE3 digests and
-versioned action keys as the native library. IndexedDB stores the blob
-payloads and action results. Writing identical content reuses its digest and
-keeps one blob record, including when tabs write it concurrently.
+Browser-aware bundlers also select this entry point for `@tuist/struo`. The
+browser library computes the same BLAKE3 digests and versioned action keys as
+the native library and stores blobs and action results in IndexedDB.
 
 Serve the Wasm asset alongside its JavaScript module. `init()` fetches the
 asset relative to that module. If your bundler relocates it, pass
 `init({ module_or_path: wasmUrl })`. Your content security policy must allow
 Wasm compilation, for example with `script-src 'self' 'wasm-unsafe-eval'`.
 
-After initialization, `digest()` and action-key construction remain
-synchronous. Storage methods return promises that resolve after their
-IndexedDB transactions commit. `getBlob()` returns `Uint8Array` and verifies
-its content digest. A missing blob rejects with `StruoError`; a missing action
-returns `null`. As with the native local cache, action records may reference
-blobs that are not present, so check or retrieve their blobs before treating
-the record as a usable cache hit.
+After initialization, `digest()` and action-key construction are synchronous.
+Storage methods resolve after their IndexedDB transactions commit. `getBlob()`
+returns a `Uint8Array` and verifies its content digest. A missing blob rejects
+with `StruoError`; a missing action returns `null`. Action records may
+reference blobs that are not present, so check or retrieve their blobs before
+treating a record as a usable cache hit.
 
-The default database name is `struo`. Same-origin tabs share a cache when
-they use the same name. Separate names isolate demonstrations. `close()`
-releases this instance's connection and preserves its data for a later page
-load. `clear()` removes blobs and actions in that database, including data
-used by other tabs. `forgetAction()` removes only the action record.
+The default database name is `struo`. Same-origin tabs share a cache when they
+use the same name; separate names isolate demonstrations. `close()` releases
+this instance's connection and keeps its data. `clear()` removes blobs and
+actions in that database, including data used by other tabs. `forgetAction()`
+removes only the action record.
 
-Browser caches accept `databaseName` rather than `localCacheRoot` or
-`workspaceRoot`. They do not expose `putFile`, `getBlobToFile`, or native
-remote-provider configuration. Blob operations hold the complete payload in
-memory, so keep interactive examples small. Call `free()` when finished with
-an `ActionKey` to release its Wasm hash state.
+Browser caches differ from the Node.js cache:
 
-Browser statistics count unique blob records, uncompressed payload bytes,
-action records, and their UTF-8 JSON bytes. They exclude IndexedDB's storage
-overhead and differ from the native cache's compressed on-disk sizes.
-Browsers may evict data; quota and permission failures reject with
-`StruoError`. Keep another copy of data you cannot regenerate. Applications
-can request persistent storage through `navigator.storage.persist()`, but
-the browser decides whether to grant it.
+- They accept `databaseName` rather than `localCacheRoot` or `workspaceRoot`,
+  and do not expose `putFile`, `getBlobToFile`, or remote providers.
+- Blob operations hold the complete payload in memory, so keep payloads small.
+- Call `free()` when finished with an `ActionKey` to release its Wasm hash
+  state.
+- Statistics count unique blob records, uncompressed payload bytes, action
+  records, and their UTF-8 JSON bytes, excluding IndexedDB overhead.
+- Browsers may evict data; quota and permission failures reject with
+  `StruoError`. Keep another copy of data you cannot regenerate, and request
+  persistent storage with `navigator.storage.persist()` if needed.
 
-## Browser Execution
+## Browser execution
 
 The separate `@tuist/struo/browser/execution` entry point supports two dispatch
 paths: named operations in same-origin tabs and GitLab CI pipelines. Neither
 path runs arbitrary native commands inside the browser.
 
-### Across Tabs
+### Across tabs
 
 In a worker tab, install the operations your application permits:
 
@@ -187,26 +211,25 @@ compilation. Both sides must use the same database and `channelName` (default:
 not blob payloads. Messages have a 64 KiB limit.
 
 Workers reserve each task's declared `memoryBytes` against their own
-`memoryLimitBytes` before offering to execute it. One worker receives the
-client's claim; the others release their reservations. This is cooperative
-admission control, not a browser memory sandbox. Supply realistic estimates
-and use Web Workers for CPU-heavy handlers to avoid blocking a tab's UI.
-Workers announce released capacity so clients can rediscover unclaimed tasks
-until their deadline. Clients do not resubmit tasks that already have a worker.
+`memoryLimitBytes` before offering to execute it, and one worker receives the
+task. This is cooperative admission control, not a browser memory sandbox.
+Supply realistic estimates and use Web Workers for CPU-heavy handlers to avoid
+blocking a tab's UI.
 
 `execute()` accepts an `AbortSignal`. Cancellation asks the handler to stop;
-the worker retains its reservation until the handler settles. A timeout or
+the worker keeps its reservation until the handler settles. A timeout or
 closed executor means completion is unknown. The SDK does not retry claimed
-work or promise exactly-once effects after a tab crashes. Unsupported operations and unavailable
-workers time out. Keep workers open and expect browsers to throttle background
-tabs. Cache lookup and action-result storage remain explicit caller decisions.
+work or promise exactly-once effects after a tab crashes. Unsupported
+operations and unavailable workers time out. Keep worker tabs open and expect
+browsers to throttle background tabs. Cache lookup and action-result storage
+remain explicit caller decisions.
 
 All same-origin pages can access the channel and database. Use this only among
-trusted pages; a channel name does not authenticate a worker or isolate tenants.
-Handlers must validate their own operation-specific inputs and return an action
-result with blob digests.
+trusted pages; a channel name does not authenticate a worker or isolate
+tenants. Handlers must validate their own inputs and return an action result
+with blob digests.
 
-### OAuth2 Login
+### OAuth2 login
 
 Register a public (non-confidential) OAuth application with your provider and
 an exact same-origin callback URL. Do not put a client secret in a web page.
@@ -237,22 +260,19 @@ if (location.pathname === "/oauth/callback" && location.search) {
 }
 ```
 
-The client stores a single-use verifier and state in sessionStorage for up to
-ten minutes, checks the callback, then removes them. It strips the authorization
-response from the current page URL after validation. Tokens remain in memory,
-so a full page reload requires another login. Reuse the authenticated client
-within your application; do not navigate to another document after the callback
-and expect its tokens to persist. Refresh requests share one in-flight exchange.
-`auth.logout()` clears local authentication immediately. Await it to finish
-in-flight token exchanges and revoke both current tokens and any replacement
-tokens through the configured revocation endpoint. It rejects if revocation
-fails; local logout still applies.
+The client keeps a single-use verifier and state in sessionStorage for up to
+ten minutes, checks the callback, and strips the authorization response from
+the page URL. Tokens stay in memory, so a full page reload or navigation to
+another document requires another login. `auth.logout()` clears local
+authentication immediately; await it to revoke current and replacement tokens
+through the revocation endpoint. It rejects if revocation fails, but local
+logout still applies.
 
 Treat XSS protection as part of your authentication boundary. The SDK cannot
 protect tokens from compromised scripts on your origin. Use only trusted
-provider URLs and avoid logging tokens, callback URLs or pipeline variables.
+provider URLs and avoid logging tokens, callback URLs, or pipeline variables.
 
-### GitLab Pipelines
+### GitLab pipelines
 
 Configure a project with a CI job that performs the compilation and publishes
 its output as an artifact. The logged-in user needs permission to run pipelines
@@ -287,41 +307,27 @@ The job listing returns at most 100 jobs.
 
 `dispatch()` returns a pipeline without waiting. Use `get()` and `cancel()`
 to manage it yourself, or `execute()` to poll until success, failure,
-cancellation or skipping. On a wait error, timeout or abort, `execute()` attempts
-to cancel the pipeline it created. Check GitLab if cancellation fails. A lost
-submission response may mean a pipeline exists even though the SDK reports an
-error; do not retry without checking the project's pipelines.
-
-Request cancellation and execution deadlines also apply while waiting for
-authentication. Aborting a request stops that wait without cancelling a shared
-token refresh that other callers may need.
+cancellation, or skipping. On a wait error, timeout, or abort, `execute()`
+attempts to cancel the pipeline it created; check GitLab if cancellation
+fails. A lost submission response may mean a pipeline exists even though the
+SDK reports an error, so check the project's pipelines before retrying.
+Cancellation and deadlines also apply while waiting for authentication.
 
 This adapter passes refs and variables to an existing CI configuration. It
 does not transfer IndexedDB inputs, provision runners, or implement the native
 remote-execution protocol. Pipeline refs can move, so the SDK does not cache
-pipeline execution as a deterministic Struo action. Include compiler versions
-and immutable input identities when building action keys in your application.
+pipeline execution as a Struo action. Include compiler versions and immutable
+input identities when building action keys in your application.
 
-## Action Keys
+## Errors and types
 
-`ActionKey` builds a synchronous, versioned identity from ordered, labeled
-inputs:
+Failures reject with `StruoError`, exported from both entry points. Invalid
+arguments, such as a non-string path or conflicting cache options, throw
+`TypeError`. A missing action result resolves to `null`; a remote service that
+cannot answer rejects instead of reporting a miss. See
+[misses, failures, and integrity](/guide/sdk/#misses-failures-and-integrity).
 
-```js
-const { ActionKey } = require("@tuist/struo");
-
-const source = await cache.putFile("inputs/source");
-const actionDigest = new ActionKey("example.compile")
-  .addBytes("tool", "compiler")
-  .addDigest("source", source)
-  .digest();
-```
-
-Input order is significant and must be deterministic.
-
-## Types
-
-Action results use JavaScript-friendly camel case:
+Action results use camel case:
 
 ```js
 {
@@ -332,5 +338,14 @@ Action results use JavaScript-friendly camel case:
 }
 ```
 
-`stats()` returns `blobCount`, `blobBytes`, `actionCount`, and
-`actionBytes`.
+`stats()` resolves to `blobCount`, `blobBytes`, `actionCount`, and
+`actionBytes`. TypeScript declarations ship with the package.
+
+## Next steps
+
+- [SDK overview](/guide/sdk/): understand cache selection, retries, and
+  transfer budgets shared by every SDK.
+- [Infrastructure](/guide/infrastructure/): configure the remote cache that a
+  workspace-bound Node.js client resolves.
+- [Rust SDK](/guide/sdk/rust): see the native API that computes the same
+  digests and action keys.

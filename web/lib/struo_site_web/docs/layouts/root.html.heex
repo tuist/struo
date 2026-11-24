@@ -22,6 +22,12 @@
     <% description = assigns[:meta_description] || "Struo documentation." %>
     <meta name="description" content={description} />
     <link :if={assigns[:canonical_url]} rel="canonical" href={@canonical_url} />
+    <link
+      :if={assigns[:markdown_url]}
+      rel="alternate"
+      type="text/markdown"
+      href={@markdown_url}
+    />
     <meta :if={assigns[:not_found]} name="robots" content="noindex" />
     <meta name="author" content="Tuist" />
     <script type="application/ld+json">

@@ -1,22 +1,17 @@
-# Configurations
+# Build Configurations
 
-A target's behavior can vary by configuration: which platform it targets,
-which dependencies it pulls in, or which build mode it uses. Struo keeps the
-declared graph static while letting its configured projection change between
-invocations. The same target identifier can resolve to different dependencies
-and actions without editing the manifest.
+Build the same Struo target for different platforms, architectures, or build
+modes with workspace defaults, `--config` overrides, and `select`, each with
+its own cached outputs.
 
-Configuration plays two roles. It selects which branch of a `select` value a
-target uses, and it feeds target-kind analysis with the platform and tokens
-the target runs against. The effective configuration is also part of a
-target's identity, so two invocations with different configurations never
-share outputs or receipts: each lands in its own scoped output directory and
-its own action-cache partition.
+The manifest stays the same; the configuration decides which `select` branch
+a target uses and which platform and tokens its target kind builds for. The
+effective configuration is part of a target's identity, so two configurations
+never share outputs or cache entries.
 
 ## Declare workspace defaults
 
-The workspace root manifest fixes the default configuration every invocation
-starts from:
+The root `struo.toml` sets the configuration every invocation starts from:
 
 ```toml
 [workspace.configuration]
@@ -26,40 +21,44 @@ tokens = ["release"]
 ```
 
 Struo normalizes common names (`darwin` to `macos`, `arm64` to `aarch64`,
-`amd64` to `x86_64`) and derives an ordered set of selection tokens from the
-operating system and architecture, then appends the extra `tokens` and
-`default`. Inspect the resolved set with `struo query workspace`. The
-[manifest reference](/reference/manifest) describes the table and
+`amd64` to `x86_64`), derives selection tokens from the operating system and
+architecture, then appends the extra `tokens` and `default`. Inspect the
+resolved set:
+
+```sh
+struo query workspace
+```
+
+The [manifest reference](/reference/manifest) describes the table and
 normalization in full.
 
 ## Override per invocation
 
 Pass `--config KEY=VALUE` to `struo build`, `struo lint`, `struo run`, or
-`struo test` to override the workspace defaults for a single invocation.
-Recognized keys are `os`, `arch`, and `token`:
+`struo test` to change the configuration for one invocation. Recognized keys
+are `os`, `arch`, and `token`:
 
 ```sh
 struo build apps/Support --config os=ios --config arch=arm64
 struo build apps/Support --config token=simulator
 ```
 
-`os` and `arch` replace the workspace values; each `token` is appended to the
-selection tokens. When an override changes the operating system or
-architecture, Struo re-derives the platform tokens for the new target platform
-so stale tokens do not survive. Overrides apply on top of the workspace
-defaults, and only the resulting values affect target identity, not the flags
-that produced them.
+`os` and `arch` replace the workspace defaults, and each `token` is appended to
+the selection tokens. When an override changes the operating system or
+architecture, Struo derives the platform tokens again so stale tokens do not
+survive. Only the resulting values affect target identity, not the flags that
+produced them.
 
-Because the effective configuration scopes outputs and receipts, building the
-same target under two configurations from one checkout keeps both results:
+Building the same target under two configurations from one checkout keeps
+both results:
 
 ```sh
 struo build apps/Support                         # default configuration
 struo build apps/Support --config token=release  # separate, scoped outputs
 ```
 
-A later invocation with the same overrides reuses the scoped receipt and
-reports a cache hit, while an invocation with no overrides is unaffected.
+Repeating an invocation with the same overrides reports a cache hit, and an
+invocation without overrides is unaffected.
 
 ## Choose values with select
 
@@ -73,7 +72,24 @@ linux = ["./linux_support"]
 default = ["./portable_support"]
 ```
 
-When several branches could match, the most specific one wins, and `default`
-is the fallback. Each ecosystem adds its own tokens and restrictions; see the
-"Choose values by configuration" section of the relevant ecosystem guide, such
-as [Apple](/guide/graph/apple).
+An attribute can do the same inline:
+
+```toml
+[target.attrs]
+sdk_frameworks = { select = { ios = ["UIKit"], macos = ["AppKit"] } }
+```
+
+When several branches match, the most specific one wins, and `default` is the
+fallback. `struo query schema <kind>` shows which attributes are configurable
+and any extra tokens the ecosystem understands. Each ecosystem guide, such as
+[Apple](/guide/graph/apple), describes its tokens and restrictions in a
+"Choose values by configuration" section.
+
+## Next steps
+
+- [Typed Build Graph](/guide/graph/): declare targets and dependencies to
+  configure.
+- [Manifest reference](/reference/manifest): see every
+  `[workspace.configuration]` field.
+- [Apple](/guide/graph/apple): choose values for iOS, macOS, simulators, and
+  devices.

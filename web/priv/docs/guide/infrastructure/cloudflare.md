@@ -1,10 +1,12 @@
 # Cloudflare Sandbox Containers
 
-Struo runs commands in [Cloudflare Sandbox Containers](https://developers.cloudflare.com/sandbox/)
-through an authenticated Worker bridge that you operate in your account.
+Run Struo actions remotely in [Cloudflare Sandbox Containers](https://developers.cloudflare.com/sandbox/)
+through an authenticated Worker bridge that you deploy in your own account.
 
 **Capabilities:** remote execution through a self-deployed bridge. Configure
 shared caching separately, including when using Cloudflare R2 object storage.
+Regression tests cover the bridge and adapter; live account behavior is
+unverified.
 
 ## Prerequisites
 
@@ -14,16 +16,18 @@ infrastructure. An administrator must approve the deployment and its costs.
 
 ### Deploy the bridge
 
-Use Struo's Cloudflare sandbox bridge project. Install its
-locked dependencies with `npm ci`, run `npm test` and `npm run check`, then
-review the Wrangler configuration. The check only bundles the Worker with a
-dry-run. Choose a Worker name for your account before deployment.
+Use Struo's Cloudflare sandbox bridge project. Install its locked dependencies
+with `npm ci`, run `npm test` and `npm run check`, then review the Wrangler
+configuration. The check only bundles the Worker with a dry-run. Choose a Worker
+name for your account before deployment.
 
 Set the Worker secret `BRIDGE_TOKEN` with `npx wrangler secret put BRIDGE_TOKEN`.
 Use a random secret of at least 32 bytes. After approving the paid
 infrastructure, deploy with `npx wrangler deploy`. This creates the Worker and
 its SQLite-backed Durable Object binding with the `durable_object` container
 scheduling policy. Keep the token outside manifests and action environments.
+
+### Choose an image
 
 The default managed image includes Node.js 24. Custom images must provide
 `sleep`, `mkdir`, `tar`, `tee`, and `cat`. Register custom images in Wrangler's
@@ -35,6 +39,8 @@ does not promise immutable contents.
 
 ## Configuration
 
+Bind the image in the repository root `struo.toml`:
+
 ```toml
 [infrastructures.remote_tests]
 kind = "cloudflare"
@@ -44,59 +50,86 @@ image = "cloudflare/debian-trixie"
 provider = "remote_tests"
 ```
 
+### Authentication
+
 Set `STRUO_CLOUDFLARE_BRIDGE_URL` to the deployed Worker's HTTPS origin and
 `STRUO_CLOUDFLARE_BRIDGE_TOKEN` to the same value as `BRIDGE_TOKEN`. Do not use
-a Cloudflare account API token as the bridge credential. The CLI authenticates
+a Cloudflare account API token as the bridge credential. Struo authenticates
 each bridge call and refuses redirects. HTTP is accepted only on loopback for
-local development.
+local development. The bridge token never reaches the command environment.
 
 ## Usage
 
-Run `struo exec --remote -- node --version`, or select the named provider with
-`struo exec --remote --compute remote_tests -- node --version`. Annotated
-scripts can select `# struo remote "remote_tests"`.
+Run a literal command on the provider:
 
-Declare dependency directories such as `node_modules` as inputs to the action
-that consumes them. Struo transfers those directories with their executable
-modes and portable symlinks. Dependencies containing native binaries must match
-the guest's Linux architecture and ABI. See
-[Remote Execution](/guide/infrastructure/remote-execution) for dependency and
-test actions.
+```sh
+struo exec --remote --compute remote_tests -- node --version
+```
+
+Omit `--compute remote_tests` to use the workspace's default execution provider.
+
+### Run an annotated test script
+
+Save this script as `scripts/test.sh`:
+
+```sh
+#!/bin/sh
+# struo remote "remote_tests"
+# struo cwd ".."
+# struo input "../node_modules"
+# struo input "../package.json"
+# struo input "../tests"
+# struo output "../reports"
+
+node node_modules/vitest/vitest.mjs run \
+  --reporter=json --outputFile=reports/vitest.json
+```
+
+Run it:
+
+```sh
+struo exec --script -- sh scripts/test.sh
+```
+
+Declare any additional source, configuration, or setup files your tests read.
+Struo transfers declared directories such as `node_modules` with their
+executable modes and portable symbolic links. Native dependencies must match
+the guest's Linux architecture and ABI. To produce `node_modules` in a separate
+cacheable action, see [Remote Execution](/guide/infrastructure/remote-execution).
+
+## Verify the deployment
+
+The bundled tests and Wrangler's dry-run do not establish live account
+availability, container startup, scheduling, billing or alarm delivery. Before
+production use, run an action against the deployed bridge that covers a
+declared dependency directory, distinct stdout and stderr, a nonzero exit,
+output retrieval and cancellation.
 
 ## Limits and cleanup
 
-Struo transfers only declared inputs and restores declared outputs after an
-accepted exit. It preserves separate binary stdout and stderr and validates
-output paths before installing files in your workspace.
+- Stdout and stderr are preserved separately as binary, with one shared byte
+  limit. Exceeding it destroys the container.
+- One action deadline covers provisioning, input staging, execution and output
+  retrieval. Explicit timeouts must be shorter than one hour; actions without
+  one use a one-hour deadline.
+- The bridge requests 10,000 MB of guest disk and at least 256 MiB of memory.
+  Cloudflare platform and plan limits still apply and may reject unavailable
+  instance sizes.
+- The container has outbound Internet access. Network denial and
+  account/project execution scoping are rejected.
+- Each deployment trusts one bridge token. Use separate deployments for
+  separate tenants.
 
-Struo spends one action deadline across provisioning, input staging, execution
-and output retrieval. The bridge expires the container after one hour, even if
-the CLI disappears. Explicit timeouts must be shorter than one hour; actions
-without one use a one-hour client deadline. Cleanup uses separate bounded
-requests and retains the resource lease until the cleanup attempt finishes.
-Failed or uncertain cleanup remains in the workspace ownership journal for
-later reconciliation. Durable Object alarms retry destruction, including after
-a Worker restart. No creation or command request is retried.
+The bridge expires each container after one hour, even if the CLI disappears,
+and Durable Object alarms retry destruction after a Worker restart. Failed or
+uncertain cleanup stays recorded in the workspace's `.struo` runtime state for
+a later run. Struo never retries a creation or command request.
 
-The bridge streams transfers and writes captures to guest disk, with one shared
-stdout/stderr byte limit. It destroys the whole container on capture overflow
-or an internal transfer failure. Upload chunks avoid the single-request body
-limit; platform disk, CPU, memory and plan limits still apply. This bridge
-requests 10,000 MB of guest disk and rounds requested memory up to at least
-256 MiB. Cloudflare may reject unavailable instance sizes.
+## Next steps
 
-This provider permits outbound Internet access and does not implement network
-denial or custom account/project execution scoping. Struo rejects those
-requirements. Each deployment trusts one bridge token: use separate deployments
-for separate tenants. The bridge token stays in the Worker and CLI, never in
-the command environment.
-
-### Deployment verification
-
-The bundled regression tests exercise the bridge with container doubles and a
-local process-backed dependency/output roundtrip, and the Rust adapter with
-HTTP fixtures. Wrangler's dry-run validates bundling
-and configuration. These checks do not establish live account availability,
-container startup, scheduling, billing or alarm delivery. Validate a deployed
-bridge with a declared dependency directory, distinct stdout/stderr, a nonzero
-exit, output retrieval and cancellation before using it for production work.
+- [Remote Execution](/guide/infrastructure/remote-execution): split dependency
+  installation and tests into separate cacheable actions.
+- [Object Storage Cache](/guide/infrastructure/object-storage): share results
+  through a Cloudflare R2 bucket.
+- [Execution provider contract](/reference/infrastructure/execution): see what
+  every execution provider guarantees.

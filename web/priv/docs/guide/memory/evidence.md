@@ -1,17 +1,15 @@
----
-next: false
----
+# Query Action Evidence
 
-# Evidence
+Query Struo's durable record of each action run: status, cache hit or miss,
+action and input digests, and which input changed between two runs.
 
-Evidence is a durable record of an action outcome. It complements the cache:
-the cache stores reusable results, while evidence describes what happened when
-Struo requested a result.
+Evidence complements the cache: the cache stores reusable results, while
+evidence describes what happened when Struo requested a result.
 
-## Run And Query An Action
+## Run and query an action
 
 This walkthrough uses `scripts/greet.sh` from the
-[Scripted Workflows guide](/guide/scripted/). Give it a new input value so the
+[scripted workflow guide](/guide/scripted/). Give it a new input value so the
 first run computes a result:
 
 ```sh
@@ -53,7 +51,7 @@ The latest record reports a cache miss with different action and input digests.
 The previous record remains available as history, but its digests describe the
 earlier input state.
 
-## Filter Evidence By Subject
+## Filter evidence by subject
 
 Use [`struo query evidence`](/reference/cli/query/evidence) to list all records
 with human-readable output:
@@ -70,14 +68,13 @@ struo query evidence cli
 struo query evidence cli:test
 ```
 
-A literal `struo exec` command uses its action digest as its subject. Use the
-structured output when you need to select or compare those command records.
+Use the structured output to select or compare literal `struo exec` records.
 
 Tools can request the same record shape through
 [`struo_query_evidence`](/reference/mcp/tools#struo_query_evidence) in the
 [Model Context Protocol](https://modelcontextprotocol.io/) catalog.
 
-## Read A Record
+## Read a record
 
 An action evidence record contains:
 
@@ -99,17 +96,27 @@ Compare digests before applying an older result to current work. Matching input
 and action digests show that two records describe the same action state;
 different digests show that some relevant part of that state changed.
 
-Input fingerprint components make that change explainable. Components contain a
-category, label, and digest. They never include raw command arguments or
-environment values. Compare components with the same category and label across
-two records to identify the source, dependency, toolchain, or action property
-that changed. Declared environment variables also have individual components
-labeled `variable:<name>`, so you can identify which variable changed without
-exposing its value. These extra components do not change action cache keys.
-Literal commands and older evidence records may omit the optional fingerprint.
+### Find what changed
 
-## Next
+Input fingerprint components explain a change. Each has a category, label, and
+digest, and never includes raw command arguments or environment values. Compare
+components with the same category and label across two records to find the
+source, dependency, toolchain, or action property that changed. Declared
+environment variables have individual components labeled `variable:<name>`, so
+you can see which variable changed without exposing its value.
 
-Use the [Memory reference](/reference/memory/) for the storage contract. Continue
-to the [Graph guide](/guide/graph/) when a scripted workflow needs stable target
-subjects and named capabilities such as build, run, or test.
+## Limitations
+
+- Evidence is historical. A passing record does not prove that the current
+  inputs are unchanged; rerun the action for a current result.
+- Literal commands and older records may omit the input fingerprint.
+- A literal `struo exec` command uses its action digest as its subject, so it
+  cannot be filtered by target name.
+
+## Next steps
+
+- [Memory reference](/reference/memory/): the record and storage contract.
+- [Typed Graph guide](/guide/graph/): give scripted work stable target subjects
+  and named capabilities such as build, run, or test.
+- [Coding harnesses](/guide/harness#use-project-memory-safely): how agents
+  should use evidence.

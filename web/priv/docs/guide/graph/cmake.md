@@ -1,23 +1,14 @@
----
-prev: false
-next: false
----
+# CMake Projects
 
-# CMake
+Put Struo in front of an existing CMake build: declare its products, link them into other targets, and query the configured CMake target graph.
 
-Struo can sit in front of an existing CMake project without replacing CMake.
-The bridge gives the repository a typed build boundary and a
-queryable view of the configured CMake graph.
+Struo does not replace CMake. Two target kinds cover the two halves of the
+work:
 
-The two parts are intentionally separate:
-
-- `cmake_project` runs configure and build as one Struo action, then stages only
-  declared products.
-- `cmake_workspace` imports a checked snapshot as logical `cmake_target`
-  nodes for graph queries.
-
-This is the same migration direction as annotated scripts, with an explicit
-product contract and structural graph data added around the existing build.
+- `cmake_project` runs CMake configure and build as one action, then stages the
+  products you declare.
+- `cmake_workspace` imports a checked snapshot of the configured CMake graph as
+  `cmake_target` nodes you can query.
 
 ## Prerequisites
 
@@ -30,10 +21,10 @@ python3 --version
 cc --version
 ```
 
-The repository toolchain pins CMake and Ninja. Projects can set explicit
-`cmake` and `build_program` paths when they use different installations.
+Set the `cmake` and `build_program` attributes when the project should use
+specific installations.
 
-## Try the Starter
+## Try the starter
 
 Materialize the complete example:
 
@@ -55,7 +46,7 @@ struo query schema cmake_target
 ```
 
 The target list includes `CMakeProject`, `CMakeGraph`, and the imported
-`cmake-greeting` logical target.
+`cmake-greeting` target.
 
 Build the declared archive:
 
@@ -63,14 +54,13 @@ Build the declared archive:
 struo build CMakeProject
 ```
 
-The stable product is written under
-`.struo/out/CMakeProject/products/`. Running the command again cleans and
-rebuilds the native project. Only staging already-built product bytes can
-reuse a content-addressed cache entry.
+The product is written under `.struo/out/CMakeProject/products/`.
 
-## Declare the Build Boundary
+## Declare targets
 
-A minimal target names every input and product visible to Struo:
+### Declare the build boundary
+
+A `cmake_project` target names every input and product visible to Struo:
 
 ```toml
 [[target]]
@@ -93,16 +83,8 @@ hdrs = ["include/greeting.h"]
 includes = ["include"]
 ```
 
-Configure and build execute together because the generated CMake build tree is
-stateful. The action does not cache that whole tree. Only files listed in
-`products` are outputs and are staged into the stable Struo output directory.
-Configure and build bypass caching because CMake can select compilers,
-external toolchain files, SDKs, and configuration that Struo cannot safely
-fingerprint. The tradeoff is a clean native rebuild on every invocation,
-rather than potentially reusing an executable from an older toolchain.
-
-Product paths are relative to the generated build directory. The portable
-tokens are:
+Only files listed in `products` become outputs. Product paths are relative to
+the generated build directory and can use these portable tokens:
 
 | Token | macOS and Linux | Windows |
 | --- | --- | --- |
@@ -112,21 +94,19 @@ tokens are:
 | `{shared_suffix}` | `.dylib` on macOS, `.so` on Linux | `.dll` |
 | `{exe_suffix}` | empty | `.exe` |
 
-Declare multiple products when one native target produces more than one file.
-The first product is the default output. Static and dynamic libraries also
-populate the shared native link provider so compatible Struo targets can
-consume them.
+Declare several products when one CMake target produces more than one file.
+The first product is the default output.
 
-## Import the Logical Graph
+Configure and build are not cached, because CMake can pick up compilers,
+toolchain files, and SDKs that Struo cannot fingerprint. Every
+`struo build CMakeProject` cleans and rebuilds the native project.
 
-CMake's
-[file-based application programming interface](https://cmake.org/cmake/help/latest/manual/cmake-file-api.7.html)
-is the configured source of truth. The starter refresh script asks CMake for
-the codemodel, cache, input files, and toolchains, then normalizes them into a
-checked [JavaScript Object Notation](https://www.json.org/json-en.html)
-snapshot.
+### Import the logical graph
 
-Declare the imported workspace beside the build target:
+The starter refresh script reads CMake's
+[file-based API](https://cmake.org/cmake/help/latest/manual/cmake-file-api.7.html)
+and writes a checked JSON snapshot. Declare the imported workspace beside the
+build target:
 
 ```toml
 [[target]]
@@ -151,10 +131,9 @@ build_type = "Release"
 exports = ["greeting"]
 ```
 
-`exports` accepts native CMake names or generated Struo names. The resolver
-imports each export plus its transitive dependencies. Every imported target
-records its native name, configured type, dependencies, sources, artifacts,
-include directories, definitions, and snapshot fingerprint.
+`exports` accepts native CMake names or generated Struo names. Struo imports
+each export plus its transitive dependencies, with their type, sources,
+artifacts, include directories, and definitions.
 
 Query the imported structure:
 
@@ -164,12 +143,12 @@ struo query target cmake-greeting
 struo query 'MATCH (root:Target {id: "cmake-greeting"})-[:DEPENDS_ON*]->(dep:Target) RETURN dep.id, dep.kind'
 ```
 
-The logical targets are structural metadata. Build `CMakeProject`, not an
+Imported targets describe structure only. Build `CMakeProject`, not an
 individual `cmake_target`.
 
-## Refresh the Snapshot
+### Refresh the snapshot
 
-Run the annotated script whenever CMake configuration inputs or selection
+Run the annotated script whenever CMake configuration inputs or selections
 change:
 
 ```sh
@@ -184,21 +163,19 @@ struo query targets --kind cmake_target
 struo build CMakeProject
 ```
 
-The snapshot binds the exact text of every workspace configuration input
-reported by CMake, plus `source_dir`, `generator`, and `build_type`. Graph
-loading rejects a stale snapshot before analysis. This makes refresh explicit
-and prevents an old logical graph from silently describing a changed project.
+The snapshot records the workspace CMake configuration files plus
+`source_dir`, `generator`, and `build_type`. Graph loading rejects a stale
+snapshot, so an old graph never silently describes a changed project. In
+continuous integration, run the refresh script and fail the job when it changes
+the checked snapshot.
 
-For continuous integration, run the refresh script on the selected refresh
-host and toolchain, then fail when it changes the checked snapshot.
-
-## Connect Native Consumers
+## Manage dependencies
 
 `cmake_project` exposes public headers, include directories, definitions,
-linker options, static libraries, dynamic libraries, and data through the same
-native provider shape used by Struo's C and C++ targets.
-
-Declare these fields explicitly:
+linker options, static libraries, dynamic libraries, and data in the same shape
+as [`c_library`](/guide/graph/c), so other native targets can link its
+products. Declare these fields explicitly; Struo does not infer them from the
+snapshot:
 
 ```toml
 [target.attrs]
@@ -209,34 +186,40 @@ defines = ["ENGINE_PUBLIC=1"]
 linkopts = ["-pthread"]
 ```
 
-This metadata is not inferred from the snapshot yet. The build contract stays
-reviewable and does not depend on host-specific configured paths.
+## Limitations
 
-## Current Limitations
-
-- Configure and build form one uncached action. Struo does not schedule each
-  generated compile and link command independently.
-- Imported targets are query-only and cannot be built directly.
+- Configure and build form one uncached action that cleans the build directory
+  each time. Struo does not schedule individual compile and link commands, and
+  CMake incremental state is not reused.
+- Imported `cmake_target` nodes are query-only and cannot be built.
 - Exact product paths must be declared. Multi-configuration generators may
   place products under configuration-specific directories.
-- The snapshot records configured CTest tests for inspection. Declare a
-  separate [`cmake_test`](/reference/prelude/cmake_test) target to run a native
-  suite through `struo test`, with suite-level normalized results.
-- Source and header patterns still belong on `cmake_project`; snapshot
-  provenance covers workspace CMake configuration inputs, not every
-  compilation input or configuration file outside the workspace.
-- The generated build directory is cleaned on every build, so CMake
-  incremental state is not reused.
+- The snapshot lists configured CTest tests for inspection only. Declare a
+  [`cmake_test`](/reference/prelude/cmake_test) target to run a suite through
+  `struo test`; results are reported per suite.
+- Source and header patterns still belong on `cmake_project`. The snapshot
+  covers workspace CMake configuration files, not every compilation input or
+  configuration file outside the workspace.
 
-Use an annotated script when the build does not yet have stable products.
-Adopt `cmake_project` when those products are known, then add
-`cmake_workspace` when agents and humans benefit from target-level queries.
+If the build does not have stable products yet, start with an
+[annotated script](/guide/scripted/) and move to `cmake_project` once they are
+known.
 
-## Target References
+## Target kinds
 
-- [`cmake_project`](/reference/prelude/cmake_project) documents the executable
-  build boundary and native provider.
-- [`cmake_workspace`](/reference/prelude/cmake_workspace) documents snapshot
-  validation and graph expansion.
-- [`cmake_target`](/reference/prelude/cmake_target) documents imported logical
-  target metadata.
+- [`cmake_project`](/reference/prelude/cmake_project): the build boundary and
+  native link outputs.
+- [`cmake_workspace`](/reference/prelude/cmake_workspace): snapshot validation
+  and graph import.
+- [`cmake_target`](/reference/prelude/cmake_target): imported target metadata.
+- [`cmake_test`](/reference/prelude/cmake_test): run CTest or native test
+  targets.
+
+## Next steps
+
+- [C and C++](/guide/graph/c): declare small native libraries directly in
+  Struo.
+- [Testing and scheduling](/guide/graph/testing): run CMake suites with
+  `struo test`.
+- [Typed build graph](/guide/graph/#start-from-a-native-project): see how
+  native projects fit into the Struo graph.

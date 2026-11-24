@@ -1,8 +1,10 @@
 # Memory Reference
 
-Memory is project-local runtime state. It belongs to the workspace that
-produced it and is safe to remove when you want Struo to forget local
-history.
+Struo memory is project-local runtime state, such as the evidence database of
+what ran and its cache decisions, stored under `.struo/` in the workspace.
+
+It belongs to the workspace that produced it and is safe to remove when you
+want Struo to forget local history.
 
 ## Storage
 

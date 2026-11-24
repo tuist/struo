@@ -1,59 +1,58 @@
----
-prev: false
-next: false
----
+# Container Images
 
-# Container images
+Build container images with Struo from an existing Dockerfile or from native executables, cache each instruction, and load or publish the result.
 
-Build an existing Dockerfile with `dockerfile_image`. Struo translates its
-instructions into individual actions, each consuming and producing an image
-snapshot. Cross-stage copies become explicit dependencies.
-[BuildKit](https://docs.docker.com/build/buildkit/) executes the individual
-instructions, including shell commands and package installation. A Dockerfile
-that uses syntax Struo cannot translate, such as heredocs, `ONBUILD`, or a
-`# syntax=` frontend, builds as a single whole-file BuildKit action instead.
-You do not have to choose.
+Struo supports two ways to build an image, and they combine:
 
-To package a native executable built by Struo without writing a Dockerfile, use
-the `oci_layer` and `oci_image` target kinds, described below. Use
-`dockerfile_image` when you already have a Dockerfile or need a distribution's
-package manager. The two combine: a Dockerfile can use native executables and
-digest-pinned images as build contexts, and a native image can extend a base
-image.
+- `dockerfile_image` builds an existing Dockerfile. Struo discovers it without
+  a manifest, runs each instruction as a separate cached action through
+  [BuildKit](https://docs.docker.com/build/buildkit/), and falls back to one
+  whole-file BuildKit build for syntax it cannot split.
+- `oci_layer` and `oci_image` package executables built by Struo into an image
+  without a Dockerfile or Docker.
 
-## Build an existing Dockerfile
+## Prerequisites
+
+- `dockerfile_image` needs Docker with Buildx, installed and running.
+- `oci_pull` and `oci_push` need [`crane`](https://github.com/google/go-containerregistry/tree/main/cmd/crane),
+  not Docker. Install it with `mise use crane`.
+- `oci_load` needs `docker` or `podman`.
+- `oci_layer`, `oci_image`, `oci_index`, and `oci_import` need no container
+  tools.
+
+## Start from an existing project
+
+### Build an existing Dockerfile
 
 Struo discovers a target named `image` in each directory containing a
-`Dockerfile`. The Dockerfile and its neighboring files provide the build recipe
-and context. With Docker and Buildx installed and running, build from the
-directory containing the `Dockerfile`:
+`Dockerfile`. The Dockerfile's directory is the build context, including the
+files referenced by `COPY`. From the directory containing the `Dockerfile`:
 
 ```sh
 struo build image
 ```
 
-The Dockerfile's directory is the build context, including the files referenced
-by `COPY`. From a parent workspace, use the relative package path. For example,
-if the file is `server/Dockerfile`, run:
+From a parent workspace, use the relative package path. For example, if the
+file is `server/Dockerfile`, run:
 
 ```sh
 struo build server/image
 ```
 
-`struo query targets` lists the discovered target names. Pass one of those names
-to `struo build`; a Dockerfile image is not selected by a bare `struo build`.
-Struo uses the current Buildx builder when it supports image-layout exports. If
-Docker's built-in builder is the implicit default, Struo provisions and reuses a
-dedicated container builder for the current Docker endpoint. This leaves your
+`struo query targets` lists the discovered target names. A bare `struo build`
+does not select Dockerfile images; pass the target name.
+
+Struo uses the current Buildx builder when it supports image-layout exports.
+If Docker's built-in builder is the implicit default, Struo creates and reuses
+a dedicated container builder for the current Docker endpoint, leaving your
 selected builder unchanged. Set `BUILDX_BUILDER` to choose an existing
 container or remote builder.
 
-## Configure an image target
+### Configure an image target
 
-The discovered target uses the conventional `Dockerfile` and its directory as
-the context. Add `struo.toml` only when you need a different Dockerfile name,
-context, platform, tag, or explicit Struo action caching policy. Both paths are
-relative to the package that contains the target:
+Add `struo.toml` only when you need a different Dockerfile name, context,
+platform, tag, or caching policy. Both paths are relative to the package that
+contains the target:
 
 ```toml
 [[target]]
@@ -76,158 +75,86 @@ Set `format = "oci"` for an [Open Container Initiative image archive](https://gi
 Set `target` to export an intermediate Dockerfile stage instead of the final
 image. Build arguments belong in `build_args`; do not put credentials there.
 
-## Cache individual instructions
-
-Enable `cacheable = true` with `pull = false` and an explicit `platform` when
-you accept the cache contract for the instruction's remote inputs. Every base
-image of a built stage must be pinned by digest (`name@sha256:...`); the build
-fails otherwise, because a moving tag would keep serving a stale image from
-the cache. A changed
-source copied late in the recipe does not invalidate earlier instructions.
-Struo restores intermediate snapshots using its normal action cache. Literal
-copy sources are tracked individually; wildcard sources, variable sources,
-and context bind mounts conservatively track the full declared context.
-
-Arguments retain their stage scope, and image snapshots carry environment,
-working directory, and runtime configuration. Only stages needed for the
-selected image are built. The final archive is exported by a separate action.
-Intermediate snapshots preserve filesystem timestamps for tools that use them
-to decide whether to regenerate files. BuildKit does not rewrite layers it
-imports from a snapshot, so files inside the final archive keep the timestamps
-from when their instruction ran. `source_date_epoch` still fixes the image
-creation time and history. Set `reproducible_layers = true` when you need layer
-bytes that are identical across independent rebuilds: each instruction then
-rewrites the timestamps of its own layer to `source_date_epoch`, so later
-instructions see normalized timestamps, which can change what timestamp-driven
-tools such as `make` decide to rebuild. A cached result is stable until its
-inputs change.
-Mutable cache mounts remain on the BuildKit worker; snapshots contain the
-resulting image filesystem, not those mount contents.
-
-Files keep all of their permission bits, including setuid, setgid, and sticky,
-when staged for a build step, and changing any of them invalidates the step.
-The directories above a staged file keep their modes too. Changing only a
-directory's mode does not invalidate a cached step, because a directory's mode
-is not part of the digest of the files inside it; change a file or set the mode
-in the Dockerfile with `COPY --chmod` or `RUN chmod` to force a rebuild.
-
-Copy sources that are symbolic links also track their destinations, and empty
-directories in the context are kept. A base image can store `ONBUILD` triggers
-that run in its `FROM` step and need the whole context. Struo asks the local
-Docker engine, or the registry, whether a base declares any, and builds the
-Dockerfile as one whole-file action when it does. If neither can be reached,
-Struo cannot know; use `execution_mode = "buildkit"` for such a base.
-
-## Review inputs that can change
+### Review inputs that can change
 
 ```sh
 struo lint server_image
 ```
 
-Input checks report warnings with instruction locations and suggested repairs
-for unpinned base images and `# syntax=` frontends, mutable package
-repositories, downloaded pipelines, authentication mounts, and `COPY` sources
-that are missing from the build context (often a sign that the Dockerfile
-expects a parent directory as its context) whose contents do not participate in cache keys.
-Agents can inspect the findings through the existing lint query surface.
-The checks are advisory and do not alter cache eligibility. A repository
-snapshot configured in a base image, for example, can make a package warning
-a false positive. A clean report is not proof of reproducibility.
+Lint warns, with the instruction location and a suggested repair, about inputs
+that can change without changing the cache key: unpinned base images and
+`# syntax=` frontends, mutable package repositories, downloaded pipelines,
+authentication mounts, and `COPY` sources missing from the build context
+(often a sign that the Dockerfile expects a parent directory as its context).
+The checks are advisory and do not change cache eligibility. A clean report is
+not proof of reproducibility.
 
-## Whole-file compatibility mode
+## Declare targets
 
-The default `execution_mode = "auto"` builds instructions as separate actions
-and switches to one whole-file BuildKit action when the Dockerfile uses
-heredocs, `ONBUILD`, a `# syntax=` frontend, a custom escape character,
-several variables in one `ARG`, or extended `${VAR:-default}` expansions. It
-also switches when `export_cache`, `cache_to`, or a `caches` dependency is
-set. `struo lint image` reports a `whole_file_execution` note that names the
-reason after a switch. Lint and queries work on every Dockerfile.
+### Build a native image
 
-Set `execution_mode = "buildkit"` to always hand the complete Dockerfile to
-BuildKit as one action, or `execution_mode = "instructions"` to fail with the
-line number instead of switching.
-Use this mode with Docker's built-in builder and `pull = false` when a base
-image exists only in the local Docker image store. The automatically provisioned
-container builder resolves base images independently and cannot see images held
-only by that store. Otherwise, publish the base image to a registry and
-reference it by digest.
-
-Whole-file mode also supports portable BuildKit layer caches. BuildKit reuses matching layers even when Struo must execute the build action.
-Set `export_cache = true` to retain intermediate layers as a declared output.
-Other image targets can import it with `[target.dependencies] caches = ["base_image"]`.
-Struo transfers that directory using the same artifact machinery as other target
-outputs.
-
-Enable `cacheable = true` with `pull = false` and an explicit `platform` only
-for builds whose remote inputs are immutable. Struo can then restore the
-complete image and exported layer cache without running BuildKit. Pinning
-base images alone is insufficient if `RUN` downloads changing packages.
-
-For registry-backed layer sharing, use `cache_from` and `cache_to` lists of image
-references. Registry exports retain all intermediate stages and require registry
-credentials. Keep action caching disabled when publishing a registry cache.
-Mutable cache-mount contents remain on the BuildKit worker and are not included
-in exported layer caches.
-
-## Check cache restoration and image bytes
-
-A successful build does not establish that Struo cached it. A result with
-`cache = "bypass"` still runs BuildKit, which can reuse its own layers. A Struo
-cache hit restores declared outputs without executing the image build action.
-Delete only the target's generated outputs in your isolated workspace and
-build again to check restoration; compare the restored archive's checksum.
-Do not prune a shared Docker cache to perform this check.
-
-To compare independent builds, use separate, initially empty Struo caches and
-set `no_cache = true` to disable BuildKit's instruction cache too. A stable
-action key identifies the same declared inputs and execution contract; it does
-not establish identical artifact bytes. Compare archive checksums separately.
-For recipes that install changing packages, keep action caching disabled. An
-`oci_import` of a previously built archive can instead provide a frozen base
-for testing a network-free configuration or application overlay. That checks
-the overlay, not reproducibility of the original recipe.
-
-`struo build server_image --verify-reproducible` compares all declared outputs,
-not only the image archive. Buildx metadata includes per-build references and
-can include provenance with temporary context identifiers. Those metadata
-files can differ even when the image archive and layout match. Inspect the
-reported paths before concluding that the image bytes differ; a metadata-only
-difference still means the complete declared result is not bitwise identical.
-
-## Execute on a remote worker
-
-Provision a [remote BuildKit builder](https://docs.docker.com/build/builders/drivers/remote/),
-then select its name with `builder`. Buildx sends the declared context to the
-worker and returns the image artifacts to Struo. Configure authentication and
-memory limits on that worker. Struo's local memory limit covers the client
-process, not the worker's Dockerfile instructions.
-
-See the [Starlark modules reference](/docs/reference/modules) for the input
-inference, provider, cache dependency, and archive contracts.
-
-## Import an existing image archive
-
-`oci_import` brings an image exported by another tool into the graph. Point
-`archive` at a `.tar`, `.tar.gz`, or `.tgz` file in image layout form, as
-written by `docker save` (Docker 25 and later), `docker buildx build --output
-type=oci`, or `crane pull --format oci`. The archive is a tracked input, so
-replacing it rebuilds everything that depends on it. The image keeps the
-names recorded in the archive. The result can be a
-`base` for `oci_image`, loaded with `oci_load`, or published with `oci_push`.
-Older `docker save` archives that carry only `manifest.json` are not layouts;
-re-export them with a current Docker or `crane pull --format oci`.
+`oci_layer` packages executables and files into a deterministic layer, and
+`oci_image` assembles layers into an image:
 
 ```toml
 [[target]]
-name = "base"
-kind = "oci_import"
+name = "server_layer"
+kind = "oci_layer"
+
+[target.dependencies]
+programs = ["server"]
+
+[[target]]
+name = "server_image"
+kind = "oci_image"
+
+[target.dependencies]
+base = ["base"]
+layers = ["server_layer"]
 
 [target.attrs]
-archive = "images/base.oci.tar"
+tag = "registry.example.com/team/server:latest"
+tags = ["registry.example.com/team/server:v1"]
 ```
 
-## Use other targets in a Dockerfile
+Run `struo edit materialize-example oci_image oci-image-minimal` for a
+complete starter that packages a Go binary.
+
+On an `oci_layer`, set `annotations` to record them on the layer's descriptor,
+`compress = "gzip"` to store the layer as a deterministic gzip stream, and
+`symlinks = { "/usr/bin/app" = "/usr/local/bin/app" }` to add links.
+
+A `base` dependency makes the new layers extend an existing image, keeping its
+layers, environment, and history. Setting `entrypoint` replaces the inherited
+entry point and clears the inherited `cmd` unless you also set `cmd`, as a
+Dockerfile `ENTRYPOINT` does. An empty list clears a value; leaving an
+attribute unset keeps the base's. A base for a different platform than the
+image is an error, and a base pulled with `platform = "all"` supplies the
+platform the image asks for.
+
+### Combine platforms into one index
+
+Build one image per platform and combine them:
+
+```toml
+[[target]]
+name = "server_index"
+kind = "oci_index"
+
+[target.dependencies]
+images = ["server_image_amd64", "server_image_arm64"]
+```
+
+Two images for the same platform are an error.
+
+## Manage dependencies
+
+### Pin a base image
+
+`oci_pull` imports a registry image by digest. The digest is required, so the
+image cannot change under you, and Struo caches the result.
+
+### Use other targets in a Dockerfile
 
 Declare dependencies instead of copying files into the build context:
 
@@ -256,61 +183,117 @@ With this target, `FROM alpine:3.23` in the Dockerfile uses the pinned image
 from the `base` target, and `COPY --from=server /server /usr/local/bin/server`
 copies the executable built by the `server` target. A context is named after
 its target unless `context_names` renames it. No registry is contacted, and
-the dependencies count as pinned when `cacheable` is set.
+these dependencies count as pinned when `cacheable` is set.
 
-## Native images
+### Import an existing image archive
 
-`oci_layer` packages executables and files into a deterministic layer, and
-`oci_image` assembles layers into an image. Neither needs Docker.
+`oci_import` brings an image exported by another tool into the graph. Point
+`archive` at a `.tar`, `.tar.gz`, or `.tgz` image layout, as written by
+`docker save` (Docker 25 and later), `docker buildx build --output type=oci`,
+or `crane pull --format oci`. Replacing the archive rebuilds everything that
+depends on it. The image keeps the names recorded in the archive and can be a
+`base` for `oci_image`, loaded with `oci_load`, or published with `oci_push`.
 
 ```toml
 [[target]]
-name = "server_layer"
-kind = "oci_layer"
-
-[target.dependencies]
-programs = ["server"]
-
-[[target]]
-name = "server_image"
-kind = "oci_image"
-
-[target.dependencies]
-base = ["base"]
-layers = ["server_layer"]
+name = "base"
+kind = "oci_import"
 
 [target.attrs]
-tag = "registry.example.com/team/server:latest"
-tags = ["registry.example.com/team/server:v1"]
+archive = "images/base.oci.tar"
 ```
 
-Set `annotations` on an `oci_layer` to record them on the layer's descriptor,
-`compress = "gzip"` to store the layer as a deterministic gzip stream, and
-`symlinks = { "/usr/bin/app" = "/usr/local/bin/app" }` to add links to it.
+Older `docker save` archives that carry only `manifest.json` are not layouts;
+re-export them with a current Docker or `crane pull --format oci`.
 
-A `base` dependency makes the new layers extend an existing image, keeping its
-layers, environment, and history. Setting `entrypoint` replaces the inherited
-entry point and clears the inherited `cmd` unless you also set `cmd`, as a
-Dockerfile `ENTRYPOINT` does. An empty list clears a value, and leaving an
-attribute unset keeps the base's. A base for another platform than the image
-is an error, and a base pulled with `platform = "all"` supplies the platform
-the image asks for. Pin the base with `oci_pull`: the digest is required, so
-the image cannot change under you, and Struo caches the result.
+## Cache Dockerfile builds
 
-## Multi-platform images
+### Cache individual instructions
 
-Build one image per platform and combine them:
+Dockerfile builds bypass the Struo cache by default. Set `cacheable = true`,
+`pull = false`, and an explicit `platform` once you accept that the build's
+remote inputs are immutable. Every base image of a built stage must then be
+pinned by digest (`name@sha256:...`); otherwise the build fails, because a
+moving tag would keep serving a stale image from the cache. Pinning base images
+is not enough if `RUN` downloads changing packages; keep caching disabled for
+those recipes.
 
-```toml
-[[target]]
-name = "server_index"
-kind = "oci_index"
+With caching on, each instruction is its own cached action. A changed source
+copied late in the recipe does not invalidate earlier instructions, and only
+the stages the selected image needs are built. Literal `COPY` sources are
+tracked individually; wildcard sources, variable sources, and context bind
+mounts track the whole context. Mutable cache mounts stay on the BuildKit
+worker and are not cached by Struo.
 
-[target.dependencies]
-images = ["server_image_amd64", "server_image_arm64"]
+Files keep their permission bits, and changing a file's mode invalidates the
+step that copies it. Changing only a directory's mode does not; set the mode
+with `COPY --chmod` or `RUN chmod` to force a rebuild.
+
+### Get reproducible layers
+
+Files in the final archive keep the timestamps from when their instruction ran.
+`source_date_epoch` fixes the image creation time and history. Set
+`reproducible_layers = true` for layer bytes that are identical across
+independent rebuilds: each instruction rewrites its layer's timestamps to
+`source_date_epoch`. Later instructions then see normalized timestamps, which
+can change what timestamp-driven tools such as `make` decide to rebuild.
+
+### Choose whole-file mode
+
+The default `execution_mode = "auto"` switches to one whole-file BuildKit
+action when the Dockerfile uses heredocs, `ONBUILD`, a `# syntax=` frontend, a
+custom escape character, several variables in one `ARG`, or extended
+`${VAR:-default}` expansions. It also switches when `export_cache`, `cache_to`,
+or a `caches` dependency is set, or when a base image declares `ONBUILD`
+triggers. `struo lint image` reports a `whole_file_execution` note naming the
+reason. Lint and queries work on every Dockerfile.
+
+Set `execution_mode = "buildkit"` to always build the complete Dockerfile as
+one action, or `execution_mode = "instructions"` to fail with the line number
+instead of switching. Use `"buildkit"` when Struo cannot reach the local Docker
+engine or the registry to check a base image for `ONBUILD` triggers. Also use
+it, with Docker's built-in builder and `pull = false`, when a base image exists
+only in the local Docker image store, which the automatically created builder
+cannot see. Otherwise, publish the base image to a registry and reference it by
+digest.
+
+### Share BuildKit layer caches
+
+Whole-file mode supports portable BuildKit layer caches, which BuildKit reuses
+even when Struo must run the build. Set `export_cache = true` to keep
+intermediate layers as a declared output, and import it in another image
+target with `[target.dependencies] caches = ["base_image"]`.
+
+For registry-backed sharing, set `cache_from` and `cache_to` to lists of image
+references. Registry exports keep all intermediate stages and need registry
+credentials. Keep `cacheable` off when publishing a registry cache.
+
+### Check cache restoration
+
+A successful build does not prove Struo cached it. A result with
+`cache = "bypass"` still runs BuildKit, which can reuse its own layers. To
+check restoration, delete only the target's generated outputs in an isolated
+workspace, build again, and compare the archive checksum. Do not prune a shared
+Docker cache for this check.
+
+To compare independent builds, run:
+
+```sh
+struo build server_image --verify-reproducible
 ```
 
-Two images for the same platform are an error.
+It compares every declared output, not only the image archive. Buildx metadata
+files contain per-build references and can differ even when the image archive
+matches, so inspect the reported paths before concluding the image bytes
+differ. To compare by hand, use separate empty Struo caches and set
+`no_cache = true` to disable BuildKit's instruction cache too.
+
+## Build on a remote worker
+
+Provision a [remote BuildKit builder](https://docs.docker.com/build/builders/drivers/remote/)
+and set its name in `builder`. Buildx sends the declared context to the worker
+and returns the image to Struo. Configure authentication and memory limits on
+the worker; Struo's local memory limit covers only the client process.
 
 ## Load and publish
 
@@ -320,9 +303,42 @@ struo run server_push    # oci_push: publish the image or index
 ```
 
 `oci_push` sends the exact bytes Struo built, so the registry digest equals the
-digest of the local image or index. Set `sign = true` to sign that digest with
-[cosign](https://docs.sigstore.dev/cosign/signing/overview/) after publishing,
-with `cosign_key` naming a key file or key management URI, or empty for keyless
-signing. `cosign_args` passes extra flags to `cosign sign`. `crane` performs the transfer and reads
+digest of the local image or index. `crane` performs the transfer and reads
 credentials from your Docker configuration. Set `insecure = true` for a
-registry without TLS. Install it with `mise use crane`.
+registry without TLS.
+
+Set `sign = true` to sign the pushed digest with
+[cosign](https://docs.sigstore.dev/cosign/signing/overview/). `cosign_key` names
+a key file or key management URI; leave it empty for keyless signing.
+`cosign_args` passes extra flags to `cosign sign`.
+
+## Limitations
+
+- Dockerfile builds are not cached by Struo unless `cacheable` is set with the
+  requirements above.
+- Contents of mutable cache mounts stay on the BuildKit worker and are not
+  included in snapshots or exported layer caches.
+- Whole-file mode runs the Dockerfile as one action; individual instructions
+  are not cached separately.
+- Changing only a directory's mode does not invalidate a cached instruction.
+
+## Target kinds
+
+- [`dockerfile_image`](/reference/prelude/dockerfile_image): build a Dockerfile.
+- [`oci_layer`](/reference/prelude/oci_layer) and
+  [`oci_image`](/reference/prelude/oci_image): build images without Docker.
+- [`oci_index`](/reference/prelude/oci_index): combine platform images.
+- [`oci_pull`](/reference/prelude/oci_pull) and
+  [`oci_import`](/reference/prelude/oci_import): bring in existing images.
+- [`oci_load`](/reference/prelude/oci_load) and
+  [`oci_push`](/reference/prelude/oci_push): load into a local engine or
+  publish to a registry.
+
+## Next steps
+
+- [Go](/guide/graph/go): build the static executables that native images
+  package.
+- [Docker](/guide/infrastructure/docker): run Struo actions in local
+  containers.
+- [Starlark modules](/reference/modules/): the input, provider, cache
+  dependency, and archive contracts behind these target kinds.

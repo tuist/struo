@@ -1,53 +1,53 @@
 # Build iOS Applications on Linux
 
-Struo can cross-compile native Apple targets on Linux using Swift and the Darwin
-Swift SDK installed by [xtool](https://xtool.sh). Struo still owns compilation,
-linking, resource packaging, caching, and action scheduling. It does not run
-`xtool dev build` behind the scenes.
+Cross-compile, sign, and cache iOS libraries, frameworks, and applications on
+Linux with Struo, using Swift and the Darwin SDK installed by xtool.
+
+Struo owns compilation, linking, resource packaging, caching, and scheduling.
+It does not run `xtool dev build` behind the scenes. Declare targets in
+`struo.toml`; reading Xcode projects requires macOS.
+
+## Prerequisites
 
 The [omarchy-apple-dev](https://github.com/joshuaswarren/omarchy-apple-dev)
 project provides an installer and Linux replacements for Apple resource tools.
-Its installer supports Omarchy's Arch-based environment on ARM64 and x86_64.
-Struo's integration uses the installed tools and SDK rather than depending on
-that distribution's package manager.
-
-## Install the Toolchain
-
-Follow omarchy-apple-dev's installation guide. You need:
+Its installer supports Omarchy's Arch-based environment on ARM64 and x86_64,
+but Struo only needs the installed tools and SDK. Follow its installation guide
+to get:
 
 - A Linux Swift toolchain matching the Swift version in the selected Xcode.
-- An xtool Darwin SDK built from your own Apple-provided `Xcode.xip` download.
+- An [xtool](https://xtool.sh) Darwin SDK built from your own Apple-provided
+  `Xcode.xip` download.
 - `rcodesign` for bundle signing.
 - The Linux `actool`, `momc`, and `ibtool` compatibility tools when your targets
-  use asset catalogs, Core Data models, storyboards, or xibs. Their supported
-  resource formats are determined by omarchy-apple-dev, not by Struo.
+  use asset catalogs, Core Data models, storyboards, or xibs. omarchy-apple-dev,
+  not Struo, determines which resource formats they support.
 - `llvm-lipo` on `PATH` if you build multi-architecture libraries. The xtool
-  toolset supplies its linker and archiver but does not always include lipo.
+  toolset does not always include it.
 
-Apple's SDK is not downloaded or redistributed by Struo. Obtain Xcode from
-Apple with an Apple ID and install the SDK with xtool:
+Struo does not download or redistribute Apple's SDK. Obtain Xcode from Apple
+with an Apple ID and install the SDK with xtool:
 
 ```sh
 xtool sdk install /path/to/Xcode.xip
 swift sdk list
 ```
 
-The SDK list must include `darwin`. Run the installer with your downloaded
-Xcode archive to also install the compatibility tools:
+The SDK list must include `darwin`. Run the omarchy-apple-dev installer with
+your downloaded Xcode archive to also install the compatibility tools:
 
 ```sh
 XCODE_XIP=/path/to/Xcode.xip ./install-toolchain.sh
 ```
 
 Use the Swift toolchain's own Clang when installing the SDK. Host Clang headers
-from a different compiler version can make SwiftUI fail to compile. Struo
-resolves both Swift and Clang from the active Swift toolchain for its actions.
-If your toolchain requires a compatibility `LD_LIBRARY_PATH`, Struo passes it
-through to compiler and resource actions and includes it in their cache identity.
+from a different compiler version can make SwiftUI fail to compile. If your
+toolchain needs a compatibility `LD_LIBRARY_PATH`, Struo passes it through to
+compiler and resource actions.
 
-## Build a Starter
+## Declare targets
 
-Materialize the Linux starter in an empty directory:
+Materialize the Linux starter in an empty directory and build it:
 
 ```sh
 struo edit materialize-example apple_application apple-application-linux
@@ -63,33 +63,30 @@ sdk_variant = "device"
 minimum_os = "17.0"
 ```
 
-Set `sdk_variant = "device"` on dependencies as well as the application.
-The default remains `"simulator"`; Struo does not silently change it on Linux.
-An iOS device target defaults to ARM64 even on an x86_64 Linux host. Library
-`archs` overrides still apply.
+Set `sdk_variant = "device"` on dependencies as well as the application. The
+default remains `"simulator"`, and Struo does not change it on Linux. An iOS
+device target defaults to ARM64 even on an x86_64 host; library `archs`
+overrides still apply.
 
-Struo discovers SDK and Swift resource paths through
-`swift sdk configure darwin <target-triple> --show-configuration`. It uses the
-SDK's Mach-O linker and archiver, rather than the host's ELF tools. SDK contents,
-tool binaries, and the compiler environment contribute to Linux action cache
-identity. Changes to an SDK therefore invalidate affected actions.
+### Pin the SDK
 
-To pin an installed SDK, set the existing `xcode_developer_dir` attribute to the
-SDK bundle's `Developer` directory on every relevant target:
+Changes to the SDK, tool binaries, or compiler environment invalidate the
+affected cached actions. To pin one installed SDK, set `xcode_developer_dir` to
+the SDK bundle's `Developer` directory on every relevant target:
 
 ```toml
 xcode_developer_dir = "/home/me/.swiftpm/swift-sdks/darwin.artifactbundle/Developer"
 ```
 
 This selects SDK metadata and tools, not macOS executables extracted from Xcode.
-After switching Swift installations, re-register the matching SDK using
+After switching Swift installations, re-register the matching SDK with
 omarchy-apple-dev's `install-toolchain.sh --repair`.
 
-## Deploying and Shipping
+## Sign for a device
 
-By default Struo produces an **ad-hoc signed** application bundle, which a
-physical iPhone does not accept. To build an installable development build, give
-the application an Apple Development identity and a development provisioning
+By default Struo produces an ad-hoc signed application bundle, which a physical
+iPhone does not accept. For an installable development build, give the
+application an Apple Development identity and a development provisioning
 profile that includes the device:
 
 ```toml
@@ -105,29 +102,43 @@ provisioning_profile = "/secure/Hello_Development.mobileprovision"
 ```
 
 Struo embeds the profile, derives the signing entitlements from it, and signs
-embedded frameworks and then the application with rcodesign. The identity
-stays where it is on disk; see
+embedded frameworks and then the application with rcodesign. The identity stays
+where it is on disk; see
 [development signing](/reference/prelude/apple_application#development-signing)
 for how it is validated and kept out of the cache.
 
-Struo does not request identities or profiles from Apple, or install the
-bundle on a device. Use xtool or omarchy-apple-dev for account provisioning and
-USB deployment. Their distribution workflows separately handle App Store
-signing, validation, and App Store Connect uploads; a Struo build is not
-automatically an App Store-ready archive.
+Struo does not request identities or profiles from Apple or install the bundle
+on a device. Use xtool or omarchy-apple-dev for account provisioning, USB
+deployment, and App Store signing and uploads. A Struo build is not an App
+Store-ready archive.
 
-## Boundaries
+## Limitations
 
-- Native `apple_library`, `apple_framework`, `apple_application`, and
-  `apple_executable` builds use the Linux toolchain. Available destinations
-  are limited to those present in your Darwin SDK.
-- Apple binaries cannot execute on Linux. Simulator runs, XCTest and Swift
-  Testing bundles, Xcode app thinning, and Intent definition code generation
-  still require macOS.
-- `swift_macro` builds still require macOS. Prebuilt compiler plugins supplied
-  through `binary_swift_plugins` must be Linux executables. SDK-provided macros
-  use the SDK's OpenAppleMacros server when installed.
-- Native Xcode and Swift package workspace resolution is not enabled by this
-  integration. Declare native Apple targets in `struo.toml` for Linux builds.
-- Mac Catalyst and platforms absent from the SDK are not supported by this
-  Linux integration.
+- Available destinations are limited to those in your Darwin SDK. Mac Catalyst
+  is not supported on Linux.
+- Apple binaries cannot run on Linux. Simulator runs, XCTest and Swift Testing
+  bundles, Xcode app thinning, and Intent definition code generation require
+  macOS.
+- `swift_macro` builds require macOS. Prebuilt compiler plugins supplied through
+  `binary_swift_plugins` must be Linux executables. SDK-provided macros use the
+  SDK's OpenAppleMacros server when installed.
+- Xcode project discovery requires macOS. Declare Apple targets in
+  `struo.toml`.
+
+## Target kinds
+
+These target kinds build with the Linux toolchain:
+
+- [`apple_library`](/reference/prelude/apple_library)
+- [`apple_framework`](/reference/prelude/apple_framework)
+- [`apple_application`](/reference/prelude/apple_application)
+- [`apple_executable`](/reference/prelude/apple_executable)
+
+## Next steps
+
+- [Apple](/guide/graph/apple): declare applications, libraries, and tests, and
+  choose values by configuration.
+- [Development signing](/reference/prelude/apple_application#development-signing):
+  check how identities and profiles are validated.
+- [Ecosystems](/guide/graph/ecosystems): combine Apple targets with other
+  toolchains in one graph.

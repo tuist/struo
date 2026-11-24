@@ -1,73 +1,59 @@
 # Infrastructure Provider Contracts
 
-These references describe the boundaries a service must satisfy to supply
-shared caching or remote execution to Struo. Start with
-[Become an Infrastructure Provider](/guide/infrastructure/providers) for a
-top-to-bottom cache integration guide.
+The contracts a service must satisfy to supply shared caching, remote execution,
+or artifact publication to Struo, and how provider integrations are added.
 
-## Independent Capabilities
+Start with [Become an Infrastructure Provider](/guide/infrastructure/providers)
+for a top-to-bottom cache integration guide. For the providers available today
+and what each supplies, see the
+[provider list](/guide/infrastructure/#available-providers).
+
+## Independent capabilities
 
 - **[Cache](/reference/infrastructure/cache):** store opaque blobs and action
-  results; restore verified content across machines. Current implementations
-  are local storage, a local tier backed by Tuist's REAPI cache, and a local
-  tier backed by an object storage bucket (S3-compatible, Google Cloud Storage,
-  Azure Blob Storage, or a directory), and a local tier backed by an HTTP
-  build cache.
+  results; restore verified content across machines.
 - **[Execution](/reference/infrastructure/execution):** run a prepared command
   in an isolated environment and return declared outputs, streams, and exit
-  status. Current implementations are native local execution, Docker,
-  Microsandbox, E2B, and Daytona.
-- **[Artifacts](/guide/infrastructure/artifacts):** retain immutable build
-  products for distribution. Local publication accepts arbitrary payloads;
-  see each provider's guide for supported formats and publication limits.
+  status.
+- **[Artifacts](/guide/infrastructure/artifacts#publication-service-contract):**
+  retain immutable build products for distribution through an authenticated
+  publication service.
 
-Struo owns graph analysis, dependency ordering, action identity, and cache
-policy. Providers do not need to interpret target kinds or implement the
-graph. [Live run events](/reference/events/) are an optional reporting
-protocol, not an execution or cache protocol.
+A repository binds each capability separately, so one provider can supply a
+capability without the others. Struo owns graph analysis, dependency ordering,
+action identity, and cache policy. Providers do not need to interpret target
+kinds or implement the graph. [Live run events](/reference/events/) are an
+optional reporting protocol, not an execution or cache protocol.
 
-## Integration Status
+## Integration status
 
-Provider dispatch is currently compiled into Struo. Object storage needs no
-adapter: any service that speaks the S3, Google Cloud Storage, or Azure Blob
-Storage API can be configured with `kind = "object_store"`, and any HTTP cache with `GET`,
-`HEAD`, and `PUT` on a key path with `kind = "http_cache"`. There is no dynamic
-provider registration API, generic REAPI cache configuration, or REAPI
-`Execution.Execute` transport. A new provider needs an adapter and
-configuration/resolution changes in Struo. The cache reference separates the
-provider-neutral behavior from the wire format used by today's Tuist adapter;
-the execution reference describes an internal command boundary and service
-requirements, not a new network API.
+Provider dispatch is compiled into Struo; there is no dynamic provider
+registration API. A new provider needs an adapter and configuration changes in
+the [Struo repository](https://github.com/tuist/struo).
 
-## Code Reading Map
+Two cache kinds need no adapter:
 
-These links follow `main`. The internal types are implementation references,
-not compatibility promises of the public cache SDK. Pin a revision in your
-integration's validation record.
+- `kind = "object_store"` works with any service that speaks the S3, Google
+  Cloud Storage, or Azure Blob Storage API.
+- `kind = "http_cache"` works with any HTTP cache that supports `GET`, `HEAD`,
+  and `PUT` on a key path.
 
-- [`InfrastructureProviderConfig` and manifest decoding](https://github.com/tuist/struo/blob/main/crates/struo-frontend/src/cache_provider.rs):
-  supported kinds and the independent named cache/execution bindings.
-- [CLI provider resolution](https://github.com/tuist/struo/blob/main/crates/struo-cli/src/cache_provider.rs):
-  resolve workspace policy to a cache implementation or `RemoteExecution`;
-  keep credentials separate.
-- [Shared cache configuration resolution](https://github.com/tuist/struo/blob/main/crates/struo-frontend/src/cache_resolution.rs):
-  cache selection and overrides used by callers.
-- [`CacheProvider`](https://github.com/tuist/struo/blob/main/crates/struo-cas/src/provider.rs):
-  local/remote cache dispatch and the operations consumers rely on.
-- [`Executor` selection](https://github.com/tuist/struo/blob/main/crates/struo-core/src/executor/selection.rs):
-  dispatch, resource domain, and unsupported-policy rejection.
-- [`PreparedCommand` and remote dispatch](https://github.com/tuist/struo/blob/main/crates/struo-core/src/remote.rs):
-  command data passed into a sandbox adapter.
-- [`Provisioner`](https://github.com/tuist/struo/blob/main/crates/struo-cli/src/provision.rs):
-  optional `struo connect` support, currently Tuist only.
-- [Authentication command dispatch](https://github.com/tuist/struo/blob/main/crates/struo-cli/src/commands/auth.rs):
-  optional interactive/CI login integration, currently Tuist only.
+There is no generic REAPI cache or execution configuration. The Tuist adapter
+is the only one that speaks REAPI, for both its cache and its remote execution;
+the other execution adapters transfer archives to sandboxes. The cache reference
+separates provider-neutral behavior from the Tuist wire format, and the
+execution reference describes the command boundary and service requirements,
+not a new network API.
+
+Optional `struo connect` provisioning and `struo auth login` support are
+currently implemented for Tuist only.
 
 Keep a new provider's transport, authentication, and service behavior in its
 adapter. Use generic cache, scheduling, and action primitives for shared
-behavior. Do not add ecosystem-specific scheduling or build-system branches
-to a provider integration.
+behavior. Do not add ecosystem-specific scheduling or build-system branches to
+a provider integration.
 
 See the [manifest reference](/reference/manifest#root-only-tables) for the
-configuration customers use and the [provider guide](/guide/infrastructure/providers#handoff-checklist)
-for the integration handoff checklist.
+configuration customers use and the
+[provider guide](/guide/infrastructure/providers#handoff-checklist) for the
+integration handoff checklist.

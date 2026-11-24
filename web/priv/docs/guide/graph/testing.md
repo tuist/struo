@@ -1,19 +1,17 @@
 # Testing and Scheduling
 
-Struo separates which tests should run from where and when they run. That
-separation keeps affected-test selection conservative, makes exact requests
-auditable, and lets scheduling evolve without changing test identity.
+Run tests with Struo across pytest, Jest, Vitest, RSpec, Rust, and more, select
+affected tests from changed paths, and split stable batches across local
+workers or CI shards.
 
-Start here whether you are declaring a test target for the first time or
-planning work for an existing target. [Full ecosystem guides](/guide/graph/ecosystems)
-cover build and test targets together. Test-runner reference pages provide
-focused, copyable declarations for runner-only integrations.
+Struo keeps the native runner in charge of collecting and executing tests. It
+records stable test identities around the runner, so it can rerun one unit,
+divide a target into batches, and replay the same work on another machine.
 
-## Start With Your Runner
+## Run your first tests
 
-Keep the native runner as the source of truth for test collection and
-execution. Choose the matching target kind, make its prerequisite available,
-and let Struo record stable test identities around it:
+Choose the target kind that matches your runner and make its prerequisite
+available:
 
 | Runner | Target declaration | Prerequisite | Default automatic batch |
 | --- | --- | --- | --- |
@@ -23,8 +21,11 @@ and let Struo record stable test identities around it:
 | Vitest | [`vitest_test`](/reference/prelude/vitest_test) | The package-local Vitest entry point is installed | One test file |
 | Jest | [`jest_test`](/reference/prelude/jest_test) | The package-local Jest entry point is installed | One test file |
 
+Build-system ecosystems such as Rust, Go, Android, Apple, and Elixir declare
+their test targets in their own [ecosystem guides](/guide/graph/ecosystems).
+
 Each target kind ships a runnable starter. Retrieve the one that matches your
-runner when you want a complete manifest and source layout:
+runner for a complete manifest and source layout:
 
 ```sh
 # Python with pytest
@@ -43,8 +44,8 @@ struo query example vitest_test vitest-test-minimal --format json
 struo query example jest_test jest-test-minimal --format json
 ```
 
-After copying or adapting the declaration, use the same first-run workflow for
-every runner. The bundled starters name their target `tests`:
+The bundled starters name their target `tests`. Query the kind's schema, run
+the target once, inspect what it discovered, then run it again across workers:
 
 ```sh
 struo query schema pytest_test
@@ -53,146 +54,23 @@ struo query test-manifest tests --format json
 struo test tests --jobs 4 --format json
 ```
 
-Replace `pytest_test` with the chosen kind when querying its schema. The first
-complete run discovers stable units and writes the manifest. Its structured
-response keeps that executed work in `plan` and shows the batches available to
-the next run in `next_plan`. The next run can schedule those units as
-independent file batches across the requested workers.
-Set `batching = "case"` in a pytest, Ruby Specification, Vitest, or Jest target
-only when its fixtures and startup costs make case-level batches worthwhile.
+Replace `pytest_test` with your kind. The first complete run discovers stable
+units and writes the manifest. Its JSON response shows the executed work in
+`plan` and the batches available to the next run in `next_plan`. The next run
+schedules those units as independent file batches across the requested
+workers.
+
 Python, Ruby, and Node.js executable attributes accept names on the executable
 search path, absolute paths, and workspace-relative paths. A pytest target
-with no `python` attribute automatically tries `.venv/bin/python` before the
-host executable search path. Set a portable project path explicitly when the
-repository uses a different runtime layout.
+with no `python` attribute tries `.venv/bin/python` before the executable
+search path. Set a project path explicitly when the repository uses a
+different runtime layout.
 
-## Start With the Safety Model
+In a discovered native workspace, `struo test` with no target runs the
+workspace's first-party tests, and `struo test --all` runs every discovered
+test target through the dynamic scheduler.
 
-### Coverage-assisted Selection
-
-Graph-based selection remains the strict default. You can opt into approximate
-whole-target exclusion with Tuist history when your target kind supports fresh
-inventory discovery and isolated coverage evidence. Set `coverage_per_test = true`
-on a supported producer: Go, pytest, RSpec, Minitest, Jest, Vitest, Rust libtest,
-JVM or Android host tests, ExUnit, CTest, Zig, Bazel, ShellSpec or Apple host bundles. Nx and
-Turborepo test tasks can reuse the Jest or Vitest collector for a single native
-command without task outputs, shell expansion or plugin executor wrapping. Each target
-reference documents its native collector, source declarations and runtime
-prerequisites. CTest, Zig, Bazel, ShellSpec and Apple bundles measure declared atomic invocations,
-not their constituent native cases. Cargo, SwiftPM, Xcode, Nx and Turborepo seeds forward their
-explicit coverage opt-in to generated native test targets.
-
-Android device instrumentation does not yet have a coverage producer and retains
-graph-selected work. Apple coverage collection has been validated on macOS host
-bundles, not simulators or devices.
-
-Configure a [Tuist project](/guide/infrastructure/tuist), then record a full run
-and export a plan for a clean, committed change:
-
-```sh
-struo test --all --coverage-report --format json
-struo query test-plan --changed-path lib/source.go --coverage-selection --format json > plan.json
-struo test --plan plan.json --format json
-```
-
-Keep plan files outside tracked inputs, or in a gitignored directory. The
-portable-plan validator still checks the graph and source fingerprints before
-execution, including inputs of coverage-excluded targets and fully empty plans.
-Plans produced with `--coverage-selection` declare
-`policy.safety = "approximate"`, including when the planner retains all work.
-Omit the flag to use only the graph envelope, without querying coverage history.
-
-The planner discovers current units on fresh workers, then queries Tuist using
-a versioned per-target scope bound to inventory, test inputs, collector,
-configuration and platform. It requests the explicit `instrumented` policy for
-one target at a time. Tuist must prove changed paths belong to that target's
-complete baseline instrumentation. Struo removes a target only when Tuist
-excludes its whole current inventory. It does not exclude individual cases.
-Struo uploads bounded commit history and tracked-file listings through Tuist's
-Git-history API. Use a consistent `origin` URL and run from the repository root.
-Missing local ancestry or listings beyond the server's limits retain work.
-Fetch enough Git history on CI workers to contain the baseline; this planner
-does not deepen shallow clones automatically.
-
-Missing or incompatible history, unknown instrumentation, actual coverage hits,
-new or changed test inputs, added/deleted/renamed paths, dirty checkouts and
-provider failures retain graph-selected work. Struo requires the supplied
-changed paths to match the baseline diff. Partial observations and unattributed aggregate
-profiles cannot establish these checkpoints. Coverage collection bypasses
-execution caching so a cached profile cannot masquerade as a new measurement.
-
-Selected plan execution does not publish a replacement baseline. Publish a new
-full observation with `--coverage-report` when you want to refresh history.
-Coverage only describes observed execution; retain regular full test runs to
-audit missed dependencies and behavioral changes.
-
-### Inspect Retained Case Evidence
-
-Read a target's retained normalized report with `struo query test-results tests
---format json`, or use `--summary-only` for totals without cases. To inspect an
-exact case id without returning every case:
-
-```sh
-struo query test-results tests --case 'suite::case_name' --format json
-struo query test-results tests --case 'suite::case_name' --attempt 1 --format json
-```
-
-The matching read-only MCP tool is `struo_query_test_results`, with `target`,
-`case`, and optional `attempt` arguments. These reads do not evaluate the graph,
-run a planner, execute tests, or refresh discovery. They work with missing or
-broken current manifests when the retained target report is available.
-
-The focused `struo.test_case_result.v1` response keeps the raw target `status`,
-`case.status`, and `attempt_result.status` distinct. The complete selected
-producer attempt object preserves unknown fields and statuses. `attempt` is a
-one-based position in the retained case's `attempts` array; omitted means the
-last element, not the newest timestamp. It is not a schedule retry or durable
-cross-run identity. `results_digest` is the BLAKE3 digest of the same file bytes
-used for the projection, so replacing the retained report changes its identity.
-
-`target_artifacts` remains target-level metadata, not case-owned attachments.
-`artifact_availability` is `not_checked`: paths are inert, no artifact is read,
-and remote content is neither fetched nor published. `rerun.argv` suggests only
-the whole target under the **current** configuration. It does not promise an
-exact-case rerun or replay the original configuration.
-
-Focused reads accept at most 16 MiB (16777216 bytes) of raw retained JSON and
-1 MiB (1048576 bytes) of compact logical projection JSON. Counting serialization
-checks the projection before materializing it. These are not peak-memory
-ceilings or wire-response caps: parsing has overhead, pretty CLI output can be
-larger, and MCP duplicates the result in structured and text content. Deeply
-nested JSON beyond the parser recursion limit is rejected. Full and summary
-queries without selectors retain their existing behavior, including large reports.
-
-`case` conflicts with `summary_only`; `attempt` requires `case` and starts at 1.
-Focused failures use structured diagnostics with `code`, `target`, `attribute`,
-and `repairs`, including bounded retained-id suggestions or a valid attempt range.
-
-### Selection and Scheduling Boundaries
-
-| Layer | Decides | Stable output |
-| --- | --- | --- |
-| Selection | Which test targets or explicit units belong in the run | Selection reasons and safety level |
-| Plan | How selected work is divided into semantic batches | Plan and batch identifiers |
-| Schedule | Which worker takes each batch and attempt | Placement, timing, and status |
-| Results | What the runner observed | Normalized suites, cases, attempts, and artifacts |
-
-Affected selection is conservative. Struo starts from changed graph inputs,
-walks reverse dependencies, and selects complete test targets. Missing
-ownership also selects tests instead of silently skipping them.
-
-Exact unit selection is different. It is allowed only when the target kind
-declares a lossless translation from a stable Struo unit identifier to native
-runner arguments. Unsupported or stale unit requests fail during planning.
-
-The boundary is deliberately ecosystem-neutral. Rust validates generic test
-information and result records, builds graph-based plans, and schedules opaque
-batches. A Starlark target kind owns runner discovery, command arguments,
-filter translation, result normalization, and platform requirements. Adding a
-test ecosystem should therefore require a target kind, not a branch in the
-planner or executor.
-
-## Discover the Test Surface
+## Discover the test surface
 
 List test targets before choosing one:
 
@@ -220,51 +98,10 @@ The manifest reports:
   that can change discovery; and
 - `units`, the stable identifiers observed in the latest complete run.
 
-A filtered run does not replace the complete manifest. Agents can run one case
-for quick feedback without forgetting the other cases discovered by the last
-whole-target run.
+A filtered run does not replace the complete manifest, so running one case for
+quick feedback does not forget the other cases.
 
-## Plan Affected Tests Before Running
-
-Every plan query exports the same replayable document, including discovery
-inventories and input bindings. Inspect one for changed workspace paths:
-
-```sh
-struo query test-plan \
-  --changed-path src/library.rs \
-  --format json
-```
-
-Each selected test includes a reason. The current affected policy emits one
-complete test scope per selected target. When that target has a current
-manifest and supports exact filtering, the plan divides the complete scope
-into stable file or case batches. This changes scheduling granularity without
-using test impact as permission to omit a discovered case.
-
-The first run, a changed test input, or an incomplete manifest produces one
-whole-target batch. That run refreshes discovery. Later plans may then split
-the same target automatically. A stale manifest never filters against an old
-unit list.
-
-Run the same selection through the dynamic scheduler:
-
-```sh
-struo test \
-  --changed-path src/library.rs \
-  --jobs 4 \
-  --format json
-```
-
-`--jobs` caps concurrent local workers. It does not change selection, plan
-identity, or batch identity.
-
-Inspect recent attempts and measured durations afterward:
-
-```sh
-struo query test-attempts --limit 20 --format json
-```
-
-## Run One Exact Unit
+## Run one exact unit
 
 Choose an identifier returned by the current complete manifest:
 
@@ -276,15 +113,13 @@ struo test tests/unit \
   --format json
 ```
 
-Before execution, Struo verifies both conditions:
+Struo runs the unit only when the target declares
+`case_filtering = "runner_args"` and the identifier is in the persisted
+complete manifest. Otherwise the request fails during planning. Run the whole
+target again when discovery is missing or stale, and do not construct
+runner-specific filters from names Struo did not return.
 
-1. the target declares `case_filtering = "runner_args"`; and
-2. the requested identifier is present in the persisted complete manifest.
-
-Run the whole target again when discovery is missing or stale. Do not construct
-runner-specific filters from names that Struo did not return.
-
-## Rerun One Batch
+## Rerun one batch
 
 A batch is a stable group of test units, not a worker number. Inspect the
 current target plan and copy a batch's `id`:
@@ -294,23 +129,127 @@ struo query test-plan --target tests/unit --format json
 struo test tests/unit --test-batch '<batch-id>' --format json
 ```
 
-The batch request requires one explicit target. It cannot be combined with
-`--test-unit`, `--all`, or changed-path selection. Struo resolves it against the
-current plan before starting work. A missing or obsolete ID fails with current
-batch suggestions and the command to inspect them. Changed discovery inputs
-can make an old exact batch unavailable until a whole-target run refreshes the
-manifest.
+`--test-batch` requires one explicit target and cannot be combined with
+`--test-unit`, `--all`, or changed-path selection. A missing or obsolete id
+fails with current batch suggestions. Changed discovery inputs can make an old
+batch unavailable until a whole-target run refreshes the manifest.
 
-Replaying a file batch preserves every case in that batch, including its
-fixture boundary. It does not replace the complete discovery manifest with the
-filtered result. Worker count does not change the batch ID. This reproduces the
-scope of the work, not necessarily its outcome after code or environment changes.
+Replaying a file batch keeps every case in that file together, and the worker
+count does not change the batch id. A rerun reproduces the scope of the work,
+not necessarily its outcome after code or environment changes.
 
-The agent tool `struo_query_test_plan` exports the complete replayable plan.
-`struo_run_tests` accepts `test_batch` for local replay with the same rules.
-The returned execution scope and schedule identify the exact work and attempt.
+## Inspect retained results
 
-## Replay Saved Plans on CI Workers
+Read a target's latest normalized report, or only its totals:
+
+```sh
+struo query test-results tests --format json
+struo query test-results tests --summary-only --format json
+```
+
+Inspect one case, and optionally one attempt, without returning every case:
+
+```sh
+struo query test-results tests --case 'suite::case_name' --format json
+struo query test-results tests --case 'suite::case_name' --attempt 1 --format json
+```
+
+These reads do not evaluate the graph or run tests, so they work even when the
+current manifests are broken. `--attempt` is a one-based position in the
+case's retained attempts and defaults to the last one; it requires `--case`,
+and `--case` cannot be combined with `--summary-only`. The response includes a
+suggested rerun command for the whole target under the current configuration.
+An unknown case or attempt fails with suggestions for valid ids or the valid
+attempt range.
+
+Review recent attempts and measured durations:
+
+```sh
+struo query test-attempts --limit 20 --format json
+```
+
+## Plan affected tests before running
+
+Inspect which tests a change affects before running them:
+
+```sh
+struo query test-plan \
+  --changed-path src/library.rs \
+  --format json
+```
+
+Affected selection is conservative. Struo starts from the changed inputs,
+walks reverse dependencies, and selects complete test targets, each with a
+reason. Paths with no known owner also select tests instead of skipping them.
+When a selected target has a current manifest and supports exact filtering,
+the plan divides it into file or case batches; it never omits a discovered
+case.
+
+Run the same selection across workers:
+
+```sh
+struo test \
+  --changed-path src/library.rs \
+  --jobs 4 \
+  --format json
+```
+
+`--jobs` caps concurrent local workers. It does not change selection, plan
+identity, or batch identity.
+
+## Coverage-assisted selection
+
+With a [Tuist project](/guide/infrastructure/tuist) configured, you can opt
+into approximate selection that excludes whole test targets whose recorded
+coverage does not touch the changed paths. Graph-based selection stays the
+default.
+
+Set `coverage_per_test = true` on a supported test target: Go, pytest, RSpec,
+Minitest, Jest, Vitest, Rust libtest, JVM or Android host tests, ExUnit,
+CTest, Zig, Bazel, ShellSpec, or Apple host bundles. Cargo, SwiftPM, Xcode, Nx,
+and Turborepo workspaces forward the opt-in to their generated test targets.
+Each target kind reference documents its collector and prerequisites.
+
+Record a full run, then export and run a plan for a clean, committed change:
+
+```sh
+struo test --all --coverage-report --format json
+struo query test-plan --changed-path lib/source.go --coverage-selection --format json > plan.json
+struo test --plan plan.json --format json
+```
+
+Keep plan files outside tracked inputs or in a gitignored directory. Struo
+removes a target only when Tuist proves the change misses its whole current
+inventory; it never excludes individual cases. Missing or incompatible
+history, coverage hits, changed test inputs, added, deleted, or renamed paths,
+dirty checkouts, and provider failures keep the graph-selected work.
+
+Run from the repository root with a consistent `origin` URL, and fetch enough
+Git history on CI to contain the baseline; Struo does not deepen shallow
+clones. Running a selected plan does not refresh the baseline, so publish a
+new full run with `--coverage-report` when you want to update history, and
+keep regular full test runs to catch dependencies coverage did not observe.
+
+## Tune batching
+
+Struo orders batches by recent durations and lets idle workers pull the next
+one, so the plan does not depend on the worker count.
+
+Dynamic-language runners default to file batches because tests in one file
+often share imports, fixtures, and setup. Set `batching = "case"` on a pytest,
+Ruby Specification, Vitest, or Jest target when its fixtures and startup costs
+make case-level batches worthwhile. Set `batching = "target"` when repeated
+startup or shared fixtures cost more than parallel execution saves. More
+workers do not force smaller batches, and more batches do not guarantee a
+faster run.
+
+Concurrent batches write results and logs to isolated directories, and Struo
+merges them into one result per target. A batch fails when its runner ignores
+a filter, reports a unit twice, or exits successfully without valid passing
+results. Periodic whole-target runs help catch tests the runner stopped
+reporting.
+
+## Replay saved plans on CI workers
 
 Export the plan after a complete discovery run:
 
@@ -319,9 +258,8 @@ struo test tests/unit --format json
 struo query test-plan --target tests/unit --format json > plan.json
 ```
 
-Plan queries always cover complete selected targets. Choose opaque batch IDs
-from `plan.batches` at execution, not during export. An external scheduler
-distributes the document unchanged, and each fresh worker runs its assignments:
+Distribute the file unchanged through your CI coordinator. Each fresh worker
+runs its assigned batch ids from `plan.batches`:
 
 ```sh
 struo test --plan plan.json \
@@ -329,35 +267,18 @@ struo test --plan plan.json \
   --jobs 4 --format json
 ```
 
-Omit `--batch` to execute the complete exported plan. A repeated or unknown ID
-fails before execution. Do not reconstruct native runner filters, split a file
-batch, or transfer private discovery caches. `--jobs`, `--memory-limit`,
-`--cpu-limit`, and `--sandbox` retain their ordinary scheduling and resource
-limits. Portable replay cannot be combined with target selectors or `--config`;
-the worker must use the workspace build configuration bound by the export.
+Omit `--batch` to run the complete plan. A repeated or unknown id fails before
+execution. `--jobs`, `--memory-limit`, `--cpu-limit`, and `--sandbox` work as
+usual, but `--plan` cannot be combined with target selectors or `--config`;
+the worker uses the configuration recorded in the plan.
 
-The document has schema `struo.portable_test_plan.v1`, a content-derived `id`,
-the native `plan`, and opaque `bindings` for its targets. Bindings tie the
-complete discovery inventory to declared input contents, resolved relevant
-configuration, dependency inputs, and loaded target-kind implementations.
-Missing or stale discovery exports a whole-target fallback, never an old exact
-inventory. Execution rejects stale bindings, malformed identities, overlapping
-scopes, incomplete inventory coverage, and split file fixtures before scheduling.
-Coverage-assisted plans also carry `excluded_bindings` for every removed target
-in the original graph-selected envelope. These input fingerprints participate in
-the plan identity and must remain current even when the plan has no batches.
-The content digest detects changes, not authorship: retrieve plans through a
-trusted, authenticated coordinator and treat them like repository configuration.
+Struo rejects a plan whose sources, configuration, dependencies, environment
+values, runner versions, or test arguments changed since export, so export a
+new plan after such changes. Plans detect changes, not authorship: fetch them
+from a trusted, authenticated coordinator and treat them like repository
+configuration.
 
-Built-in dynamic-language runners separate tool versions from installation
-paths, allowing matching checkouts and tool versions at different locations.
-Explicit environment values remain relevant, including inherited variables
-declared by the target. Changing them, runner versions, test arguments, sources,
-or configuration requires a new plan. Other target kinds remain conservative:
-without an explicit portable configuration contract, their complete metadata is
-bound and a host-dependent change may require re-exporting the plan.
-
-Replay returns `struo.portable_test_execution.v1`:
+Replay prints a `struo.portable_test_execution.v1` document:
 
 ```json
 {
@@ -370,38 +291,23 @@ Replay returns `struo.portable_test_execution.v1`:
 }
 ```
 
-`execution` uses the ordinary scheduler report. Each `runs` entry includes its
-`batch_id`, `target`, `exit_code`, `success`, validated normalized `results` or
-null, and any `results_error` or process `error`. Case IDs, suites, ordered
-attempts, optional attempt durations in milliseconds, and failures stay native
-normalized results, not batch assignment identities. All assigned batches are
-attempted even when tests fail. Ordinary test failures return the complete JSON
-and a nonzero exit. `complete` means every selected batch has terminal evidence;
-it does not mean tests passed. Whole-target runners may still omit normalized
-results when their completed process verdict is authoritative.
+Each `runs` entry includes its `batch_id`, `target`, `exit_code`, `success`,
+and normalized `results`. Every assigned batch runs even when tests fail.
+`complete` means every selected batch finished; it does not mean tests passed.
+Pass a CI partition only when the plan id and batch ids match, `complete` and
+`success` are both `true`, and the process exits successfully. Validation
+errors or interruptions can leave no final document and must fail the
+partition.
 
-Require the expected plan ID, exactly the assigned batch IDs, `complete: true`,
-`success: true`, and a successful process exit before passing a CI partition.
-Validation errors, interruptions, or infrastructure errors can produce an error
-envelope or no final document. They must never pass a partition. Cancellation
-forwards the signal to running batch processes and preserves native signal exit
-behavior. Exact batches retain isolated outputs and exact-set result validation.
+To attribute runs to a hosted test report, add
+`--external-group <UUID> --partition-index <N>`, where the index is a
+nonnegative integer. The coordinator then owns one consolidated report per
+partition.
 
-For hosted attribution, add `--external-group <UUID> --partition-index <N>`.
-The index is a nonnegative 32-bit integer. Authenticated native batch runs carry
-these fields, the portable plan ID, and their native batch ID in
-`RunStarted.test_context`, independently of normalized command arguments.
-An external group indicates that its coordinator owns the single consolidated
-test report per partition. Native batch events remain available for diagnostics
-and must not independently replace or duplicate the partition's shared test
-report. This context does not assert partition completion.
+## Distribute tests through Tuist
 
-## Distribute Tests Through Tuist
-
-Hosted sharding requires a Struo release with `--shards` and `--shard-plan`.
-Struo 0.71.0 supports portable plans only.
-
-Configure the existing native Tuist provider in the root `struo.toml`:
+Tuist can store the plan and assign shards for you. Configure the Tuist
+provider in the root `struo.toml`:
 
 ```toml
 [infrastructure.cache]
@@ -413,49 +319,87 @@ account = "acme"
 project = "app"
 ```
 
-The default server is `https://tuist.dev`; set `url` on the provider for another
-server. Struo reuses its native OAuth credentials, `TUIST_TOKEN`, or supported CI
-OIDC authentication. No Tuist executable is needed.
+The default server is `https://tuist.dev`; set `url` on the provider for
+another server. Struo reuses Tuist OAuth credentials, `TUIST_TOKEN`, or
+supported CI OIDC authentication. No Tuist executable is needed.
 
-After complete discovery, the planning job creates hosted assignments from
-opaque portable batch IDs and uploads the portable bytes bound to the hosted UUID:
+After complete discovery, the planning job uploads the plan and prints the
+shard matrix:
 
 ```sh
 struo query test-plan --shards 4 --reference "$CI_EXECUTION_ID" --format json
 ```
 
-The output is `{"shard_plan_id":"<UUID>","shards":[0,1,2,3]}`. Read the
-actual returned indices to construct your CI matrix. An empty plan returns an
-empty UUID and array. `--target` and repeated `--changed-path` retain their usual
-selection behavior. The reference defaults to `TUIST_SHARD_REFERENCE` or the
-detected CI run; pass it explicitly outside supported CI environments.
+The output is `{"shard_plan_id":"<UUID>","shards":[0,1,2,3]}`. Build your CI
+matrix from the returned indices; an empty plan returns an empty id and
+array. `--target` and `--changed-path` select work as usual. The reference
+defaults to `TUIST_SHARD_REFERENCE` or the detected CI run; pass it explicitly
+outside supported CI environments.
 
-Each worker uses the exact hosted UUID, not a reference that another planning
-job can replace:
+Each worker runs its shard with the exact plan id:
 
 ```sh
 struo test --shard-plan "$SHARD_PLAN_ID" --shard-index "$SHARD_INDEX" --jobs 4
 ```
 
-`TUIST_SHARD_PLAN_ID` and `TUIST_SHARD_INDEX` can supply the worker selection.
-Struo downloads and validates the UUID-bound artifact, executes every assigned
-batch through its resource-budgeted scheduler, and submits one immutable REST
+`TUIST_SHARD_PLAN_ID` and `TUIST_SHARD_INDEX` can supply these values. Struo
+downloads and validates the plan, runs every assigned batch, and submits one
 report. An empty assignment runs nothing. Missing results, failed processes,
-and interrupted work cannot pass the partition. Cancellation attempts a bounded
-failed report upload, then exits by the original signal. Native events remain
-diagnostic and do not assert partition completion.
+and interrupted work fail the shard.
 
-Case retries retain their ordered attempts. Shared Tests identity remains the
-native target, suite, and case name; distinct native case IDs with the same
-target/suite/name share that existing identity. Batch IDs are never case names.
+To rerun a shard, increase `--shard-attempt`. It defaults to
+`TUIST_SHARD_ATTEMPT`, then the GitHub run attempt, then 1. Increase
+`--shard-report-revision` (default 0) to submit a corrected report within the
+same attempt. These counters are separate from retries within a test case.
 
-For a rerun, increase `--shard-attempt`. It defaults to `TUIST_SHARD_ATTEMPT`,
-then the GitHub run attempt, then 1. `--shard-report-revision` defaults to 0 and
-can increase for a corrected report within the same attempt. Each invocation
-submits one report with one UUID and the supplied attempt and revision. These
-counters are separate from retries within a test case.
+## Add selection to a project module
 
-## Understand Current Ecosystem Coverage
+Project-local Starlark test kinds get the same discovery, exact-unit,
+affected-plan, and scheduling commands as built-in kinds. Query the live
+contract instead of copying a provider shape:
+
+```sh
+struo query module-contract --format json
+```
+
+The returned `test_starter`, `test_target_starter`, and
+`normalized_test_result_example` show the provider, manifest table, and
+result format. The adapter receives:
+
+- `--struo-results <path>`;
+- `--struo-log <path>`;
+- `--struo-target <target>`; and
+- one repeated `--struo-test-unit <identifier>` for each exact filter.
+
+The adapter writes `struo.test_results.v1`, uses stable target-qualified case
+identifiers, honors every requested filter, and exits unsuccessfully for a
+failed or unknown selection. Validate the module and workspace before the
+first run:
+
+```sh
+struo query validate-module modules/testing.star --format json
+struo query validate-workspace --format json
+```
+
+See the [modules reference](/reference/modules/) for the full authoring
+contract.
+
+## Use tests from coding agents
+
+With `--format json`, a failed command prints a `struo.error.v1` record on
+standard output and keeps logs on standard error, so agents can use the exit
+status for control flow and `error.message` for repairs. Read normalized
+results and attempts instead of scraping runner output.
+
+The same operations are available as
+[Model Context Protocol](https://modelcontextprotocol.io/) tools, including
+`struo_query_test_plan`, `struo_run_tests` (which accepts `test_batch`), and
+the read-only `struo_query_test_results`. The
+[tool reference](/reference/mcp/tools) maps each tool to its command.
+
+## Limitations
+
+Unit discovery and exact execution vary by target kind:
 
 | Target kind | Stable unit discovery | Exact unit execution | Automatic granularity |
 | --- | --- | --- | --- |
@@ -467,107 +411,33 @@ counters are separate from retries within a test case.
 | [`rust_test`](/reference/prelude/rust_test) | Yes | Yes | Target |
 | [`android_local_test`](/reference/prelude/android_local_test) | Yes | Yes | Target |
 | [`android_instrumentation_test`](/reference/prelude/android_instrumentation_test) | Yes, from a completed device run | Yes, through the instrumentation `class` argument | Target |
-| [`apple_test_bundle`](/reference/prelude/apple_test_bundle) with Swift Testing | Yes | Not yet | Target |
-| `shellspec_test` | Yes | Not yet | Target |
-| [`zig_test`](/reference/prelude/zig_test) | Suite-level fallback | Not yet | Target |
-| [`elixir_test`](/reference/prelude/elixir_test) | Summary counts only | Not yet | Target |
+| [`apple_test_bundle`](/reference/prelude/apple_test_bundle) with Swift Testing | Yes | No | Target |
+| [`shellspec_test`](/reference/prelude/shellspec_test) | Yes | No | Target |
+| [`zig_test`](/reference/prelude/zig_test) | Suite-level fallback | No | Target |
+| [`elixir_test`](/reference/prelude/elixir_test) | Summary counts only | No | Target |
 
-Unsupported ecosystems still participate in conservative affected selection
-and target-level scheduling. Struo reports the limitation instead of guessing a
-native filter.
+Kinds without exact execution still take part in affected selection and
+target-level scheduling.
 
-## Treat Sharding As Scheduling
+Coverage-assisted selection has its own limits:
 
-The scheduler creates stable batches, orders them using recent uncached
-durations, and lets idle workers pull the next batch. This avoids the duration
-skew of a fixed partition while keeping the plan independent from the
-requested worker count.
+- Android device instrumentation has no coverage collector and keeps
+  graph-selected work.
+- Apple coverage is validated on macOS host bundles, not simulators or
+  devices.
+- CTest, Zig, Bazel, ShellSpec, and Apple bundles measure whole invocations,
+  not individual native cases.
+- Nx and Turborepo tasks reuse the Jest or Vitest collector only for a single
+  native command without task outputs, shell expansion, or plugin executor
+  wrapping.
+- Collecting coverage bypasses the execution cache.
 
-Dynamic-language runners default to file batches because files commonly share
-imports, fixtures, database setup, and interpreter startup. Every discovered
-case from one file stays in the same batch. Historical batch durations let
-Struo balance those stable files without coupling the plan to four, eight, or
-any other fixed number of workers. A target can opt into case granularity when
-its runner and setup make smaller batches worthwhile. Use `batching = "target"`
-for the dynamic-language runners when repeated startup or shared fixtures cost
-more than parallel execution saves. More workers do not force a finer batch
-size, and more batches are not a guarantee of a faster run.
+## Next steps
 
-Concurrent batches write results, logs, and native output below isolated batch
-directories. After all batches finish, Struo validates and merges them into one
-canonical target result. The plan contains no provider-specific or
-worker-specific assignment, so local or future remote placement does not
-redefine test identity. Each worker runs a local schedule; an external CI
-coordinator can assign the exported portable batches across workers.
-
-Before scheduling a complete target scope, Struo verifies that exact batches are
-disjoint and cover its current discovered units. Exact batch results must report
-every requested unit exactly once and no unrequested units. A runner that
-ignores a filter, reports duplicate IDs, or exits successfully without valid
-passing evidence fails the batch. A startup failure retains its exit status and
-diagnostic output instead of being replaced by a capability acknowledgement
-error. Results must remain in the batch's isolated output directory.
-
-Discovery freshness depends on declared collection inputs. A runner must report
-a complete whole-target inventory and declare inputs that change dynamic test
-registration. A fingerprint cannot prove that an adapter reported every real
-case. Periodic whole-target runs help detect inventory drift.
-
-## Add Selection to a Project Module
-
-Project-local Starlark test kinds use the same discovery and planning surfaces
-as built-in kinds. Query the live contract instead of copying a provider shape:
-
-```sh
-struo query module-contract --format json
-```
-
-The returned `test_starter` includes the complete `struo_test_info` provider,
-normalized result paths, action declaration, and filter plumbing.
-`test_target_starter` shows the matching manifest table, and
-`normalized_test_result_example` is the machine-readable output contract. Its
-adapter receives:
-
-- `--struo-results <path>`;
-- `--struo-log <path>`;
-- `--struo-target <target>`; and
-- one repeated `--struo-test-unit <identifier>` for each exact filter.
-
-The adapter writes `struo.test_results.v1`, uses stable target-qualified case
-identifiers, honors every requested filter, and exits unsuccessfully for a
-failed or unknown selection. Struo rejects incomplete normalized results before
-using them for discovery or accepting a scheduled batch. Validate the module
-and workspace before the first run:
-
-```sh
-struo query validate-module modules/testing.star --format json
-struo query validate-workspace --format json
-```
-
-After a complete run, the normal manifest, exact-plan, affected-plan, and
-scheduler commands work without a parallel project-specific interface. See the
-[modules reference](/reference/modules/) for the full authoring contract.
-
-## Agent Checklist
-
-For a coding agent, the safe loop is short:
-
-1. Query test targets and capabilities.
-2. Inspect an affected plan before running change-scoped tests.
-3. Run a complete target before relying on its manifest.
-4. Request an exact unit only when the manifest declares runner argument
-   filtering.
-5. Treat prioritization and worker count as ordering, never as permission to
-   remove tests.
-6. Read normalized results and schedule attempts instead of scraping native
-   runner output.
-
-With `--format json`, command failures return an `struo.error.v1` record on
-standard output and keep diagnostic logs on standard error. Agents can use the
-process status for control flow and the structured `error.message` field for
-repairs.
-
-The same operations are available through the
-[Model Context Protocol](https://modelcontextprotocol.io/) tools. The
-[tool reference](/reference/mcp/tools) maps each tool to its matching terminal
-command.
+- [Tuist](/guide/infrastructure/tuist): configure the project used for
+  coverage history and hosted shards.
+- [`struo test` reference](/reference/cli/test): see every selection and
+  scheduling flag.
+- [Linting](/guide/graph/linting): add cacheable analyzers beside your tests.
+- [Ecosystems](/guide/graph/ecosystems): declare test targets for your build
+  system.

@@ -1,14 +1,14 @@
 # Object Storage Cache
 
-An object storage bucket can hold Struo's shared cache. Every machine keeps its
-local cache, consults the bucket on a local miss, and publishes new results to
-it. No cache server runs between them: Struo talks to the storage service
-directly.
+Share Struo cache results across machines and CI through an Amazon S3, Google
+Cloud Storage, Azure Blob Storage, or S3-compatible bucket, with no cache server.
 
-Use it for development teams and CI fleets that already have a bucket, for a
-self-hosted cache, or to try shared caching without an account anywhere.
+Every machine keeps its local cache, consults the bucket on a local miss, and
+publishes new results to it. Use it for teams and CI fleets that already have a
+bucket, for a self-hosted cache, or to try shared caching without an account.
 
 **Capabilities:** shared caching. This provider does not execute actions.
+Automated checks use local emulators; live cloud services are unverified.
 
 ## Prerequisites
 
@@ -173,13 +173,7 @@ deleted is treated as a miss, and Struo runs the action again.
   cache, and the command reports the corruption.
 
 Publishing is best effort. A failed upload is logged as a warning, and the
-command still succeeds with its local result. Cancelling an action does not
-release an upload's memory, staging space, or transfer slot before the
-backend finishes the admitted upload.
-
-Reads issue a metadata request before downloading an object so Struo can
-reserve memory and staging disk before starting the body transfer. These
-requests count toward the storage service's request charges and rate limits.
+command still succeeds with its local result.
 
 ### Service compatibility
 
@@ -199,10 +193,9 @@ as a local MinIO, need `allow_http = "true"`.
 
 - Content is stored uncompressed, so transfer and storage costs match the raw
   size of outputs.
-- Remote downloads check object sizes before fetching their bodies. Each
-  remote result lookup also makes one existence check
-  per referenced blob not already held locally. Request-priced services charge
-  for each.
+- Each download makes a metadata request before fetching the body, and each
+  remote result lookup makes one existence check per referenced blob not
+  already held locally. Request-priced services charge for each.
 - A standalone stream larger than 8 MiB, such as a large log written outside an
   action result, stays local until an action result that references it is
   published.
@@ -210,3 +203,12 @@ as a local MinIO, need `allow_http = "true"`.
   bucket or prefix with its own credentials for each trust boundary.
 - A `file://` store on a network filesystem is only as safe for concurrent
   writers as that filesystem's rename.
+
+## Next steps
+
+- [HTTP Build Cache](/guide/infrastructure/http-cache): use a WebDAV or HTTP
+  cache your CI runners already reach instead.
+- [Cache provider contract](/reference/infrastructure/cache): see the exact
+  layout Struo writes to the bucket.
+- [Remote Execution](/guide/infrastructure/remote-execution): run actions on
+  another machine and reuse their results through this cache.

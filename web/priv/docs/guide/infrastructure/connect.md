@@ -1,12 +1,16 @@
-# Connect A Project
+# Connect a Project
 
-`struo connect` provisions a project with an infrastructure provider and records
-the binding in your repository. It is the shortest path from a local project to
-a shared remote project.
+Use `struo connect` to create a project with an infrastructure provider and bind
+your repository to its shared cache in one command, or bind an existing project.
 
-## One Step
+Tuist is currently the only provider that supports `struo connect`. For other
+providers, add the binding to `struo.toml` by hand as described in their
+[guides](/guide/infrastructure/#available-providers).
 
-With [Tuist](/guide/infrastructure/tuist) as the provider:
+## Create and connect a project
+
+Create a project on [Tuist](/guide/infrastructure/tuist) and bind this
+repository to it:
 
 ```sh
 struo connect --provider tuist --create
@@ -27,15 +31,16 @@ account = "acme"
 project = "app"
 ```
 
-That is the whole setup on the machine that ran the command. The manifest
-itself holds no credentials: teammates and continuous integration still sign
-in with `struo auth login --provider tuist` (or a `TUIST_TOKEN`) before they can
-read or write the shared project.
+Commit the file so teammates and CI use the same project. It holds no
+credentials: each machine still signs in with
+`struo auth login --provider tuist`, or sets `TUIST_TOKEN` in CI, before it can
+read or write the shared cache.
 
-## Choose The Account And Name
+## Choose the account and name
 
-Pass the account and project explicitly when the workspace name is not the
-project handle you want, or when the project should live in an organization:
+Pass the account and project explicitly when the workspace directory name is not
+the project handle you want, or when the project should belong to an
+organization:
 
 ```sh
 struo connect --provider tuist --create --account acme --project app
@@ -44,7 +49,7 @@ struo connect --provider tuist --create --account acme --project app
 When `--account` is omitted, the provider creates the project under the account
 that owns your session, such as your personal account.
 
-## Bind An Existing Project
+## Bind an existing project
 
 Leave out `--create` to bind a project that already exists:
 
@@ -52,11 +57,11 @@ Leave out `--create` to bind a project that already exists:
 struo connect --provider tuist --account acme --project app
 ```
 
-With no account or project, Struo lists the projects the connected session can
-see. It binds automatically when there is exactly one and asks you to choose
-when there are several.
+With no account or project, Struo lists the projects your session can see. It
+binds automatically when there is exactly one and asks you to choose when there
+are several.
 
-## Preview And Verify
+## Preview and verify
 
 Print the binding without creating a project, signing in, or writing anything:
 
@@ -65,23 +70,16 @@ struo connect --provider tuist --create --account acme --project app --dry-run
 ```
 
 A dry run with `--create` needs an explicit `--account`, since the account is
-only known once the project exists.
+otherwise only known once the project exists.
 
 Pass `--format json` for a machine-readable result. Re-running the same command
-is safe: Struo resolves the binding already in the workspace before contacting
-the provider, detects that it matches, and reports that the workspace is
-connected without rewriting the file or creating a second project.
+is safe: when the workspace already has a matching binding, Struo reports that
+it is connected without rewriting the file or creating a second project.
 
-## Why It Is Provider Neutral
+## Next steps
 
-`struo connect` does not name a provider. It resolves the provider the same way
-`struo auth login` does, asks that provider to create or list a project, and
-writes the provider-neutral binding the rest of Struo already reads. Tuist is the
-first provider to implement project provisioning; a future provider plugs into
-the same workflow without a new command.
-
-## Next
-
-Read [Tuist](/guide/infrastructure/tuist) to learn how shared cache entries are
-verified across machines, then open [Infrastructure](/guide/infrastructure/) to
-add an execution provider when commands should run away from your computer.
+- [Remote Execution](/guide/infrastructure/remote-execution), to run actions in
+  fresh environments as well as caching them.
+- [Tuist](/guide/infrastructure/tuist), for authentication in CI and how shared
+  cache entries are verified across machines.
+- [`struo connect` reference](/reference/cli/connect), for every option.

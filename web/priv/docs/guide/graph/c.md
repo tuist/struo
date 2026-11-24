@@ -1,13 +1,10 @@
----
-prev: false
-next: false
----
+# C and C++ Static Libraries
 
-# C and C++
+Build C and C++ static libraries with Struo's `c_library` target kind, cache the compiled objects, and link the archive into Zig, Apple, or Android targets.
 
-Struo can compile C and C++ sources into object files and archive them as a
-static library. This guide starts with the shipped C library example, then
-shows how the same target accepts C++ sources.
+Struo does not read Makefiles or other native C build files. You declare each
+library in `struo.toml`. To keep an existing CMake build, see
+[CMake](/guide/graph/cmake).
 
 ## Prerequisites
 
@@ -20,12 +17,20 @@ ar --version
 c++ --version
 ```
 
-Set `compiler`, `archiver`, or `cxx_compiler` when the project should use
-different executable paths.
+Set `compiler`, `archiver`, or `cxx_compiler` on the target when the project
+should use different executable paths.
 
-## Declare a Static Library
+## Declare targets
 
-Create `native/math/struo.toml`:
+### Declare a static library
+
+Copy the shipped starter into `native/math`, or create the files by hand:
+
+```sh
+struo edit materialize-example c_library c-library-minimal --destination native/math
+```
+
+The manifest at `native/math/struo.toml` declares one library:
 
 ```toml
 [[target]]
@@ -38,7 +43,7 @@ hdrs = ["include/native_math.h"]
 includes = ["include"]
 ```
 
-Use this source layout:
+It uses this source layout:
 
 ```text
 native/math/
@@ -52,7 +57,7 @@ native/math/
 `hdrs` publishes the header to dependent targets. `includes` lets the source
 and consumers include it as `#include "native_math.h"`.
 
-## Query Before Building
+### Query before building
 
 Inspect the target and the complete `c_library` contract:
 
@@ -62,10 +67,9 @@ struo query capabilities native/math/native_math
 struo query schema c_library
 ```
 
-The target exposes `build`. There is no shipped C or C++ binary or test target,
-so this guide does not use `struo run` or `struo test`.
+The target exposes `build` only.
 
-## Build the Library
+### Build the library
 
 Build the static archive:
 
@@ -73,16 +77,12 @@ Build the static archive:
 struo build native/math/native_math
 ```
 
-On macOS and Linux, the default archive is
+On macOS and Linux, the archive is
 `.struo/out/native/math/native_math/libnative_math.a`. On Windows, it is
-`.struo/out/native/math/native_math/native_math.lib`. Compiled objects appear
-under `.struo/out/native/math/native_math/objects/` and preserve the source
-path, which prevents similarly named sources from colliding.
+`.struo/out/native/math/native_math/native_math.lib`. Set `output_name` to
+change the archive name without changing the target identifier.
 
-Set `output_name` to change the archive name without changing the target
-identifier.
-
-## Add C++ Sources
+### Add C++ sources
 
 The same target can compile C and C++ together. Extend its source patterns when
 the library gains a C++ implementation:
@@ -98,42 +98,47 @@ hdrs = ["include/native_math.h", "include/native_stats.hpp"]
 includes = ["include"]
 ```
 
-Struo selects `cc` for `.c` files and `c++` for `.cc`, `.cpp`, and `.cxx`
-files. The C++ compiler is not required for a target that contains only C
-sources.
+Struo compiles `.c` files with `cc` and `.cc`, `.cpp`, and `.cxx` files with
+`c++`. A target that contains only C sources does not need a C++ compiler.
 
-## Connect Native Consumers
+### Declare a header-only library
 
-Another `c_library` can depend on `./native_math`; it receives the transitive
-headers, include directories, definitions, static libraries, dynamic
-libraries, linker flags, and data declared by the dependency.
+Omit `srcs` and publish `hdrs` or `header_globs`. The target then passes its
+headers and compile settings to dependents without producing an archive.
 
-Zig targets consume the same contract directly. For example, a
-[`zig_binary`](/reference/prelude/zig_binary) can list this library in `deps`
-and receive its headers and link inputs. Apple link targets can consume the
-static archive through the native linkable contract. For Android packaging,
-the target can propagate prebuilt dynamic libraries when `android_abi`
-identifies their
-[Application Binary Interface](https://developer.android.com/ndk/guides/abis).
+## Manage dependencies
 
-Header-only targets are valid. Omit `srcs` and publish `hdrs` or
-`header_globs`; the target then propagates its compile context without
-producing an archive.
+Another `c_library` can list `./native_math` as a dependency. It receives the
+headers, include directories, definitions, static and dynamic libraries,
+linker flags, and data declared by that library and its own dependencies.
 
-## Target Reference and Limitations
+Other ecosystems consume the same library:
 
-The [`c_library` reference](/reference/prelude/c_library) documents compiler
-selection, public headers, include directories, definitions, compiler and
-linker options, prebuilt dynamic libraries, data, dependencies, and the
-`library` output group.
+- A [`zig_binary`](/reference/prelude/zig_binary) can list it in `deps` and
+  receive its headers and link inputs.
+- Apple link targets can link the static archive.
+- Android packaging can include prebuilt dynamic libraries from the target
+  when `android_abi` names their
+  [Application Binary Interface](https://developer.android.com/ndk/guides/abis).
 
-The shipped target kind builds static libraries only. It does not link a C or
-C++ executable, build a shared library from source, or provide a native test
-runner. Use a consuming ecosystem target when it owns the final executable or
-shared artifact.
+## Limitations
 
-## Next
+- `c_library` builds static libraries only. It does not link a C or C++
+  executable or build a shared library from source. Let the consuming
+  ecosystem target own the final executable or shared artifact.
+- There is no C or C++ test target, so `struo run` and `struo test` do not
+  apply to these targets.
 
-Continue with [Zig](/guide/graph/zig) when a Zig executable should consume the
-library. Otherwise, connect the archive to the Apple or Android target that
-owns the final product, then query that consumer before building it.
+## Target kinds
+
+- [`c_library`](/reference/prelude/c_library): compiler selection, public
+  headers, include directories, definitions, compiler and linker options,
+  prebuilt dynamic libraries, data, and dependencies.
+
+## Next steps
+
+- [Zig](/guide/graph/zig): link the library into a Zig executable.
+- [Apple](/guide/graph/apple) or [Android](/guide/graph/android): connect the
+  archive to the target that owns the final app.
+- [CMake](/guide/graph/cmake): wrap an existing CMake project instead of
+  declaring each library.

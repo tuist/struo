@@ -51,13 +51,16 @@ local package still use the root package's resolved dependency versions.
 A product can group several targets. Depending on that product includes every
 target it exports, even when one target has the same name as the product.
 
-For source-control dependencies, the resolver uses `Package.resolved` or asks
-Swift Package Manager to create it when it is absent. It materializes the
-pinned sources and lowers their package targets into the same Apple target
-kinds. Struo compiles those targets directly with the selected Swift compiler.
-Swift Package Manager supplies manifest and lockfile metadata, but does not
-build the dependency products. Registry dependencies are not supported by
-native package lowering yet.
+For source-control and registry dependencies, the resolver uses
+`Package.resolved` or asks Swift Package Manager to create it when it is
+absent. It materializes the pinned sources and lowers their package targets
+into the same Apple target kinds. Source-control packages are checked out at
+the pinned revision. Registry packages are read from the archive Swift Package
+Manager downloaded for the pinned version; when it is missing, the resolver runs
+`swift package resolve` once to fetch it. Struo compiles those targets directly
+with the selected Swift compiler. Swift Package Manager supplies manifest and
+lockfile metadata, but does not build the dependency products. Any other pin
+kind fails analysis with an error naming the package.
 
 Library targets are force-loaded into whatever links them, matching how Swift
 Package Manager hands the linker every object file a target produced. A source

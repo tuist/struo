@@ -55,8 +55,8 @@ defmodule StruoSiteWeb.DocsLiveTest do
   test "renders the native Cargo adoption path", %{conn: conn} do
     {:ok, _view, html} = live(conn, ~p"/docs/guide/graph/rust")
 
-    assert html =~ "Start With an Existing Cargo Project"
-    assert html =~ "Choose How Much Configuration to Own"
+    assert html =~ "Start from an existing Cargo project"
+    assert html =~ "Choose how much configuration to own"
     assert html =~ "struo query targets --kind rust_binary"
   end
 
@@ -99,7 +99,7 @@ defmodule StruoSiteWeb.DocsLiveTest do
 
   test "documents explicit modules, dependency checks, and deferred planning", %{conn: conn} do
     {:ok, _view, html} = live(conn, ~p"/docs/guide/graph/apple")
-    assert html =~ "Explicit Modules and Dependency Checks"
+    assert html =~ "Explicit modules and dependency checks"
     assert html =~ "dependency_check"
     assert html =~ "not a downloadable hermetic Apple toolchain"
 
@@ -158,6 +158,31 @@ defmodule StruoSiteWeb.DocsLiveTest do
              ~s(<link rel="canonical" href="#{StruoSiteWeb.Endpoint.url()}/docs/guide/why">)
 
     refute why =~ ~s(name="robots")
+
+    assert why =~
+             ~s(<link rel="alternate" type="text/markdown" href="#{StruoSiteWeb.Endpoint.url()}/docs-markdown/guide/why">)
+  end
+
+  test "a page's structured data places it in the docs hierarchy", %{conn: conn} do
+    html = conn |> get(~p"/docs/guide/memory/evidence") |> html_response(200)
+
+    [json] =
+      Regex.run(~r{<script type="application/ld\+json">(.*?)</script>}s, html,
+        capture: :all_but_first
+      )
+
+    graph = Jason.decode!(json)["@graph"]
+    site = StruoSiteWeb.Endpoint.url()
+
+    assert %{"headline" => "Query Action Evidence"} =
+             Enum.find(graph, &(&1["@type"] == "TechArticle"))
+
+    assert Enum.find(graph, &(&1["@type"] == "BreadcrumbList"))["itemListElement"]
+           |> Enum.map(&{&1["position"], &1["name"], &1["item"]}) == [
+             {1, "Documentation", site <> "/docs"},
+             {2, "Memory", site <> "/docs/guide/memory"},
+             {3, "Evidence", site <> "/docs/guide/memory/evidence"}
+           ]
   end
 
   test "serves raw markdown", %{conn: conn} do

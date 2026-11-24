@@ -1,20 +1,23 @@
 # Together Code Sandbox
 
 [Together Code Sandbox](https://docs.together.ai/docs/together-code-sandbox)
-runs commands in hosted sandboxes created from prepared snapshots. Your
-organization must request sandbox access from Together before using this
-provider. An API key alone does not establish access.
+runs hosted sandboxes from prepared snapshots. Struo runs each uncached action
+remotely in an ephemeral sandbox, then terminates it.
+
+Struo transfers declared inputs into a clean directory, runs the command,
+downloads and validates declared outputs after an accepted exit code, and
+terminates the sandbox.
 
 **Capabilities:** remote execution. Configure shared caching separately.
 
 ## Prerequisites
 
-Use Together's supported CLI or SDK to create a Linux snapshot containing your
-tools. The snapshot must provide `sh`, `rm`, `mkdir`, and `tar` on `PATH`, a
-writable `/tmp`, and an agent supporting raw binary file reads.
-The snapshot's `tar` must support `--hard-dereference`, as GNU tar does. Struo
-uses it to restore hard-linked output files as independent regular files while
-preserving symlinks. Unsupported tar implementations fail output collection.
+- Sandbox access for your organization, requested from Together. An API key
+  alone does not establish access.
+- A Linux snapshot containing your tools, created with Together's supported CLI
+  or SDK. It must provide `sh`, `rm`, `mkdir`, and `tar` on `PATH`, a writable
+  `/tmp`, and an agent supporting raw binary file reads. Its `tar` must support
+  `--hard-dereference`, as GNU tar does.
 
 For example, create a snapshot from a pinned Node.js image with Together's CLI:
 
@@ -27,8 +30,7 @@ snapshots or install the Together SDK.
 
 ## Configuration
 
-Copy the resulting
-snapshot ID into the workspace's `struo.toml`:
+Copy the resulting snapshot ID into the repository root `struo.toml`:
 
 ```toml
 [infrastructures.remote_tests]
@@ -39,58 +41,83 @@ snapshot = "<snapshot-id>"
 provider = "remote_tests"
 ```
 
-Use a snapshot ID, not a mutable alias. Struo includes the provider binding and
-snapshot reference in the action's cache identity. Keep repository dependencies,
-including `node_modules`, as declared inputs and outputs instead of baking them
-into the snapshot. See [Remote Execution](/guide/infrastructure/remote-execution)
-for a dependency-installation and test workflow.
+Use a snapshot ID, not a mutable alias; the snapshot reference is part of the
+action's cache identity. Keep repository dependencies, including
+`node_modules`, as declared inputs and outputs instead of baking them into the
+snapshot.
 
 ### Authentication
 
 Set `TOGETHER_API_KEY` outside the script. `STRUO_TOGETHER_API_KEY` takes
-precedence when both variables exist. Struo does not add this key to the action's
-environment or cache identity.
+precedence when both variables exist. Struo does not add this key to the
+action's environment or cache identity.
+
+`STRUO_TOGETHER_API_URL` overrides the management API origin, whose default is
+`https://api.bartender.codesandbox.io`.
 
 ## Usage
+
+Run a literal command on the provider:
 
 ```sh
 struo exec --remote --compute remote_tests -- node --version
 ```
 
-An annotated script can select the same provider with
-`# struo remote "remote_tests"`.
+Omit `--compute remote_tests` to use the workspace's default execution provider.
 
-Struo transfers
-declared inputs, executable modes, and safe symlinks into a clean execution
-directory. After an accepted exit code it downloads, validates, and installs
-only declared outputs. Unsafe archives fail before installation.
+### Run an annotated test script
 
-Struo preserves binary stdout and stderr. Output appears after the command
-finishes, rather than live. Update the snapshot if Struo reports an agent
-without raw-download support.
+Save this script as `scripts/test.sh`:
+
+```sh
+#!/bin/sh
+# struo remote "remote_tests"
+# struo cwd ".."
+# struo input "../node_modules"
+# struo input "../package.json"
+# struo input "../tests"
+# struo output "../reports"
+
+node node_modules/vitest/vitest.mjs run \
+  --reporter=json --outputFile=reports/vitest.json
+```
+
+Run it:
+
+```sh
+struo exec --script -- sh scripts/test.sh
+```
+
+Declare any additional source, configuration, or setup files your tests read.
+Struo preserves executable modes and safe symbolic links. Native dependencies
+must match the guest's Linux architecture and runtime. To produce
+`node_modules` in a separate cacheable action, see
+[Remote Execution](/guide/infrastructure/remote-execution).
 
 ## Limits and cleanup
 
-Struo creates one ephemeral sandbox for an action that misses the cache. It
-sets a TTL of ten minutes without an action timeout, or the timeout rounded up
-to seconds plus two minutes. It requests no termination snapshot and explicitly
-terminates after success, failure, transfer errors, or cancellation. Cleanup
-waits for Together to confirm termination before making execution capacity
-available again.
+- Stdout and stderr are preserved as binary and appear after the command
+  finishes, not live. Update the snapshot if Struo reports an agent without
+  raw-download support.
+- The default sandbox size is 1 vCPU and 2 GB; Struo's resource declarations do
+  not resize the guest.
+- Output-idle timeouts, network denial, output path redirection, and graph
+  filesystem setup are rejected instead of ignored.
 
-Transfers and captures respect Struo's resource limits.
-The provider's default sandbox size is 1 vCPU and 2 GB; action resource
-estimates govern coordinator admission, not guest sizing.
+Struo terminates the sandbox after success, failure, transfer errors, or
+cancellation and waits for Together to confirm. It requests no termination
+snapshot. Each sandbox also has a TTL, ten minutes without an action timeout or
+the timeout plus two minutes, in case the client disappears.
 
-Together execution does not support command-output idle timeouts, network
-denial, output-path redirection, or graph command filesystem setup. Struo
-rejects these requirements instead of ignoring them.
+A lost create response or interrupted cleanup stays recorded in the workspace's
+`.struo` runtime state, and a later run finishes cleanup for sandboxes carrying
+Struo's ownership tag. Struo never retries creation.
 
-Struo journals creation intent and an ownership tag before sending the create
-request. A later run can recover a lost create response or interrupted cleanup
-by looking up that tag. It does not retry creation or delete sandboxes with
-other ownership tags. Failed or inconclusive recovery keeps the journal entry.
-TTL provides a separate safety net if the client or journal disappears.
+## Next steps
 
-`STRUO_TOGETHER_API_URL` overrides the management API origin, whose default is
-`https://api.bartender.codesandbox.io`.
+- [Remote Execution](/guide/infrastructure/remote-execution): split dependency
+  installation and tests into separate cacheable actions.
+- [Infrastructure](/guide/infrastructure#available-providers): pick a cache
+  provider so other machines reuse remote results.
+- [Execution provider contract](/reference/infrastructure/execution): see what
+  every execution provider guarantees.

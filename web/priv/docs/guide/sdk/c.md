@@ -1,18 +1,19 @@
----
-prev: false
-next: false
----
+# C SDK
 
-# C Software Development Kit
+Use `libstruo` and `struo.h` to store blobs and action results in a Struo cache
+from C or any language with a C foreign-function interface, using JSON requests.
 
-The C library is the lowest-level supported language binding. Link `libstruo`
-and include `struo.h` when an application needs direct cache access without a
-language wrapper. Script and graph execution remain command-line features.
+The C library is the lowest-level SDK; the Swift, Ruby, and Node.js SDKs are
+built on it. Script and graph execution remain command-line features. See the
+[SDK overview](/guide/sdk/) to compare languages.
 
-Build or obtain the shared or static `libstruo` library, then use `struo.h` from
-the matching tagged source distribution. Add both to the host build system.
+## Installation
 
-## Store A First Blob
+Build or obtain the shared or static `libstruo` library, then use `struo.h`
+from the matching tagged source distribution. Add both to the host build
+system: put `struo.h` on the include path and link against `libstruo`.
+
+## Quick start
 
 This complete example stores `hello` in the default local cache and prints the
 response:
@@ -31,15 +32,30 @@ int main(void) {
 }
 ```
 
-## Ownership And Responses
+The response contains the blob's digest in `value`. Pass it as `digest` to
+`struo_cache_get_blob_json` to read the bytes back.
 
-Every `struo_*` function that returns `char *` returns an owned
-[Unicode Transformation Format, 8-bit](https://www.unicode.org/faq/utf_bom.html#UTF8)
-string. Release it with `struo_string_free`, including error responses.
+### Open a cache
 
-Cache and action-key requests use
-[JavaScript Object Notation](https://www.json.org/json-en.html). Responses have
-one of these shapes:
+Omit cache-selection fields to use the
+[default local cache](/guide/sdk/#choose-a-cache). Add at most one of these
+optional fields to any cache request:
+
+| Field | Use |
+| --- | --- |
+| `local_cache_root` | Opens an isolated local cache at this path. |
+| `workspace_root` | Resolves the same effective provider as the command line for this workspace. |
+
+`struo_version` returns the linked Struo version.
+
+## Ownership and responses
+
+Every `struo_*` function that returns `char *` returns an owned UTF-8 string.
+Release it with `struo_string_free`, including error responses. All functions
+are thread-safe and reentrant.
+
+Requests and responses use [JSON](https://www.json.org/json-en.html).
+Responses have one of these shapes:
 
 ```json
 { "status": "ok", "value": "..." }
@@ -49,35 +65,23 @@ one of these shapes:
 { "status": "error", "message": "..." }
 ```
 
-## Cache Selection
-
-Omit cache-selection fields to use the default local cache. Add exactly one of
-these optional fields to any cache request:
-
-| Field | Use |
-| --- | --- |
-| `local_cache_root` | Opens an isolated local cache at this path. |
-| `workspace_root` | Resolves the same effective provider as the command line for this workspace. |
-
-The workspace selection follows the provider precedence described in the
-[language-library overview](/guide/sdk/).
-
 ## Blobs
 
 | Function | Use |
 | --- | --- |
-| `struo_digest_bytes` | Hashes a byte buffer without touching storage. |
+| `struo_digest_bytes` | Hashes a byte buffer without touching storage. A null pointer is accepted only with length zero. |
 | `struo_cache_put_blob_json` | Stores the `bytes` array from a request. |
-| `struo_cache_put_file_json` | Stores the file at `path` without structured-text byte expansion. |
-| `struo_cache_get_blob_json` | Returns a blob as a `bytes` array. |
-| `struo_cache_get_blob_to_file_json` | Writes a blob to `path` and returns its byte count. |
-| `struo_cache_has_blob_json` | Returns whether a digest exists. |
+| `struo_cache_put_file_json` | Stores the file at `path` without encoding its bytes in the request. |
+| `struo_cache_get_blob_json` | Returns the blob for `digest` as a `bytes` array. |
+| `struo_cache_get_blob_to_file_json` | Writes the blob for `digest` to `path` and returns its byte count. |
+| `struo_cache_has_blob_json` | Returns whether `digest` exists. |
 
 Use the file functions for payloads whose size is not tightly bounded.
 
-## Action Keys And Results
+## Action keys and results
 
-`struo_action_key_json` accepts a namespace and ordered inputs:
+`struo_action_key_json` accepts a namespace and ordered inputs. Input order is
+significant and must be deterministic:
 
 ```json
 {
@@ -89,16 +93,41 @@ Use the file functions for payloads whose size is not tightly bounded.
 }
 ```
 
-Input order is significant and must be deterministic. The returned digest can
-be passed to the action-result functions:
+Pass the returned digest as `action_digest` to the action-result functions:
 
 | Function | Use |
 | --- | --- |
-| `struo_cache_put_action_result_json` | Stores action metadata under `action_digest`. |
-| `struo_cache_get_action_result_json` | Returns action metadata when it exists. |
-| `struo_cache_forget_action_json` | Removes action metadata without deleting referenced blobs. |
+| `struo_cache_put_action_result_json` | Stores the `result` object under `action_digest`. |
+| `struo_cache_get_action_result_json` | Returns action metadata, or `null` when none exists. |
+| `struo_cache_forget_action_json` | Removes action metadata without deleting referenced blobs and returns whether it existed. |
+| `struo_cache_stats_json` | Reports statistics for the local cache tier. |
 
-## Statistics
+## Errors and types
 
-`struo_cache_stats_json` reports statistics for the local cache tier. It takes
-no action digest and describes the local tier only.
+Failures, including invalid JSON, invalid digests, and cache errors, return the
+error response shape with a `message`. A missing action result returns `null`
+as the `value`; a remote service that cannot answer returns an error instead.
+See [misses, failures, and integrity](/guide/sdk/#misses-failures-and-integrity).
+
+An action result uses snake case. `stdout`, `stderr`, and `outputs` are
+optional:
+
+```json
+{
+  "exit_code": 0,
+  "stdout": "<stdout digest>",
+  "outputs": { "out/app": "<output digest>" }
+}
+```
+
+`struo_cache_stats_json` returns `blob_count`, `blob_bytes`, `action_count`,
+and `action_bytes`.
+
+## Next steps
+
+- [SDK overview](/guide/sdk/): understand cache selection, retries, and
+  transfer budgets shared by every SDK.
+- [Swift SDK](/guide/sdk/swift): use a typed async wrapper over this library
+  on Apple platforms.
+- [Infrastructure](/guide/infrastructure/): configure the remote cache that
+  `workspace_root` resolves.

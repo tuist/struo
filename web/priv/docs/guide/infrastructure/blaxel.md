@@ -1,26 +1,29 @@
-# Blaxel
+# Blaxel Sandboxes
 
-**Capabilities:** remote execution. Bind a separate
-[cache provider](/guide/infrastructure) for shared caching.
+[Blaxel Sandboxes](https://docs.blaxel.ai/Sandboxes/Overview) are hosted Linux
+virtual machines. Struo runs each uncached action in a fresh Blaxel sandbox and
+deletes it afterwards.
 
-[Blaxel Sandboxes](https://docs.blaxel.ai/Sandboxes/Overview) run commands in
-hosted Linux virtual machines. For each uncached action, Struo creates a fresh
-sandbox, uploads declared inputs, executes the command, retrieves declared
-outputs after an accepted exit code, and permanently deletes the sandbox.
+Struo uploads declared inputs, executes the command, retrieves declared outputs
+after an accepted exit code, and permanently deletes the sandbox.
+
+**Capabilities:** remote execution. Configure shared caching separately. Local
+protocol tests cover this provider; live account access, execution and teardown
+are unverified.
 
 ## Prerequisites
 
-Choose a supported Blaxel image or a custom template prepared with your test
-runtime. Use an immutable image reference when reproducibility matters.
-
-The image must provide `python3` with isolated mode (`-I`) and its standard
-library on the default guest `PATH`, `sh`, `rm`, `mkdir`, `tar` supporting
-`--hard-dereference`, a writable `/tmp` and `/workspace`, and your command's
-runtime. Struo does not build or deploy custom templates. Your workspace needs
-sandbox creation, execution, file access and deletion permissions, with process
-keep-alive enabled.
+- A Blaxel workspace with sandbox creation, execution, file access and deletion
+  permissions, and process keep-alive enabled.
+- A supported Blaxel image or a custom template prepared with your runtime.
+  Struo does not build or deploy custom templates. The image must provide
+  `python3` with isolated mode (`-I`) and its standard library on the default
+  guest `PATH`, `sh`, `rm`, `mkdir`, `tar` supporting `--hard-dereference`, and
+  a writable `/tmp` and `/workspace`.
 
 ## Configuration
+
+Bind the image in the repository root `struo.toml`:
 
 ```toml
 [infrastructures.remote_tests]
@@ -31,81 +34,91 @@ image = "blaxel/base-image:latest"
 provider = "remote_tests"
 ```
 
-The example uses a mutable tag for convenience. Replacing an image under the
-same reference does not change Struo's action cache identity.
+The example uses a mutable tag for convenience. Use an immutable image reference
+when reproducibility matters; replacing an image under the same reference does
+not change Struo's action cache identity.
+
+### Authentication
 
 Set `BL_API_KEY` and `BL_WORKSPACE` outside the action environment.
 `STRUO_BLAXEL_API_KEY` and `STRUO_BLAXEL_WORKSPACE` take precedence. Optional
-`BL_REGION` selects the sandbox region. Struo resolves the workspace before
-cache lookup and includes it in action identity, so identical image names in
-different workspaces do not share action results. Account/project execution
-scoping is not supported.
+`BL_REGION` selects the sandbox region.
 
-Alternatively, set `properties.workspace = "your-workspace"` in
-`[infrastructure.execution]`. An explicit workspace takes precedence over the
-environment. Runtime API callers must supply this resolved property themselves.
+To pin the workspace in the manifest instead, set
+`properties.workspace = "your-workspace"` in `[infrastructure.execution]`. It
+takes precedence over the environment. The workspace is part of action
+identity, so identical image names in different workspaces do not share
+results.
+
+For controlled testing, `STRUO_BLAXEL_CONTROL_URL` and `STRUO_BLAXEL_RUN_URL`
+override the management and execution gateways. HTTPS is required except for
+loopback development endpoints.
 
 ## Usage
+
+Run a literal command on the provider:
 
 ```sh
 struo exec --remote --compute remote_tests -- node --version
 ```
 
-An annotated script can select the same binding:
+Omit `--compute remote_tests` to use the workspace's default execution provider.
+
+### Run an annotated test script
+
+Save this script as `scripts/test.sh`:
 
 ```sh
 #!/bin/sh
 # struo remote "remote_tests"
+# struo cwd ".."
 # struo input "../node_modules"
+# struo input "../package.json"
 # struo input "../tests"
 # struo output "../reports"
-# struo cwd ".."
 
-./node_modules/.bin/vitest run --reporter=json --outputFile=reports/vitest.json
+node node_modules/vitest/vitest.mjs run \
+  --reporter=json --outputFile=reports/vitest.json
 ```
 
-Local `node_modules` is uploaded when declared, including ignored files,
-executable modes, and safe symlinks. Native dependencies must match the Linux
-guest's architecture and runtime. See [Remote Execution](/guide/infrastructure/remote-execution)
-for dependency installation as a separate cacheable action.
+Run it:
+
+```sh
+struo exec --script -- sh scripts/test.sh
+```
+
+Declare any additional source, configuration, or setup files your tests read.
+Struo includes declared `node_modules` even when Git ignores it, preserving
+executable modes and safe symbolic links. Native dependencies must match the
+guest's Linux architecture and runtime. To produce `node_modules` in a separate
+cacheable action, see [Remote Execution](/guide/infrastructure/remote-execution).
 
 ## Limits and cleanup
 
-The sandbox must support multipart filesystem uploads and binary downloads.
-Struo bounds transfers and validates output archives before installation.
+- Stdout and stderr are preserved as binary within a combined capture limit and
+  appear after the command completes, not live.
+- Without an explicit action timeout, an action has a ten-minute budget. A
+  declared timeout covers preparation, provisioning, transfers and execution.
+- Guest memory is at least the declared memory and 2048 MB per requested CPU.
+  Blaxel holds writable filesystem data in guest RAM, so include archives,
+  dependencies, outputs and the test process when declaring memory.
+- Network denial, output redirection, explicit command filesystem setup and live
+  output observers are rejected rather than silently ignored.
 
-Struo preserves binary stdout and stderr within a combined capture limit.
-Output appears after completion rather than streaming live. Commands do not
-automatically restart. Selected environment values are applied immediately
-before the executable starts, after provider and shell setup.
+Struo permanently deletes the sandbox after the action, including after
+cancellation. Standby and archiving are not cleanup. A max-age TTL, at least
+five minutes and otherwise the action budget plus two minutes, removes the
+sandbox if the client disappears. No persistent volumes are attached.
 
-Without an explicit
-action timeout, Blaxel execution has a ten-minute action budget. A declared
-timeout covers preparation, recovery, provisioning, transfers and execution.
-Guest memory is at least the declared memory and 2048 MB per requested CPU
-slot, following Blaxel's memory-based CPU allocation. Blaxel holds writable
-filesystem data in guest RAM, so allow space for archives, dependencies, outputs
-and the test process when declaring memory.
+Failed deletes and uncertain creates stay recorded in the workspace's `.struo`
+runtime state and are retried by a later run. Keep that state, the original
+workspace credentials, and the endpoint available until cleanup completes.
 
-Network denial, output redirection, explicit command filesystem setup and live
-output observers are rejected rather than silently ignored.
+## Next steps
 
-Struo records ownership before creation and does not repeat uncertain creates.
-Keep the workspace's `.struo` runtime state, original workspace credentials and
-endpoint available for recovery. Unresolved records remain until cleanup can
-be established safely.
-
-Cleanup sends an explicit permanent DELETE and waits for absence or
-`TERMINATED`. Standby and archiving are not cleanup. Resource admission stays
-held through bounded cleanup attempts, including cancellation. Failed deletes
-remain journaled. A finite max-age TTL, at least five minutes and otherwise the
-action budget plus two minutes, supplements explicit deletion if the client
-disappears. No persistent volumes are attached.
-
-For controlled testing, `STRUO_BLAXEL_CONTROL_URL` and `STRUO_BLAXEL_RUN_URL`
-override the management and execution gateways. HTTPS is required except for
-loopback development endpoints. Redirects are disabled and provider-returned
-URLs are not used as credential destinations.
-
-Local protocol tests cover this adapter. Live account access, execution and
-teardown remain unverified.
+- [Remote Execution](/guide/infrastructure/remote-execution): split dependency
+  installation and tests into separate cacheable actions.
+- [Infrastructure](/guide/infrastructure#available-providers): pick a cache
+  provider so other machines reuse remote results.
+- [Execution provider contract](/reference/infrastructure/execution): see what
+  every execution provider guarantees.

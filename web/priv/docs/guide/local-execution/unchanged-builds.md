@@ -1,98 +1,83 @@
 # Unchanged Builds
 
-Most builds have nothing to do. The interesting question is how quickly Struo can
-establish that, because an answer that takes seconds is one you stop waiting for.
+Learn how Struo returns quickly when a build has nothing to do, and which
+environment variables to set in one-shot containers or when debugging reuse.
 
-Struo establishes it in one of two ways, and the difference is whether something
-is watching the working copy.
+Most builds have nothing to do. Struo records what each build read and produced,
+and on the next build it checks whether any of it changed before deriving,
+analysing, or running anything again.
 
-## Being Told What Changed
+## How it works by default
 
-Struo starts a small filesystem change tracker for a working copy the first time
-it builds there. The tracker watches sources and build outputs and keeps a
-counter for each. A build records the counters it saw alongside its result; the
-next build compares two numbers, and when neither has moved there is nothing to
-re-derive, re-analyse, or re-check.
+The first time Struo builds in a working copy, it starts a small background
+change tracker that watches sources and build outputs. While the tracker runs,
+an unchanged build only has to ask it whether anything moved, so building an
+unchanged target in a large workspace takes a few tens of milliseconds.
 
-This is the fast path, and it is fast because it asks one question instead of
-thousands. Building an unchanged target in a large workspace takes a few tens of
-milliseconds.
+The tracker exits on its own when the working copy goes quiet. The next build
+after that is slower while the tracker starts again.
 
-The tracker exits on its own when the working copy goes quiet, and starting it
-again costs one slower build.
+Without a tracker, Struo compares the size, mode, modification time, and inode
+change time of every file the previous build read or produced. It gives the
+same answer, but the cost grows with the size of the workspace rather than with
+the size of the change. Because the operating system updates the inode change
+time on every write, files restored with old timestamps (by `rsync --times` or
+an archive, for example) are still detected as changed.
 
-## Asking The Filesystem
+On top of that, Struo reuses earlier work when nothing it depends on changed:
 
-Without a tracker, Struo has to ask. It compares the description of every source
-file, dependency tree, and output the previous build read or produced: size,
-mode, modification time, and inode change time. Nothing is read, but everything
-is looked at, and the cost grows with the size of the workspace rather than with
-the size of the change.
+- the result of building a target whose files did not move and whose
+  dependencies did not rebuild;
+- the graph derived from package manifests, so the package manager's resolver
+  does not run again;
+- the commands a target kind produced, as long as every environment variable,
+  tool lookup, version probe, and glob it consulted still gives the same answer.
 
-Struo takes this path when the tracker is unavailable, and it produces the same
-answer either way. It is only slower.
+A target whose actions opt out of caching is never reused this way.
 
-To skip the tracker deliberately, set `STRUO_CHANGE_TRACKER=0`:
+## Skip the change tracker
+
+In a one-shot container there is no series of builds to pay back the tracker's
+startup, so skip it:
 
 ```sh
 STRUO_CHANGE_TRACKER=0 struo build app
 ```
 
-A one-shot container is the case where this is worth doing: there is no series
-of builds to amortise the tracker's startup over, so the tracker is a cost with
-no payer.
+Struo then compares file metadata instead. `false` works in place of `0`.
 
-## What A Description Settles
+## Turn off reuse while debugging
 
-Comparing descriptions rather than contents rests on the inode change time. A
-process can set a file's modification time to whatever it likes, which is how
-copying with preserved timestamps, `rsync --times`, and unpacking an archive all
-present new content under an old timestamp. No process can set the change time,
-because the operating system stamps it on every write to the file. A description
-that includes it therefore moves whenever the file does.
+Each of these settings makes Struo redo one kind of work on every build. Use
+them to confirm that a result came from fresh work rather than from a record of
+earlier work:
 
-To compare contents instead, set `STRUO_TREE_DIGEST_CACHE=0`. Every dependency
-tree is then read in full on every build, which is slower and answers only to
-the bytes.
+| Variable | Effect when set to `0` or `false` |
+| --- | --- |
+| `STRUO_TREE_DIGEST_CACHE` | Reads every dependency tree in full instead of comparing file metadata. |
+| `STRUO_TARGET_OUTCOMES` | Visits every target instead of reusing recorded target results. |
+| `STRUO_RESOLUTION_CACHE` | Derives the graph from package manifests every time. |
+| `STRUO_ANALYSIS_MEMO` | Runs target kind analysis every time to produce commands. |
 
-## Reusing A Target
+```sh
+STRUO_TARGET_OUTCOMES=0 struo build app
+```
 
-A build that recompiles one file still has to decide what to do about every
-target the changed one depends on. Struo records what building each target
-produced, together with the files it read and the patterns its target kind
-expanded, and reuses that record when the watcher reports that none of them
-moved and no dependency of it was rebuilt.
+Expect these builds to be slower. They do not change action caching: actions
+whose inputs are unchanged are still restored from the cache.
 
-A dependency that rebuilt gives everything above it a different name, so the
-chain re-forms from the change upwards. A target whose actions declined to be
-cached is never recorded, because skipping its work is the one thing it asked
-not to happen.
+## Limitations
 
-Set `STRUO_TARGET_OUTCOMES=0` to visit every target, which is useful when
-confirming that a result came from building rather than from a record of it.
+- The first build in a working copy, and the first build after the tracker
+  exits, pays the tracker's startup cost.
+- A target kind that consults something Struo cannot record is analysed again
+  on every build.
 
-## Reusing Graph Derivation
+## Next steps
 
-A project with no Struo targets of its own has its graph derived from its package
-manifests, which means running the package manager's resolver. Struo records the
-derived graph along with the manifests it read and the patterns that selected
-them, and reuses it when the watcher reports that none of them moved.
-
-Set `STRUO_RESOLUTION_CACHE=0` to derive the graph every time.
-
-## Reusing Analysis
-
-A target's Struo definition is turned into commands by its target kind, written in
-Starlark. That work is remembered too: alongside the commands, Struo records every
-answer the target kind got from outside itself, such as an environment variable,
-a tool resolved on `PATH`, the output of a version probe, or the files a glob
-matched. Next time, if the target definition and its dependencies' results are
-the same and every recorded answer is still the answer the host gives, the
-commands are reused rather than derived again.
-
-An answer Struo cannot describe is never recorded, and a target whose analysis
-produced one is analysed afresh every time. That is deliberate: a record that
-cannot be checked is worse than no record.
-
-Set `STRUO_ANALYSIS_MEMO=0` to derive commands every time, which is useful when
-confirming that a result came from a target kind rather than from a record of it.
+- [Memory limits](/guide/local-execution/memory-limits): control how much
+  local work runs at once.
+- [Caching scripted workflows](/guide/scripted/caching): declare what
+  invalidates a script's cached result.
+- [Typed Graph guide](/guide/graph/): build targets that benefit from this
+  reuse.

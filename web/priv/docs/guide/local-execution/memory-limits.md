@@ -1,24 +1,25 @@
 # Memory Limits
 
-Struo limits the memory pressure created by concurrent local actions. By
-default, it schedules against two thirds of the memory visible to the host or
-container. This leaves room for Struo itself, the operating system, editors, and
-other processes.
+Set a memory budget with `--memory-limit` and CPU slots with `--cpu-limit` so
+concurrent local Struo builds and tests fit on constrained or shared machines.
 
-On Linux, automatic detection considers the current process's readable cgroup
-limits, including visible ancestor limits, rather than only the host total.
-If cgroup information is unavailable, detection falls back to host memory.
+By default, Struo schedules local actions against two thirds of the memory
+visible to the host or container. That leaves room for Struo itself, the
+operating system, editors, and other processes. On Linux, the default respects
+readable cgroup limits, so it follows a container's memory limit instead of the
+host total.
+
+## Set a memory limit
 
 Override the budget for any command with `--memory-limit`:
 
 ```sh
-struo --memory-limit 2147483648 build app
+struo --memory-limit 2GiB build app
 ```
 
-The value above is two gibibytes. You can also write it as `2GiB`, where `GiB`
-is the abbreviation defined by the [International Electrotechnical Commission
-binary-prefix standard](https://www.iec.ch/prefixes-binary-multiples).
-Raw byte counts and decimal unit suffixes are accepted too.
+The value accepts a raw byte count, binary suffixes (`KiB`, `MiB`, `GiB`,
+`TiB`), or decimal suffixes (`KB`, `MB`, `GB`, `TB`). It must be greater than
+zero.
 
 The option is global, so these forms are equivalent:
 
@@ -27,49 +28,7 @@ struo --memory-limit 2147483648 test app
 struo test app --memory-limit 2147483648
 ```
 
-## How Scheduling Uses The Budget
-
-Each local action reserves its declared memory estimate before it starts.
-Actions without an estimate reserve 250 mebibytes. Struo admits more work only
-when the combined reservations fit within the configured budget. An action
-whose estimate exceeds the entire budget runs alone instead of waiting
-forever.
-
-The same budget applies to builds, lint targets, run targets, literal commands,
-annotated scripts, and test workers. Internal subprocesses inherit an explicit
-limit, so nested test and agent-tool invocations do not reset to the machine
-default.
-
-When a remote cache is selected, Struo carves a shared cache-transfer allowance
-out of the configured memory budget. It starts at one eighth of that budget,
-with a minimum of 32 MiB + 64 KiB and a maximum of 256 MiB. The minimum fits a
-streamed response frame and its bounded pipe. Actions use exactly the remainder
-instead of allocating a second full budget for cache requests. A finite total
-must exceed that minimum; otherwise the command fails before starting work.
-
-MCP and runtime sessions reserve the same headroom even when initially using a
-local cache, because their configuration can change during the session. Ordinary
-local-only commands retain the full action allowance. An explicit
-`--memory-limit 0` keeps action admission unbounded while cache buffers retain
-their default allowance.
-
-Cloned cache providers share transfer admission. Scratch downloads have a separate
-bounded disk budget, and oversized requests fail instead of relying on a
-server-provided size to allocate arbitrarily.
-
-Cache capture, command error output, and cached output restoration stream large
-files through bounded buffers and temporary files. Artifact size therefore
-does not become a same-sized memory allocation during these operations.
-
-Graph actions, producer repairs, and legacy capabilities share the invocation's
-budget. Output restoration reserves memory for each attempt and releases it before
-repairing a missing producer. If an observer is cancelled or a repair times out,
-blocking file work keeps its reservation and action lock until it actually stops.
-This prevents newly admitted work from overlapping a reservation that was released
-too early. Cache publication uses the separate carved transfer allowance after
-execution finishes.
-
-## CPU Sharing And Fairness
+## Set a CPU limit
 
 Set `--cpu-limit COUNT` to override the scheduler's CPU capacity:
 
@@ -78,39 +37,51 @@ struo --cpu-limit 4 test app
 ```
 
 Test batches divide the parent CPU budget instead of each inheriting the full
-host capacity. This is a cooperative scheduling estimate, not a limit on threads
-a tool can start. Configure tool-specific parallelism through that tool's target
-kind when needed.
+host capacity. Configure a tool's own parallelism through its target kind when
+needed.
 
-Host admission queues conflicting requests fairly so a stream of smaller actions
-cannot indefinitely bypass an older large request. Cancelling a queued request
-removes its claim without consuming capacity. Required minimum capacity is
-checked separately from estimate normalization; an impossible minimum fails
-instead of being silently reduced.
+## What to expect
 
-## What The Limit Guarantees
+Each local action reserves its declared memory estimate before it starts.
+Actions without an estimate reserve 250 mebibytes. Struo starts more work only
+when the combined reservations fit within the budget, so a lower limit means
+fewer actions at once. An action whose estimate exceeds the entire budget runs
+alone instead of waiting forever.
 
-This is an admission-control budget based on action estimates, not a hard
-operating-system memory ceiling. It bounds Struo's scheduling decisions and its
-own artifact buffering. A command that uses more memory than its estimate can
-still exceed the budget by itself.
+The same budget applies to builds, lint targets, run targets, literal commands,
+annotated scripts, and test workers. Nested Struo invocations, such as test
+workers and agent tools, inherit the limit instead of resetting to the machine
+default. When a remote cache is selected, part of the budget is set aside for
+cache transfers, and actions use the remainder.
 
-The budget belongs to one invocation. Independent Struo processes do not share
-a host-wide reservation pool, so their combined reservations can exceed a
-single invocation's budget.
+Large cached outputs are streamed through bounded buffers and temporary files,
+so artifact size does not turn into a same-sized memory allocation.
 
-Use a container or operating-system process limit when a command must be
-forcibly stopped at an exact resident-memory boundary. Pair that hard boundary
-with a lower Struo budget so the scheduler leaves enough headroom for the Struo
-process and the operating system.
-
-## Choosing A Value
+## Choose a value
 
 Start with the automatic default. Set a lower value in a small container or on
 a shared machine where other services need predictable headroom. If builds
 become unnecessarily serial, raise the limit gradually and declare realistic
 memory estimates for unusually small or large actions.
 
-The active value is recorded in verbose internal logs as
-`memory_limit_bytes`, together with the default estimate used for actions that
-do not declare one.
+## Limitations
+
+- The limit is an admission budget based on action estimates, not a hard
+  operating-system memory ceiling. A command that uses more memory than its
+  estimate can still exceed the budget by itself.
+- The CPU limit is a scheduling estimate, not a limit on the threads a tool can
+  start.
+- The budget belongs to one invocation. Independent Struo processes do not
+  share a reservation pool, so their combined use can exceed one budget.
+
+When a command must be stopped at an exact memory boundary, use a container or
+operating-system process limit, and pair it with a lower Struo budget so the
+scheduler leaves headroom for Struo and the operating system.
+
+## Next steps
+
+- [Unchanged builds](/guide/local-execution/unchanged-builds): make repeated
+  builds with nothing to do return quickly.
+- [Remote Execution](/guide/infrastructure/remote-execution): move heavy
+  actions off a constrained machine.
+- [CLI reference](/reference/cli/): every global option.

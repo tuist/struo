@@ -1,13 +1,10 @@
----
-prev: false
-next: false
----
+# Android Apps and Libraries
 
-# Android
+Build, run, test, and cache Android resources, Java and Kotlin libraries, and
+application packages with Struo, declared as targets in `struo.toml`.
 
-Struo can build Android resources, Java and Kotlin libraries, application
-packages, and host or device tests. This guide uses one application throughout
-so each new target has a visible relationship to the previous one.
+This guide grows one application, so each new target has a visible relationship
+to the previous one.
 
 ## Prerequisites
 
@@ -19,8 +16,8 @@ Android targets require:
   an installed platform, and an installed build-tools package;
 - `kotlinc` and `kotlin-stdlib.jar` when a target contains Kotlin sources.
 
-The repository provides a setup task that accepts Android licenses, installs
-the pinned packages and emulator system image, creates the `struo_example`
+In the Struo repository, a setup task accepts Android licenses, installs the
+pinned packages and emulator system image, creates the `struo_example`
 emulator, and creates a local debug keystore when one is missing:
 
 ```sh
@@ -31,14 +28,27 @@ mise run android:install-sdk
 Running an application also requires platform tools, including the
 [Android Debug Bridge](https://developer.android.com/tools/adb), plus a
 connected device or configured emulator. Native Swift or Rust dependencies
-add a requirement for the
-[Android Native Development Kit](https://developer.android.com/ndk).
+also need the [Android Native Development Kit](https://developer.android.com/ndk).
+
+### Configure tool discovery
 
 Android targets find the development kit through the `android_sdk` attribute,
 `ANDROID_HOME`, or `ANDROID_SDK_ROOT`. When a platform or build-tools version
 is omitted, Struo selects the highest installed version.
 
-## Declare One Application Graph
+Java-backed targets use `javac`, `jar`, and `java` from the host unless their
+paths are overridden. Kotlin-backed targets find `kotlinc` on `PATH` unless
+the `kotlinc` attribute is set. Set `kotlin_home` or `kotlin_stdlib` when the
+standard library is not next to the compiler installation.
+
+Debug signing uses a package-relative `debug_keystore`,
+`ANDROID_DEBUG_KEYSTORE`, or `~/.android/debug.keystore`. Struo does not ship
+private key material. Set `signing = "none"` when an unsigned package is
+enough.
+
+## Declare targets
+
+### Declare one application graph
 
 Create `apps/hello/struo.toml` with resources, a reusable library, and an
 application that connects them:
@@ -91,18 +101,13 @@ HelloResources -> Greeting -> Hello
 Kotlin code and consumes those resources. `Hello` owns the final application
 manifest and package identity.
 
-Swift native providers statically link the Swift standard library and include
-the matching C++ shared runtime from the selected Swift Software Development
-Kit. The `native-mobile-shared-code-e2e` starter loads its Swift and Rust
-libraries from Kotlin and displays values returned by both.
-
 Keep `ResourcesManifest.xml` focused on the resource package. Put launcher
 activities, application metadata, and version details in
 `AndroidManifest.xml`. Small targets can keep resources and assets inline,
 but an explicit `android_resource` dependency makes shared ownership easier to
 query.
 
-## Query Before Building
+### Query before building
 
 Inspect the target chain and the final application's contract:
 
@@ -117,7 +122,7 @@ struo query schema android_binary
 The resource and library targets expose `build`. The application exposes
 `build` and `run`.
 
-## Build and Run
+### Build and run
 
 Build the Android application package:
 
@@ -152,7 +157,7 @@ struo run --visible apps/hello/Hello
 Installation and launch happen on every invocation because they depend on
 external device state.
 
-## Add a Local Test
+### Add a local test
 
 Add a host-side test for `Greeting` to the same manifest:
 
@@ -178,31 +183,35 @@ struo query capabilities apps/hello/GreetingTests
 struo test apps/hello/GreetingTests
 ```
 
-Local tests run on the host
-[Java Virtual Machine](https://docs.oracle.com/javase/specs/jvms/se21/html/index.html)
-and can replay from cache. Tests that need Android framework or device
-behavior should use
-[`android_instrumentation_test`](/reference/prelude/android_instrumentation_test).
-Instrumentation tests install both the application and test packages, then
-run on a connected device or emulator. They do not replay from cache.
+Local tests run on the host Java Virtual Machine and can replay from cache.
+Tests that need Android framework or device behavior should use
+[`android_instrumentation_test`](/reference/prelude/android_instrumentation_test),
+which installs the application and test packages on a connected device or
+emulator and does not replay from cache.
 
-## Configure Tool Discovery
+## Manage dependencies
 
-Java-backed targets use `javac`, `jar`, and `java` from the host unless their
-paths are overridden. Kotlin-backed targets find `kotlinc` on `PATH` unless
-the `kotlinc` attribute is set. Set `kotlin_home` or `kotlin_stdlib` when the
-standard library is not next to the compiler installation.
+An `android_binary` can consume native shared libraries through normal
+dependencies:
+
+- [`swift_android_library`](/reference/prelude/swift_android_library)
+  packages a Swift library for Android. It statically links the Swift standard
+  library and includes the matching C++ shared runtime from the selected Swift
+  SDK.
+- [`rust_mobile_library`](/reference/prelude/rust_mobile_library) produces an
+  Android shared library for the application.
 
 Native Swift targets use `ANDROID_NDK_HOME`, `android_ndk`, or
 `tools_directory` to find native linker tools. Native Rust targets use
-`ANDROID_NDK_HOME` or `android_ndk` to choose a default linker.
+`ANDROID_NDK_HOME` or `android_ndk` to choose a default linker. The
+`native-mobile-shared-code-e2e` starter loads Swift and Rust libraries from
+Kotlin and displays values returned by both.
 
-Debug signing uses a package-relative `debug_keystore`,
-`ANDROID_DEBUG_KEYSTORE`, or `~/.android/debug.keystore`. Struo does not ship
-private key material. Set `signing = "none"` when an unsigned package is
-enough.
+Add native code after the Java or Kotlin application builds on its own, so
+development-kit and linker setup stay separate from the first application
+graph.
 
-## Choose Values by Configuration
+## Choose values by configuration
 
 Configurable Android attributes accept `select`. Active configuration tokens
 include `android`, installed and minimum platform-level tokens such as
@@ -221,49 +230,33 @@ See the [configurations guide](/guide/graph/configuration) for how
 `--config` overrides these tokens per invocation and how the effective
 configuration scopes outputs.
 
-## Connect Native Dependencies
+## Use a coding harness
 
-An `android_binary` can consume native shared libraries through normal
-dependencies:
+A connected coding harness can start from the request "build an Android app
+with Struo." It discovers `android_binary`, fetches its runnable starter,
+validates the workspace, builds the target, and checks the application package,
+using the same discovery and validation loop as every other target kind.
 
-- [`swift_android_library`](/reference/prelude/swift_android_library)
-  packages a Swift library for Android.
-- [`rust_mobile_library`](/reference/prelude/rust_mobile_library) produces an
-  Android shared library for the application.
-
-Add native code after the Java or Kotlin application builds on its own. This
-keeps development-kit and linker setup separate from the first application
-graph.
-
-## Coding Harnesses
-
-A connected coding harness can start from the request “build an Android app
-with Struo.” It discovers `android_binary`, fetches the target kind's runnable
-starter, materializes its files, calls `struo_validate_workspace`, builds the
-canonical target identifier, checks the Android application package output,
-and queries the resulting evidence. The harness does not need an Android-only
-Struo integration because the same discovery and validation loop applies to
-every target kind.
-
-The `android_resource`, `android_library`, and `android_binary` schemas
-also return official source references for corresponding
+The `android_resource`, `android_library`, and `android_binary` schemas also
+link to the corresponding
 [Bazel Android rules](https://bazelbuild.github.io/rules_android/),
 [Buck2 Android rules](https://buck2.build/docs/prelude/rules/android/), and
-[Android Gradle plugin](https://developer.android.com/build) concepts. A
-harness can use those references to reproduce only the application, library,
-or resource dependency slice the user asks Struo to own.
+[Android Gradle plugin](https://developer.android.com/build) concepts, so a
+harness can reproduce only the slice of an existing build that you ask Struo to
+own. When the source build uses another rule or plugin, the harness can write a
+project-local target kind instead. See [Coding harnesses](/guide/harness) for
+the workflow.
 
-If the source build uses another rule or plugin, the harness can fetch that
-public source through `struo_fetch_external_source`, query
-`struo_query_module_contract`, write a project-local target kind, and validate
-it with `struo_validate_module`. Built-in Android target kinds remain the
-common path, not a requirement for graph adoption.
+## Limitations
 
-See [Coding harnesses](/guide/harness) for the complete protocol workflow.
+The target kinds support Java and Kotlin sources, resources, assets, library
+packaging, native shared libraries, application packaging, debug signing, local
+tests, and instrumentation tests. Data binding, annotation processors, code
+shrinking, density filtering, production signing, and several advanced
+packaging controls are not implemented. Non-empty unsupported attributes fail
+validation instead of being ignored.
 
-## Supported Target Kinds and Limitations
-
-Use the target kind reference for each artifact:
+## Target kinds
 
 - [`android_resource`](/reference/prelude/android_resource)
 - [`android_library`](/reference/prelude/android_library)
@@ -271,17 +264,12 @@ Use the target kind reference for each artifact:
 - [`android_local_test`](/reference/prelude/android_local_test)
 - [`android_instrumentation_test`](/reference/prelude/android_instrumentation_test)
 
-The current target kinds support Java and Kotlin sources, resources, assets,
-library packaging, native shared libraries, application packaging, debug
-signing, local tests, and instrumentation tests. Data binding, annotation
-processors, code shrinking, density filtering, production signing, and
-several advanced packaging controls are not implemented. Non-empty
-unsupported attributes fail validation instead of being ignored.
+## Next steps
 
-## Next
-
-Continue with [Memory](/guide/memory/) once the application builds and tests.
-It shows how Struo records durable context about graph work. If the application
-shares code with Apple or Rust targets, return to
-[Ecosystems](/guide/graph/ecosystems) and add one cross-platform dependency at
-a time.
+- [Kotlin](/guide/graph/kotlin): build JVM libraries and tests shared with the
+  application.
+- [Testing and Scheduling](/guide/graph/testing): select and report local and
+  instrumentation test runs.
+- [Ecosystems](/guide/graph/ecosystems): add Apple or Rust code one
+  cross-platform dependency at a time.
+- [Memory](/guide/memory/): record durable context about graph work.

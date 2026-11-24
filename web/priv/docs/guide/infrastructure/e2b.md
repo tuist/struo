@@ -1,18 +1,21 @@
-# E2B
+# E2B Sandboxes
 
 [E2B](https://e2b.dev/docs) provides hosted Linux sandboxes created from
-templates. Struo creates one sandbox for each action that misses the cache,
-transfers declared inputs, runs the command, retrieves declared outputs, and
-deletes the sandbox.
+templates. Struo runs each uncached action in a fresh E2B sandbox and deletes it
+afterwards.
+
+Struo transfers declared inputs, runs the command, retrieves declared outputs,
+and deletes the sandbox.
 
 **Capabilities:** remote execution. Configure shared caching separately.
 
 ## Prerequisites
 
-Create an [E2B template](https://e2b.dev/docs/template) containing the stable
-tools shared by your actions. A Vitest template should provide Node.js, npm,
-and `tar`. Keep repository dependencies such as `node_modules` in the action
-graph instead of baking them into the template.
+- An E2B account and API key.
+- An [E2B template](https://e2b.dev/docs/template) containing the stable tools
+  shared by your actions. A Vitest template should provide Node.js, npm, and
+  `tar`. Keep repository dependencies such as `node_modules` in the action
+  graph instead of baking them into the template.
 
 ## Configuration
 
@@ -38,45 +41,67 @@ Set the provider access key outside the script:
 export E2B_API_KEY=e2b_...
 ```
 
-`STRUO_E2B_API_KEY` takes precedence when both variables are present. The key
-authenticates sandbox creation, file transfer, and deletion. Struo does not
-forward it to the action process.
+`STRUO_E2B_API_KEY` takes precedence when both variables are present. Struo
+does not forward the key to the action process.
+
+Self-hosted or test endpoints can override the control and sandbox addresses
+with `STRUO_E2B_API_URL` and `STRUO_E2B_SANDBOX_URL`.
 
 ## Usage
 
-Use the workspace default:
-
-```sh
-struo exec --remote -- node --version
-```
-
-Or select the provider for one invocation:
+Run a literal command on the provider:
 
 ```sh
 struo exec --remote --compute remote_tests -- node --version
 ```
 
-An annotated script can select it with:
+Omit `--compute remote_tests` to use the workspace's default execution provider.
+
+### Run an annotated test script
+
+Save this script as `scripts/test.sh`:
 
 ```sh
+#!/bin/sh
 # struo remote "remote_tests"
+# struo cwd ".."
+# struo input "../node_modules"
+# struo input "../package.json"
+# struo input "../tests"
+# struo output "../reports"
+
+node node_modules/vitest/vitest.mjs run \
+  --reporter=json --outputFile=reports/vitest.json
 ```
 
-See [Remote Execution](/guide/infrastructure/remote-execution) for a two-action
-Vitest example.
+Run it:
+
+```sh
+struo exec --script -- sh scripts/test.sh
+```
+
+Declare any additional source, configuration, or setup files your tests read.
+Native dependencies must match the guest's Linux architecture and runtime. To
+produce `node_modules` in a separate cacheable action, see
+[Remote Execution](/guide/infrastructure/remote-execution).
 
 ## Limits and cleanup
 
-Struo creates E2B sandboxes with secure system communication, outbound network
-access, a finite lifetime, and kill-on-timeout behavior. Outbound access lets
-an installation action download packages. Declare downloaded dependencies as
-outputs so later actions receive them explicitly.
+- Sandboxes have outbound network access, so an installation action can
+  download packages. Declare downloaded dependencies as outputs so later
+  actions receive them explicitly.
+- Each sandbox has a finite lifetime and is killed when it times out.
 
 Struo sends an explicit delete request after success, command failure, timeout,
-or transfer failure. The finite E2B lifetime remains a provider-side safety
-net if the client disappears before it can delete the sandbox. E2B documents
-the distinction between killed and paused sandboxes in its
-[persistence guide](https://e2b.dev/docs/sandbox/persistence).
+or transfer failure. The finite lifetime removes the sandbox if the client
+disappears first. E2B explains the difference between killed and paused
+sandboxes in its [persistence guide](https://e2b.dev/docs/sandbox/persistence).
 
-Self-hosted or test endpoints can override the control and sandbox addresses
-with `STRUO_E2B_API_URL` and `STRUO_E2B_SANDBOX_URL`.
+## Next steps
+
+- [Remote Execution](/guide/infrastructure/remote-execution): split dependency
+  installation and tests into separate cacheable actions.
+- [Infrastructure](/guide/infrastructure#available-providers): pick a cache
+  provider so other machines reuse remote results.
+- [Execution provider contract](/reference/infrastructure/execution): see what
+  every execution provider guarantees.

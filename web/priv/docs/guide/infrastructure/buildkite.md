@@ -1,20 +1,21 @@
-# Buildkite
+# Buildkite Dynamic Pipelines
 
-Buildkite's [dynamic pipelines](https://buildkite.com/docs/pipelines/configure/dynamic-pipelines)
-accept generated JSON steps. A small adapter can select Struo triggers and
-upload worker jobs without a repository pipeline YAML file.
-
-Buildkite schedules workers and reports their status. Struo owns the build
-graph inside each worker. **Generate one job per matching trigger, not one
-job per Struo action.**
+Generate Buildkite dynamic pipeline steps from approved Struo triggers, so each
+matching trigger runs as one worker job without a repository pipeline YAML file.
 
 **Capabilities:** CI orchestration through the example adapter below. Buildkite
-is not a native Struo execution or shared-cache provider.
+is not a Struo execution or shared-cache provider.
+
+Buildkite's [dynamic pipelines](https://buildkite.com/docs/pipelines/configure/dynamic-pipelines)
+accept generated JSON steps. Buildkite schedules workers and reports their
+status; Struo owns the build graph inside each worker. **Generate one job per
+matching trigger, not one job per Struo action.**
 
 ::: warning Example adapter, not a native integration
-This example connects Buildkite to the experimental Struo worker interface.
-There is no installed Struo Buildkite plugin. It covers branch-push verification
-on one Linux x86-64 worker pool, not pull requests, tags, releases, or deployments.
+This example connects Buildkite to the experimental
+[trigger](/guide/infrastructure/triggers) worker interface. There is no
+installed Struo Buildkite plugin. It covers branch-push verification on one
+Linux x86-64 worker pool, not pull requests, tags, releases, or deployments.
 :::
 
 ## Prerequisites
@@ -156,5 +157,11 @@ authenticated event receipt. These runs use a dedicated local cache and do
 not provide immutable replay. `--memory-limit` budgets work within one Struo
 process; enforce OS resource limits and limits across jobs separately.
 
-See [Event-Driven Automation](/guide/infrastructure/triggers) for the trigger
-contract and integration status of other services.
+## Next steps
+
+- [Become an Infrastructure Provider](/guide/infrastructure/providers), if you
+  operate a service and want to integrate it with Struo.
+- [Triggers](/guide/infrastructure/triggers), for the trigger contract and how
+  other CI services can host an adapter.
+- [`struo run` reference](/reference/cli/run), for the trigger and event
+  options workers use.

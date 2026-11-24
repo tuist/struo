@@ -1,7 +1,10 @@
 # Getting Started
 
-This guide installs Struo, runs one cacheable script, and shows how to choose
-the next path for your repository.
+Install Struo, cache your first script, restore its output from the local
+cache, and try Struo on an existing Cargo, Swift, Xcode, or Bazel project.
+
+No account or remote service is needed. Everything on this page runs against
+the local cache.
 
 ## Installation
 
@@ -18,7 +21,7 @@ pin its own Struo version in `mise.toml`.
 The remaining examples assume that mise is active in your shell. If it is
 not, prefix each `struo` command with `mise exec --`.
 
-### Build From Source
+### Build from source
 
 Building the CLI only needs the pinned Rust toolchain, not every ecosystem tool
 used by Struo's development and test suite. Clone Struo, then run from the parent
@@ -34,47 +37,10 @@ On macOS, install Xcode's command-line tools first. On Linux, install the native
 development libraries `libcap-ng-dev` and `libasound2-dev`; the resulting binary
 also needs `libasound2` at runtime.
 
-## Try an Existing Project
+## Run a cacheable script
 
-If you already have a working Cargo, Swift Package Manager, Xcode, or Bazel
-project, try it before writing Struo configuration. Keep its existing toolchain
-installed: Struo reuses the native project metadata, but does not replace the
-compiler or SDK.
-
-Start by discovering what Struo can build:
-
-```sh
-cd path/to/project
-struo query targets
-struo build
-struo test
-```
-
-Run `struo lint` when the discovered graph includes a lint target. A project
-without one reports that no lint targets are available, rather than silently
-skipping analysis.
-
-Struo recognizes the native workspace from its existing files. `struo build`,
-`struo test`, and `struo lint` each default to the workspace's own targets: the
-build fans out over every workspace-owned target that exposes `build`, the
-test run selects first-party tests, and lint runs every workspace-owned
-target that exposes `lint`. No `struo.toml` is created.
-
-Pass `--all` to any of the three to include targets reached through resolved
-dependencies; `struo lint --all` in particular will lint vendored third-party
-code, so pair it with `--fail-on error` when you want to keep the noise
-manageable. See [Graph guide](/guide/graph/) for the full workspace-owned
-rule (and its current heuristic limitations) and the per-ecosystem behavior.
-
-Continue with the matching guide for [Rust](/guide/graph/rust), [Swift
-Packages](/guide/graph/swift-packages), [Xcode
-Projects](/guide/graph/apple/xcode), or [Bazel](/guide/graph/bazel) for
-prerequisites, native dependency behavior, and current boundaries.
-
-## Run a Cacheable Script
-
-For a self-contained example, create an empty directory and a place for the
-script. You can also follow these steps in an existing repository:
+Create an empty directory with a place for the script. You can also follow
+these steps in an existing repository:
 
 ```sh
 mkdir struo-demo
@@ -105,9 +71,8 @@ chmod +x scripts/greet.sh
 cat build/greeting.txt
 ```
 
-The first invocation ends with a trailer containing `cache miss`. The local
-cache works without an account or a remote service. Run the
-same command again:
+The first invocation ends with a trailer containing `cache miss`. Run the same
+command again:
 
 ```sh
 ./scripts/greet.sh
@@ -116,7 +81,9 @@ same command again:
 The second trailer contains `cache hit`. Struo reused the recorded result and
 restored the declared output without running the script body again.
 
-Prove that Struo can restore the output, not just remember that the command
+### Restore a deleted output
+
+Check that Struo restores the output, not just that it remembers the command
 succeeded:
 
 ```sh
@@ -126,18 +93,18 @@ cat build/greeting.txt
 ```
 
 You should see another cache hit and `hello from Struo` in the restored file.
-Now change the input:
+
+### Change an input
 
 ```sh
 printf 'hello again\n' > message.txt
 ./scripts/greet.sh
 ```
 
-Struo reports a miss and writes `hello again`. You have now checked both sides
-of the contract: unchanged inputs reuse the result, and changed inputs run the
-work again.
+Struo reports a miss and writes `hello again`. Unchanged inputs reuse the
+result, and changed inputs run the work again.
 
-## What Struo Learned
+## Understand the script contract
 
 The three `# struo` lines form the action contract:
 
@@ -145,10 +112,10 @@ The three `# struo` lines form the action contract:
 - `output` tells Struo what to capture and restore.
 - `cwd` chooses the working directory for the script.
 
-The script itself is also part of the cache key. Changing either the script
-or its declared input causes the work to run again. Paths in these headers are
-relative to the script's directory, which is why `../message.txt` names the
-file at the repository root.
+The script itself is also part of the cache key, so changing either the script
+or its declared input runs the work again. Paths in these headers are relative
+to the script's directory, which is why `../message.txt` names the file at the
+repository root.
 
 Correct reuse depends on an honest contract. Declare every file and environment
 variable that affects the result, and every output you need restored. Struo
@@ -156,16 +123,46 @@ cannot infer a dependency that the script reads but does not declare. Do not
 cache commands whose purpose is an external side effect, such as publishing a
 release or sending a notification.
 
-## Choose Your Next Path
+## Try an existing project
 
-- Continue with [Scripted automation](/guide/scripted/) when you want to
-  cache existing repository scripts with minimal changes.
-- Continue with the [Graph guide](/guide/graph/) when you want typed targets,
-  dependencies, and capabilities that Struo and coding agents can query. Its
-  [Linting guide](/guide/graph/linting) turns analyzer reports into cacheable,
-  normalized findings with an explicit failure policy.
-- Continue with the [software development kit overview](/guide/sdk/) when an
-  application needs direct access to Struo cache primitives.
-- Read [Connect A Project](/guide/infrastructure/connect) when you are ready to
-  create a remote project and share cache entries with your team, or
-  [Infrastructure](/guide/infrastructure/) to run actions on another machine.
+If you already have a working Cargo, Swift Package Manager, Xcode, or Bazel
+project, try it before writing any Struo configuration. Keep its existing
+toolchain installed: Struo reuses the native project metadata but does not
+replace the compiler or SDK.
+
+From the project root, list what Struo discovered, then build and test it:
+
+```sh
+cd path/to/project
+struo query targets
+struo build
+struo test
+```
+
+Run `struo lint` when the discovered graph includes a lint target. A project
+without one reports that no lint targets are available rather than silently
+skipping analysis.
+
+`struo build`, `struo test`, and `struo lint` default to the workspace's own
+targets. No `struo.toml` is created. Pass `--all` to include targets reached
+through resolved dependencies. `struo lint --all` also lints vendored
+third-party code, so pair it with `--fail-on error` to keep the output
+manageable. The [Typed Graph guide](/guide/graph/#start-from-a-native-project)
+explains the default scope in detail.
+
+Continue with the matching guide for [Rust](/guide/graph/rust),
+[Swift Packages](/guide/graph/swift-packages),
+[Xcode Projects](/guide/graph/apple/xcode), or [Bazel](/guide/graph/bazel) for
+prerequisites, native dependency behavior, and limitations.
+
+## Next steps
+
+- [Scripted automation](/guide/scripted/): cache existing repository scripts
+  with minimal changes.
+- [Typed Graph guide](/guide/graph/): add typed targets, dependencies, and
+  capabilities that Struo and coding agents can query.
+- [Connect a project](/guide/infrastructure/connect): share cache entries with
+  your team, or see [Infrastructure](/guide/infrastructure/) to run actions on
+  another machine.
+- [Software development kits](/guide/sdk/): give application code direct
+  access to Struo cache primitives.

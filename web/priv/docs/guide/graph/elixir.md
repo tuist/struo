@@ -1,29 +1,25 @@
----
-prev: false
-next: false
----
+# Elixir and Mix
 
-# Elixir
+Build, lint, test, release, and cache Elixir projects with Struo, straight from
+an existing `mix.exs` or from Elixir targets declared in `struo.toml`.
 
-Struo can read an existing `mix.exs`, derive a typed build graph, and cache the
-compiled project and each locked dependency separately. You can build, lint,
-test, run Mix tasks, and assemble a release without first translating the
-project into `struo.toml`.
+Struo reads a Mix project without any configuration and caches the compiled
+project and each locked dependency separately. Hand-authored targets add
+standalone libraries, custom lint and release tasks, and test setup.
 
-## Start With an Existing Mix Project
+## Prerequisites
 
-### Check the Toolchain
-
-Struo invokes `elixir`, `erl`, and `mix` from the selected toolchain. Confirm
-that the versions expected by the project are available:
+Struo invokes `elixir`, `erl`, and `mix` from the selected toolchain. Native
+project evaluation requires Erlang 27 or newer. Confirm that the versions the
+project expects are available:
 
 ```sh
 elixir --version
 mix --version
 ```
 
-If the repository uses [mise](https://mise.jdx.dev/) to pin them, install and
-activate that configuration first:
+If the repository pins them with [mise](https://mise.jdx.dev/), install that
+configuration first:
 
 ```sh
 mise install
@@ -32,127 +28,65 @@ mise exec -- mix --version
 ```
 
 Fetching packages from Hex requires a local Hex installation. A dependency
-whose build manager is Rebar also requires [Rebar 3](https://rebar3.org/):
+built with Rebar also requires [Rebar 3](https://rebar3.org/):
 
 ```sh
 mix local.hex --force
 mix local.rebar --force
 ```
 
-### Use an Image-Bound Remote Toolchain
-
-For `struo build --remote`, the selected worker image must contain Erlang,
-Elixir, Hex and Rebar already. Actions do not install tools or fetch packages.
-Mix discovery still runs on the coordinator, so keep its local toolchain and
-materialized dependencies available too.
-
-Describe the worker paths in the workspace configuration:
-
-```toml
-[infrastructure.execution.properties.elixir]
-schema_version = 1
-os = "linux"
-arch = "x86_64"
-elixir_bin = "/opt/elixir/bin"
-erlang_bin = "/opt/erlang/bin"
-mix_home = "/opt/mix"
-rebar3 = "/opt/mix/rebar3"
-```
-
-These paths are illustrative and must exist inside the selected image. To
-bind the description to one image, add `environment` with that image; it must
-then match the execution image exactly, and builds fail when the image
-changes. Without it, the description applies to whichever image the provider
-selects. Linux
-`x86_64` and `arm64` descriptions are supported when the provider supports that
-platform. The complete execution binding participates in action identity;
-changing an image or its toolchain paths invalidates compiled results.
-Coordinator mise wrappers and executable paths are not sent to remote actions.
-Host-side discovery continues using local tools; this description does not
-configure cross-compilation or make incompatible native dependencies portable.
-
-Select the provider per build with `struo build --remote --compute workers`
-after configuring that provider. `struo test` does not currently expose remote
-execution; keep test runs local.
-
-### Materialize Locked Dependencies
-
-Struo does not download dependencies or change `mix.lock`. If the project has a
-current lockfile, materialize its exact sources before asking Struo to load the
-graph:
+Struo does not download dependencies or change `mix.lock`. Materialize the
+exact locked sources before loading the graph:
 
 ```sh
 mix deps.get --check-locked
 ```
 
 Run `mix deps.get` without `--check-locked` once when the lockfile needs to be
-created or deliberately updated. Review that change before continuing. A
-dependency-free project does not need `mix.lock`. A project whose entire active
-dependency graph consists of local path dependencies also works without a
-lockfile.
+created or deliberately updated, and review that change. A project with
+external dependencies needs a concrete `mix.lock`; a dependency-free project,
+or one whose dependencies are all local paths, works without one.
 
-Struo currently requires a concrete lockfile when a project declares external
-dependencies. Library maintainers who do not commit `mix.lock` can generate
-one locally before using Struo, but repeatable builds on another machine require
-the same lockfile.
+## Start from an existing Mix project
 
-### Inspect the Derived Graph
-
-From the directory that contains `mix.exs`, inspect the graph:
+From the directory that contains `mix.exs`, inspect, build, and test the
+project without creating `struo.toml`:
 
 ```sh
 struo query workspace
 struo query targets
-```
-
-No `struo.toml` is required. From the directory containing `mix.exs`, the
-usual build and test commands select that project automatically:
-
-```sh
 struo build
 struo test
 ```
 
-In a Git repository, these commands use the nearest repository root as the
-filesystem boundary while discovering only the current Mix project family.
-This keeps sibling path dependencies inside the build and avoids resolving
-unrelated native projects elsewhere in the repository. Outside a Git
-repository, the project directory is the boundary; use a containing workspace
-with an explicit target when dependencies live outside it. Neither command
-writes a manifest. `struo build` follows `MIX_ENV`, defaulting to `dev`, while
-`struo test` compiles and executes the test environment. The same boundary
-applies to `struo run`, `struo lint`, and `--all`. Explicit targets matching
-another native project marker in the current directory remain selectable.
-Repository-root commands without an explicit native target retain ordinary
-workspace discovery. An explicit package-relative native target selects its
-owning project and target family.
-An explicit `struo.toml` between the project and repository root takes priority.
+`struo build` follows `MIX_ENV`, defaulting to `dev`, while `struo test`
+compiles and runs the test environment. Neither command writes a manifest.
 
-Native compilation conservatively hashes non-hidden project files outside
-generated build and dependency directories. This includes compiler resources,
-such as a version file or native sources outside the Elixir source directories.
-Changing one of these files invalidates compilation; unchanged inputs reuse the
-cached output. Native Mix bytecode cache keys also include the source location,
-since compiled modules can embed directory-sensitive resources. Tests use
-structured ExUnit events for totals, so summary-looking
-output from a test cannot rewrite the result. Invalidated tests count as failures,
-and excluded tests do not count as executed tests.
+In a Git repository, these commands discover only the current Mix project and
+the path dependencies it reaches inside the repository. Outside a Git
+repository, the project directory is the boundary, so use a containing
+workspace with an explicit target when dependencies live outside it. An
+explicit `struo.toml` between the project and the repository root takes
+priority.
 
-The identifiers printed by `struo query targets` are the source of truth. For a
-Mix project at the workspace root, discovery normally derives:
+### Inspect the derived graph
 
-- `mix_application_dev`, `mix_application_test`, and
-  `mix_application_prod` compile the first-party project in each environment;
+The identifiers printed by `struo query targets` are the source of truth. For
+a Mix project at the workspace root, discovery normally derives:
+
+- `mix_application_dev`, `mix_application_test`, and `mix_application_prod`,
+  which compile the project in each environment;
 - one dependency target per environment when `mix.lock` is present;
-- `mix_lint` checks unused dependencies and formatting;
-- `mix_tests` runs the project tests when the project has files under `test/`;
-- `mix_release` assembles a production release;
-- `mix` builds the default development application.
+- `mix_lint`, which checks unused dependencies and formatting;
+- `mix_tests`, which runs the project tests when the project has files under
+  `test/`;
+- `mix_release`, which assembles a production release;
+- `mix`, which builds the default development application.
 
 Nested projects use package-qualified identifiers such as
 `apps/accounts/mix_tests`.
 
-### Build, Lint, Test, Run, and Release
+### Build, lint, test, run, and release
 
 Use the derived targets through the same commands as every other Struo graph:
 
@@ -164,29 +98,18 @@ struo run mix_application_dev -- phx.server
 struo build mix_release
 ```
 
-The argument after `--` is a Mix task selected at invocation time.
-`phx.server` is only an example; native discovery does not assume that the
-project uses Phoenix or another framework. Native tests retain the project's
-test aliases, configured test paths, and test file patterns. Struo compiles
-application and test-support code first, then runs the aliases and tests against
-those outputs without recompiling dependencies or invoking project compilers
-again.
+The argument after `--` is a Mix task chosen at invocation time; `phx.server`
+is only an example, and discovery does not assume a framework. Native tests
+keep the project's test aliases, test paths, and test file patterns, and run
+against the compiled application without recompiling it.
 
 `mix_lint` runs `mix deps.unlock --check-unused` and
-`mix format --check-formatted`. It does not infer project-specific tools such
-as Credo. The run target is intentionally uncached for servers and interactive
-tasks. Builds, the derived lint target, dependency compilation, and release
-assembly are cacheable. Automatically discovered tests run on every invocation
-and inherit the host runtime environment, including host tools on `PATH`.
-This matches ordinary Mix tests that depend on databases and other services.
-Explicit test targets can opt into caching when their inputs are fully declared.
+`mix format --check-formatted`. It does not infer project tools such as Credo.
+`mix_release` suits applications that support `mix release`. It does not run
+framework preparation such as asset compilation; declare an explicit release
+target with `pre_tasks` for that.
 
-`mix_release` is useful for applications that support `mix release`. A library
-can still build, lint, and test even when producing a release is not meaningful.
-Framework-specific preparation such as asset compilation is not inferred. Add
-an explicit release target with `pre_tasks` when the release requires it.
-
-### Confirm Caching
+### Confirm caching
 
 Run the same build twice without changing an input:
 
@@ -195,56 +118,38 @@ struo build mix_application_dev
 struo build mix_application_dev
 ```
 
-The second invocation should restore unchanged actions from the configured
-cache. Outputs are materialized under `.struo/out/`. Changing one dependency
-invalidates that package and its consumers, changing application source
-invalidates the application, and changing only a test file reruns the tests
-without recompiling the application.
+The second invocation restores unchanged actions from the configured cache.
+Outputs are materialized under `.struo/out/`. Changing a dependency
+invalidates that package and its consumers, and changing application source
+invalidates the application. Compilation also tracks non-hidden project files
+outside the build and dependency directories, such as a version file.
 
-Dependency fetching is outside the Struo graph. Struo caches compilation after
-`deps/` contains the sources selected by `mix.lock`. Continue with
-[Caching](/guide/scripted/caching) to configure a shared remote cache.
+Builds, `mix_lint`, dependency compilation, and release assembly are
+cacheable. `struo run` with a task is not cached, so servers and interactive
+tasks run every time. Discovered tests also run on every invocation and
+inherit the host environment, so suites that need a database or other service
+exercise it each time. Continue with [Caching](/guide/scripted/caching) to
+configure a shared remote cache.
 
-### Umbrellas, Nested Projects, and Path Dependencies
+### Umbrellas, nested projects, and path dependencies
 
-Discovery preserves workspace-relative source roots for path dependencies and
-recognizes nested Mix projects. An umbrella root builds its detected child
-workspaces. Use `struo query targets` to find each package-qualified target
-rather than assuming that every target lives at the root.
+An umbrella root builds its detected child projects, and nested Mix projects
+get their own package-qualified targets. Use `struo query targets` to find
+them rather than assuming every target lives at the root.
 
-Targetless `struo test` includes discovered nested test suites, even when native
+Targetless `struo test` includes discovered nested test suites, even though
 `mix test` at the root runs only the root project. Each separate Mix project
-needs its own `mix deps.get --check-locked`; fetching at the root does not
-materialize a nested project's dependencies. Struo preserves native test aliases,
-including database creation and migration tasks. Provision any required external
-services before running those suites. Native test results remain uncached so
-these services are exercised on every run; compilation actions remain cacheable.
+needs its own `mix deps.get --check-locked`. Provision any external services
+that test aliases such as database creation and migration need before
+running those suites.
 
-External Hex and Git dependencies must be present under `deps/`. Mix and Rebar
-3 packages are supported. Packages that require Make or a custom dependency
-compile command fail with an explicit diagnostic instead of silently falling
-back to an opaque build.
+## Declare targets
 
-### Troubleshooting
-
-- If graph loading reports a missing lockfile or dependency source, run
-  `mix deps.get`, then retry with `mix deps.get --check-locked`.
-- If `mix_tests` is absent, check whether the project has files under `test/`.
-  The `mix_application_test` target is still available for a test-environment
-  compile.
-- If release assembly needs `assets.deploy` or another preparation task,
-  declare a `mix_release` target with `pre_tasks`. Struo does not infer
-  framework conventions.
-- Native project evaluation requires Erlang 27 or newer.
-
-## Author a Graph When You Need More Control
-
-Direct `mix.exs` discovery is the default for an existing Mix project.
-Hand-authored targets are useful for a standalone library without Mix, custom
-lint or release tasks, database setup, or a boundary that should be cached
+Hand-authored targets suit a standalone library without Mix, custom lint or
+release tasks, database setup, or a boundary that should be cached
 independently.
 
-## Declare a Standalone Library and Test
+### Declare a standalone library and test
 
 Create `apps/greeting/struo.toml`:
 
@@ -280,12 +185,11 @@ apps/greeting/
     └── greeting_test.exs
 ```
 
-The library uses `mix_env = "test"` because `elixir_test` requires exactly one
-dependency that provides a complete `elixir_app` compiled for the test
-environment. The test target consumes the existing bytecode instead of
-compiling the application a second time.
+An `elixir_test` depends on exactly one application compiled for the test
+environment, which is why the library sets `mix_env = "test"`. The test reuses
+that bytecode instead of compiling the application again.
 
-## Query Before Building
+### Query before building
 
 Inspect the declared targets and their contracts:
 
@@ -297,10 +201,10 @@ struo query schema elixir_library
 struo query schema elixir_test
 ```
 
-The library exposes `build`. The test target exposes `test`. Neither target
-exposes `run`.
+The library exposes `build`. The test target exposes `test`. Neither exposes
+`run`.
 
-## Build and Test
+### Build and test targets
 
 Build the application bytecode:
 
@@ -308,41 +212,109 @@ Build the application bytecode:
 struo build apps/greeting/greeting
 ```
 
-For this target, the staged bytecode and application metadata appear under
-`.struo/out/apps/greeting/greeting/ebin`. Private application files appear
-under `.struo/out/apps/greeting/greeting/priv`. Compile metadata and persisted
-warnings live beside them as `compile-metadata.tsv` and
-`compile-warnings.log`.
+The bytecode and application metadata appear under
+`.struo/out/apps/greeting/greeting/ebin`, with private files under `priv` and
+compile warnings in `compile-warnings.log` beside them.
 
-Run the tests against that compiled library:
+Run the tests against the compiled library:
 
 ```sh
 struo test apps/greeting/greeting_test
 ```
 
-Test results and logs appear under
-`.struo/out/apps/greeting/greeting_test/test/`, including
-`test_results.json`, `elixir-test.log`, and `native_results.txt`.
+Results and logs appear under `.struo/out/apps/greeting/greeting_test/test/`,
+including `test_results.json` and `elixir-test.log`. Changing only a test file
+reruns the test without recompiling the library.
 
-Changing only a test file reruns the test without recompiling the library.
-Changing a library source invalidates the library build and the dependent
-test. Configuration files, private files, data, and supported dynamic compile
-inputs can also participate in cache invalidation when declared by the target.
+Compile-time dependencies, such as macros or structs used from another target,
+belong in separate `elixir_library` targets connected through `deps`. The
+library does not require `mix.exs`; set `mix_config` only when the project
+file should affect the build or tests must run through `mix test`.
 
-## Add Dependencies Deliberately
+## Manage dependencies
 
-Compile-time dependencies such as macros or structs used from another target
-should be separate `elixir_library` targets connected through `deps`. This
-keeps each compiled application queryable and lets Struo rebuild the affected
-part of the graph.
+### Import locked Hex packages
 
-The library target does not require `mix.exs`. Set `mix_config` only when the
-project file should affect the build or when tests must run through `mix test`.
-In that mode, Struo still uses bytecode compiled by the library target and runs
-Mix with dependency checks and compilation disabled.
+Declare one `mix_dependencies` target for third-party packages. Mix evaluates
+the active dependency graph from `mix.exs`, `mix.lock` supplies exact versions
+and checksums, and Struo emits a `mix_package` target per locked package:
 
-For a first-party project that needs its registered Mix compiler pipeline,
-declare `mix_project` instead of `elixir_library`:
+```toml
+[[target]]
+name = "mix_dependencies"
+kind = "mix_dependencies"
+srcs = ["mix.exs", "mix.lock", "mix-dependencies.json"]
+
+[target.attrs]
+graph_file = "mix-dependencies.json"
+resolver_inputs = [
+  "mix.exs",
+  "mix.lock",
+  "mix-dependencies.json",
+  "local_helper/mix.exs",
+]
+vendor_dir = "deps"
+
+[target.attrs.path_dependencies]
+local_helper = "./local_helper"
+
+[[target]]
+name = "local_helper"
+kind = "elixir_library"
+srcs = ["local_helper/lib/**/*.ex"]
+
+[target.attrs]
+app_name = "local_helper"
+
+[[target]]
+name = "greeting"
+kind = "elixir_library"
+srcs = ["lib/**/*.ex"]
+deps = ["./mix_dependencies"]
+```
+
+Fetch dependency sources into the vendor directory first; graph loading never
+fetches packages or updates the lockfile. With `graph_file`, graph loading
+reads a checked-in snapshot instead of running Mix. The snapshot is bound to
+the exact `mix.exs`, `mix.lock`, resolver inputs, and `mix_env`, so it must be
+regenerated when any of them change. Without it, Struo evaluates the project
+offline with isolated Mix and Hex homes.
+
+Map every active Mix path dependency to a Struo target through
+`path_dependencies`; graph loading fails when one is missing. Use a separate
+dependency target with a distinct `target_prefix` for each of the development,
+test, and production graphs. When dependencies read compile-time application
+configuration, declare the full root configuration set, including every file
+that `config_entry` imports:
+
+```toml
+[target.attrs]
+config = ["config/**/*.exs"]
+config_entry = "config/config.exs"
+```
+
+Inspect the imported packages, then build and evaluate the bundled
+dependency starter:
+
+```sh
+struo query targets --kind mix_package
+struo build greeting
+elixir \
+  -pa .struo/out/mix-locked-greeting/mix/prod/lib/locked_greeting/ebin \
+  -pa .struo/out/local_helper/ebin \
+  -pa .struo/out/greeting/ebin \
+  -e 'IO.write(Greeting.message("Struo"))'
+```
+
+The starter prints `Hello, Struo!`, which confirms that the locked package and
+the mapped local helper both reached the application. The
+[`mix_dependencies` reference](/reference/prelude/mix_dependencies) documents
+the snapshot format and root selection.
+
+### Compile with the project's Mix compilers
+
+Declare `mix_project` instead of `elixir_library` for a first-party project
+that needs its registered Mix compiler pipeline:
 
 ```toml
 [[target]]
@@ -387,7 +359,7 @@ setup_tasks = [
 data = ["priv/repo/migrations/**/*"]
 ```
 
-Fetch the exact dependency sources before loading the graph:
+Fetch the locked sources, then build and test:
 
 ```sh
 mix deps.get --check-locked
@@ -395,97 +367,13 @@ struo build application_test
 struo test tests
 ```
 
-`mix_project` runs the first-party compiler pipeline with dependency checking
-and dependency compilation disabled. Each dependency is already represented by
-an `elixir_app` provider. A manifest can set `run_task`, or the caller can
-supply a task without coupling the discovered graph to a framework convention:
+`mix_project` compiles the first-party project with dependency checks and
+dependency compilation disabled, because each dependency is already its own
+target. Set `cacheable = false` on a test, as above, when it must contact an
+external service on every run. A `mix_project` can set `run_task`, or the
+caller can pass a task after `--` to `struo run`.
 
-```sh
-struo run mix_application_dev -- phx.server
-```
-
-For third-party packages managed by Mix and Hex, declare one
-`mix_dependencies` target. Mix evaluates the active dependency graph from
-`mix.exs`, while the committed `mix.lock` supplies the exact version, source,
-and checksums. Struo emits a synthetic `mix_package` target for each active
-locked package and preserves Mix's dependency edges.
-
-```toml
-[[target]]
-name = "mix_dependencies"
-kind = "mix_dependencies"
-srcs = ["mix.exs", "mix.lock", "mix-dependencies.json"]
-
-[target.attrs]
-graph_file = "mix-dependencies.json"
-resolver_inputs = [
-  "mix.exs",
-  "mix.lock",
-  "mix-dependencies.json",
-  "local_helper/mix.exs",
-]
-vendor_dir = "deps"
-
-[target.attrs.path_dependencies]
-local_helper = "./local_helper"
-
-[[target]]
-name = "local_helper"
-kind = "elixir_library"
-srcs = ["local_helper/lib/**/*.ex"]
-
-[target.attrs]
-app_name = "local_helper"
-
-[[target]]
-name = "greeting"
-kind = "elixir_library"
-srcs = ["lib/**/*.ex"]
-deps = ["./mix_dependencies"]
-```
-
-Fetch dependency sources before the Struo build and keep them under the
-configured vendor directory. Graph loading never runs dependency fetching or
-updates the lockfile. With `graph_file`, ordinary graph loading also avoids
-executing Mix. Without it, Struo evaluates the project with isolated Mix and Hex
-homes and Hex offline mode. Vendored locked packages do not require a Hex
-archive to be installed in that isolated home. The live graph path requires
-Erlang 27 or newer for its built-in JavaScript Object Notation encoder. The
-checked-in snapshot binds the exact `mix.exs` and `mix.lock` text together with
-the selected `mix_env`, so a manifest, lockfile, or environment change makes
-graph loading fail until the snapshot is regenerated. Its `struo_inputs` map
-also binds every exact resolver input except the snapshot itself. Include path
-dependency manifests so their edges cannot become stale. Package compilation
-sets Hex offline mode. Mix packages use their registered compiler pipeline,
-while Rebar packages use Rebar 3 directly. Each dependency uses the compilation
-environment reported by Mix, with `dependency_mix_env = "prod"` as the
-fallback. The root configuration is read with the dependency set's `mix_env`,
-so use separate dependency targets and distinct `target_prefix` values for
-development, test, and production graphs.
-
-Projects whose dependencies read compile-time application configuration
-should declare the full root configuration set:
-
-```toml
-[target.attrs]
-config = ["config/**/*.exs"]
-config_entry = "config/config.exs"
-```
-
-The `config` globs must include every file imported by `config_entry`.
-
-Map every active Mix path dependency through `path_dependencies`. Each value is
-an ordinary first-party Struo target reference. Graph loading fails instead of
-silently dropping a path dependency when its application name is not mapped.
-Struo preserves each mapped target's workspace-relative source root in the
-isolated build workspace, so relative paths in `mix.exs` keep their original
-meaning.
-
-The importer accepts locked Hex and Git sources whose build manager is Mix or
-Rebar 3. Make-only packages and dependency declarations with a custom compile
-command fail with an explicit error.
-
-## Lint and Release
+## Lint and release
 
 A `mix_project` can expose deterministic checks through `struo run`:
 
@@ -499,7 +387,7 @@ run_tasks = [
 run_cacheable = true
 ```
 
-Assemble a release from a compiled project with `mix_release`:
+Assemble a release from a compiled production project with `mix_release`:
 
 ```toml
 [[target]]
@@ -523,63 +411,84 @@ manifest = "mix.exs"
 config = ["config/**/*.exs"]
 ```
 
-Projects that need preparation can add the ordered `pre_tasks` documented by
-[`mix_release`](/reference/prelude/mix_release). Declare any files and
-executables used by those tasks through `data` and `tools` so they participate
-in caching.
-
-Build the release twice to confirm that the second invocation restores the
-release action from the configured cache:
+Projects that need preparation can add ordered `pre_tasks`, documented by
+[`mix_release`](/reference/prelude/mix_release). Declare the files and
+executables those tasks use through `data` and `tools` so they take part in
+caching. Build the release twice to confirm that the second build comes from
+the cache:
 
 ```sh
 struo build release
 struo build release
 ```
 
-Inspect the imported packages before building the local application:
+## Build remotely
 
-```sh
-struo query targets --kind mix_package
-struo build greeting
-elixir \
-  -pa .struo/out/mix-locked-greeting/mix/prod/lib/locked_greeting/ebin \
-  -pa .struo/out/local_helper/ebin \
-  -pa .struo/out/greeting/ebin \
-  -e 'IO.write(Greeting.message("Struo"))'
+For `struo build --remote`, the worker image must already contain Erlang,
+Elixir, Hex, and Rebar; actions do not install tools or fetch packages. Mix
+discovery still runs locally, so keep the local toolchain and materialized
+dependencies available too.
+
+Describe the worker paths in the workspace configuration:
+
+```toml
+[infrastructure.execution.properties.elixir]
+schema_version = 1
+os = "linux"
+arch = "x86_64"
+elixir_bin = "/opt/elixir/bin"
+erlang_bin = "/opt/erlang/bin"
+mix_home = "/opt/mix"
+rebar3 = "/opt/mix/rebar3"
 ```
 
-The bundled dependency starter compiles a locked `locked_greeting` package and
-a mapped local helper, then compiles the first-party `Greeting` module against
-both. Evaluating `Greeting.message("Struo")` returns `Hello, Struo!`, which
-verifies both provider edges as well as the imported graph.
+These paths are illustrative and must exist inside the image. Add
+`environment` with an image to bind the description to that exact image;
+builds then fail if the execution image differs. Linux `x86_64` and `arm64`
+are supported when the provider supports them. Changing the image or its
+toolchain paths invalidates compiled results.
 
-## Target References and Limitations
+Select the provider per build with `struo build --remote --compute workers`
+after configuring it. See [Remote Execution](/guide/infrastructure/remote-execution).
 
-- [`elixir_library`](/reference/prelude/elixir_library) documents application
-  metadata, configuration, private files, environment, dependencies, and the
-  `bytecode` output group.
-- [`mix_dependencies`](/reference/prelude/mix_dependencies) documents locked
-  Mix and Hex graph expansion, vendored sources, and root selection.
-- [`mix_package`](/reference/prelude/mix_package) documents the generated
-  package target and its locked identity provider fields.
-- [`mix_project`](/reference/prelude/mix_project) documents first-party Mix
-  compilation and run tasks.
-- [`mix_release`](/reference/prelude/mix_release) documents isolated,
-  cacheable Mix release assembly.
-- [`elixir_test`](/reference/prelude/elixir_test) documents direct ExUnit and
-  Mix test modes, test arguments, labels, timeouts, results, and logs.
+## Troubleshooting
 
-An `elixir_test` must depend on exactly one complete `elixir_app` provider built
-with `mix_env = "test"`. Set `cacheable = false` for tests that must contact an
-external service on every run. Direct ExUnit options cannot be combined with
-Mix mode.
-Reserved compatibility attributes listed in the references fail validation when
-set to non-empty values.
+- If graph loading reports a missing lockfile or dependency source, run
+  `mix deps.get`, then retry with `mix deps.get --check-locked`.
+- If `mix_tests` is absent, check whether the project has files under `test/`.
+  `mix_application_test` is still available for a test-environment compile.
+- If release assembly needs `assets.deploy` or another preparation task,
+  declare a `mix_release` target with `pre_tasks`.
 
-## Next
+## Limitations
 
-Build the discovered development target twice and confirm the second build
-comes from cache. Then run the derived lint and test targets before adding
-hand-authored targets. Continue with [Testing and Scheduling](/guide/graph/testing)
-for larger test graphs or [Memory](/guide/memory/) to inspect the durable
-context recorded for builds and tests.
+- External dependencies require a committed `mix.lock` for repeatable builds
+  on other machines.
+- Hex and Git dependencies built with Mix or Rebar 3 are supported. Packages
+  that require Make or a custom compile command fail with an explicit
+  diagnostic.
+- `struo test` does not run remotely; keep test runs local.
+- Remote toolchain descriptions do not configure cross-compilation or make
+  incompatible native dependencies portable.
+- Direct ExUnit options cannot be combined with Mix test mode.
+- Compatibility attributes listed as reserved in a target kind reference fail
+  validation when set to a non-empty value.
+
+## Target kinds
+
+- [`mix_workspace`](/reference/prelude/mix_workspace)
+- [`mix_dependencies`](/reference/prelude/mix_dependencies)
+- [`mix_package`](/reference/prelude/mix_package)
+- [`mix_project`](/reference/prelude/mix_project)
+- [`mix_release`](/reference/prelude/mix_release)
+- [`elixir_library`](/reference/prelude/elixir_library)
+- [`elixir_test`](/reference/prelude/elixir_test)
+
+## Next steps
+
+- [Caching](/guide/scripted/caching): share build results across machines
+  with a remote cache.
+- [Testing and Scheduling](/guide/graph/testing): select and schedule tests in
+  larger graphs.
+- [Memory](/guide/memory/): inspect the durable context Struo records for
+  builds and tests.
