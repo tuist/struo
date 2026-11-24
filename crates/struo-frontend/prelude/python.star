@@ -59,6 +59,7 @@ def _python_pytest_adapter():
     return '''import argparse
 import json
 import os
+import platform
 import sys
 
 try:
@@ -75,6 +76,8 @@ def parse_args():
     parser.add_argument("--struo-target", required=True)
     parser.add_argument("--struo-source", action="append", default=[])
     parser.add_argument("--struo-test-unit", action="append", default=[])
+    parser.add_argument("--struo-inventory", action="store_true")
+    parser.add_argument("--struo-coverage-source", action="append", default=[])
     parser.add_argument("runner_args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.runner_args[:1] == ["--"]:
@@ -88,6 +91,7 @@ class StruoPlugin:
         self.sources = {os.path.abspath(source) for source in sources}
         self.selected = set(selected)
         self.items = {}
+        self.inventory = []
         self.statuses = {}
         self.attempts = {}
 
@@ -118,6 +122,7 @@ class StruoPlugin:
 
     def pytest_collection_finish(self, session):
         for item in session.items:
+            self.inventory.append(self.target + "::" + item.nodeid)
             path = item.nodeid.split("::", 1)[0].replace(os.sep, "/")
             self.items[item.nodeid] = {
                 "id": self.target + "::" + item.nodeid,
@@ -181,6 +186,14 @@ class StruoPlugin:
 
 def main():
     args = parse_args()
+    if args.struo_inventory:
+        try:
+            os.remove(args.struo_results)
+        except FileNotFoundError:
+            pass
+        if args.struo_test_unit:
+            print("fresh inventory cannot use test-unit filters", file=sys.stderr)
+            return 2
     selected = []
     prefix = args.struo_target + "::"
     for unit in args.struo_test_unit:
@@ -189,7 +202,27 @@ def main():
             return 2
         selected.append(unit[len(prefix):])
     plugin = StruoPlugin(args.struo_target, args.struo_source, selected)
-    exit_code = int(pytest.main(args.runner_args + (args.struo_source or ["."]), plugins=[plugin]))
+    collector = None
+    spawned = []
+    if args.struo_coverage_source and not args.struo_inventory:
+        import coverage
+        def audit(event, arguments):
+            if event in ("subprocess.Popen", "os.fork", "os.forkpty", "os.posix_spawn", "os.exec", "os.spawn", "os.system"):
+                spawned.append(event)
+        sys.addaudithook(audit)
+        collector = coverage.Coverage(data_file=None, config_file=False, include=[os.path.abspath(path) for path in args.struo_coverage_source])
+        collector.start()
+    runner_args = args.runner_args + (["--collect-only"] if args.struo_inventory else [])
+    exit_code = int(pytest.main(runner_args + (args.struo_source or ["."]), plugins=[plugin]))
+    if collector:
+        collector.stop()
+    if args.struo_inventory:
+        if exit_code == 0:
+            os.makedirs(os.path.dirname(args.struo_results), exist_ok=True)
+            with open(args.struo_results, "w", encoding="utf-8") as file:
+                json.dump({"schema": "struo.test_inventory.v1", "target": args.struo_target,
+                           "units": sorted(plugin.inventory)}, file)
+        return exit_code
     native = plugin.normalized(exit_code)
     native["exit_code"] = exit_code
     os.makedirs(os.path.dirname(args.struo_results), exist_ok=True)
@@ -198,9 +231,29 @@ def main():
     normalized = dict(native)
     normalized.pop("exit_code", None)
     normalized["artifacts"] = {
-        "logs": [os.path.dirname(args.struo_results) + "/pytest.log"],
+        "logs": [os.path.dirname(args.struo_results) + ("/runner.log" if collector else "/pytest.log")],
         "native_results": [args.struo_native_results],
     }
+    if collector:
+        files = []
+        complete = not spawned and len(normalized["cases"]) == 1 and exit_code == 0
+        try:
+            for source in sorted(set(args.struo_coverage_source)):
+                absolute = os.path.realpath(source)
+                relative = os.path.relpath(absolute).replace(os.sep, "/")
+                if relative.startswith("../") or relative == ".." or not os.path.isfile(absolute):
+                    raise ValueError("coverage source outside workspace or missing")
+                _, statements, excluded, missing, _ = collector.analysis2(absolute)
+                lines = sorted(set(statements) - set(excluded))
+                if lines:
+                    files.append({"path": relative, "line_numbers": lines,
+                                  "execution_counts": [0 if line in missing else 1 for line in lines]})
+        except Exception as error:
+            print("incomplete coverage: " + str(error), file=sys.stderr)
+            complete = False
+        normalized["coverage"] = {"tool": "coverage.py", "tool_version": coverage.__version__,
+                                  "platform": sys.platform + "/" + platform.machine(),
+                                  "partial": not complete, "files": files}
     with open(args.struo_results, "w", encoding="utf-8") as file:
         json.dump(normalized, file, indent=2, sort_keys=True)
     return exit_code
@@ -229,7 +282,7 @@ def _python_pytest_impl(ctx):
         "filtering": {"case_filtering": "runner_args"},
         "sharding": {"supported": True, "granularity": _python_attr(ctx, "batching", "file")},
         "retries": {"supported": False, "default_attempts": 1},
-        "execution": {"cacheable": True, "timeout_ms": _python_attr(ctx, "timeout_ms", None), "run_from_workspace_root": True},
+        "execution": {"cacheable": not _python_attr(ctx, "coverage_per_test", False), "timeout_ms": _python_attr(ctx, "timeout_ms", None), "run_from_workspace_root": True},
         "labels": _python_attr(ctx, "labels", []),
         "metadata": {},
     }
@@ -238,13 +291,33 @@ def _python_pytest_impl(ctx):
         host_command([python, "--version"], merge_stderr = True).strip(),
         host_command([python, "-c", "import pytest; print(pytest.__version__)"]).strip(),
     ], _python_env(ctx, test_dir))
-    if ctx["capability"] != "test":
+    measured = _python_attr(ctx, "coverage_per_test", False)
+    coverage_sources = _file_globs(_python_attr(ctx, "coverage_sources", []))
+    if measured:
+        provider["affected_inputs"] = _unique(inputs + coverage_sources)
+        if not coverage_sources:
+            fail("coverage_per_test requires nonempty coverage_sources")
+        collector_version = host_command([python, "-c", "import coverage; print(coverage.__version__)"]).strip()
+        platform = host_command([python, "-c", "import sys, platform; print(sys.platform + '/' + platform.machine())"]).strip()
+        provider["coverage_selection"] = {
+            "inputs": inputs,
+            "tool": "coverage.py",
+            "tool_version": collector_version,
+            "platform": platform,
+            "configuration": {"instrumentation": coverage_sources, "runtime": provider["portable_test_configuration"]},
+        }
+    discovery = ctx["capability"] == "test-discovery"
+    inventory = test_dir + "/inventory.json"
+    provider["test_inventory"] = inventory
+    if ctx["capability"] != "test" and not discovery:
         return provider
     write_path(adapter, _python_pytest_adapter())
-    argv = [python, adapter, "--struo-results", results, "--struo-native-results", native_results, "--struo-target", ctx["label"]["id"]]
+    argv = [python, adapter, "--struo-results", inventory if discovery or measured else results, "--struo-native-results", native_results, "--struo-target", ctx["label"]["id"]]
+    if discovery or measured:
+        argv.append("--struo-inventory")
     for source in glob(ctx["srcs"]):
         argv.extend(["--struo-source", source])
-    for unit in filters:
+    for unit in ([] if discovery or measured else filters):
         argv.extend(["--struo-test-unit", unit])
     argv.append("--")
     argv.extend(_python_attr(ctx, "args", []))
@@ -256,15 +329,32 @@ def _python_pytest_impl(ctx):
         source_files = _action_source_files(_unique(inputs + [adapter])),
         argv = argv,
         inputs = _unique(inputs + [adapter]),
-        outputs = [test_dir, results, log, native_results],
-        clean_paths = [results, log, native_results],
+        outputs = [inventory, log] if discovery or measured else [test_dir, results, log, native_results],
+        clean_paths = [inventory, log] if discovery or measured else [results, log, native_results],
         create_dirs = [test_dir, test_dir + "/home"],
         env = _python_env(ctx, test_dir),
         stdout = log,
         stderr = log,
+        cacheable = not discovery and not measured,
         toolchain_identity = "struo.pytest.v2\x00" + python + "\x00" + version + "\x00pytest\x00" + pytest_version,
-        identifier = ctx["label"]["id"] + ":pytest",
+        identifier = ctx["label"]["id"] + (":pytest-discovery" if discovery else ":pytest"),
     )
+    if measured and not discovery:
+        isolated_argv = [python, adapter, "--struo-target", ctx["label"]["id"]]
+        for source in glob(ctx["srcs"]):
+            isolated_argv.extend(["--struo-source", source])
+        for source in coverage_sources:
+            isolated_argv.extend(["--struo-coverage-source", source])
+        expand_actions(
+            implementation = "isolated_test_coverage_plan",
+            inputs = [inventory],
+            outputs = [results],
+            args = {"target": ctx["label"]["id"], "inventory": inventory, "directory": test_dir,
+                    "argv": isolated_argv, "inputs": _unique(inputs + coverage_sources + [adapter]),
+                    "env": _python_env(ctx, test_dir), "runner_args": ["--"] + _python_attr(ctx, "args", []),
+                    "filters": filters, "output": results, "success_exit_codes": [0, 1, 2, 3, 4, 5],
+                    "identity": "struo.pytest.coverage.v1\x00" + content_sha256(_json_encode(provider["coverage_selection"]))},
+        )
     return provider
 
 pytest_test = target_kind(
@@ -274,6 +364,8 @@ pytest_test = target_kind(
         attr("config", "list<string>", default = "[\"pyproject.toml\", \"pytest.ini\", \"conftest.py\"]", docs = "Configuration and collection inputs.", configurable = False),
         attr("data", "list<string>", default = "[]", docs = "Runtime data inputs read by tests.", configurable = False),
         attr("args", "list<string>", default = "[]", docs = "Additional pytest arguments.", configurable = False),
+        attr("coverage_per_test", "bool", default = "false", docs = "Measure each current test in a separate process using coverage.py for approximate coverage selection.", configurable = False),
+        attr("coverage_sources", "list<string>", default = "[]", docs = "Product Python source globs instrumented by coverage.py. Paths outside this universe never authorize coverage exclusion.", configurable = False),
         attr("env", "map<string,string>", default = "{}", docs = "Environment variables for test execution.", configurable = True),
         attr("env_inherit", "list<string>", default = "[]", docs = "Host environment variables inherited by name.", configurable = False),
         attr("batching", "string", default = "\"file\"", docs = "Automatic batch granularity: `file`, `case`, or `target`.", configurable = False),
@@ -282,7 +374,7 @@ pytest_test = target_kind(
     ],
     deps = [dep("deps", [], "Targets whose inputs should affect this test suite.")],
     providers = ["struo_test_info"],
-    capabilities = [capability("test", ["default", "test_results", "logs"])],
+    capabilities = [capability("test", ["default", "test_results", "logs"]), capability("test-discovery", ["test_inventory"])],
     tools = [_PYTHON_TOOL, _PYTEST_TOOL],
     examples = [example("pytest-test-minimal", name = "Minimal pytest suite", use_when = "You want Python tests with exact case execution and automatic file batching.")],
     impl = _python_pytest_impl,

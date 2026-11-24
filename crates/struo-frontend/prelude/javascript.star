@@ -155,14 +155,17 @@ def _javascript_test_inputs(ctx, runner, runner_is_workspace_input, discovery_in
     return _unique(discovery_inputs + _file_globs(_javascript_attr(ctx, "dependencies", [])) + runner_inputs)
 
 def _javascript_test_adapter():
-    return '''import { spawnSync } from "node:child_process"
+    return _javascript_coverage_adapter() + '''import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 
+const workspaceRoot = process.cwd()
+
 function parseArgs(argv) {
-  const options = { sources: [], units: [], runnerArgs: [] }
+  const options = { sources: [], units: [], runnerArgs: [], coverage_sources: [] }
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]
+    if (argument === "--struo-inventory") { options.inventory = true; continue }
     if (argument === "--") {
       options.runnerArgs = argv.slice(index + 1)
       break
@@ -172,6 +175,7 @@ function parseArgs(argv) {
     index += 1
     if (key === "source") options.sources.push(value)
     else if (key === "test_unit") options.units.push(value)
+    else if (key === "coverage_source") options.coverage_sources.push(value)
     else options[key] = value
   }
   return options
@@ -218,29 +222,41 @@ function attemptFor(status, assertion) {
 }
 
 function relativeFile(value) {
-  const relative = path.isAbsolute(value) ? path.relative(process.cwd(), value) : value
+  const relative = path.relative(workspaceRoot, path.resolve(value))
   return relative.split(path.sep).join("/")
 }
 
 function main() {
   const options = parseArgs(process.argv.slice(2))
+  if (options.cwd) {
+    for (const key of ['results', 'native_results', 'coverage_hook']) {
+      if (options[key]) options[key] = path.resolve(options[key])
+    }
+    options.sources = options.sources.map(file => path.resolve(file))
+    const sources = options.coverage_sources.map(file => path.resolve(file))
+    process.chdir(options.cwd)
+    options.coverage_sources = sources.map(file => path.relative(process.cwd(), file))
+  }
+  if (options.inventory) fs.rmSync(options.results, { force: true })
   if (options.unit === "suite" && options.units.length) throw new Error("suite units do not support test-unit filtering")
   const units = decodeUnits(options)
-  const files = units.length ? [...new Set(units.map(unit => unit.file))] : options.sources
+  const files = units.length ? [...new Set(units.map(unit => options.cwd ? path.resolve(workspaceRoot, unit.file) : unit.file))] : options.sources
   const names = units.map(unit => unit.name)
-  const namePattern = names.length ? "^(?:" + names.map(escapePattern).join("|") + ")$" : null
+  const namePattern = options.inventory ? "(?!)" : names.length ? "^(?:" + names.map(escapePattern).join("|") + ")$" : null
   let runnerArgs
   if (options.runner_type === "vitest") {
     runnerArgs = ["run", ...options.runnerArgs, "--no-cache", "--reporter=json", "--outputFile=" + options.native_results, ...files]
     if (namePattern) runnerArgs.push("--testNamePattern", namePattern)
   } else {
-    runnerArgs = [...options.runnerArgs, "--no-cache", "--runInBand", "--json", "--outputFile=" + options.native_results, "--runTestsByPath", ...files]
+    runnerArgs = [...options.runnerArgs, "--no-cache", "--runInBand", "--json", "--outputFile=" + options.native_results, ...(files.length ? ["--runTestsByPath", ...files] : [])]
     if (namePattern) runnerArgs.push("--testNamePattern", namePattern)
   }
   const command = options.runner_via_node === "true" ? process.execPath : options.runner
+  const coverage = coverageConfiguration(options, runnerArgs)
   const args = options.runner_via_node === "true" ? [options.runner, ...runnerArgs] : runnerArgs
   const started = performance.now()
-  const execution = spawnSync(command, args, { stdio: "inherit", env: process.env })
+  fs.rmSync(options.native_results, { force: true })
+  const execution = spawnSync(command, args, { stdio: "inherit", env: coverage.env })
   if (execution.error) throw execution.error
   const exitCode = execution.status ?? 1
   let native = { testResults: [] }
@@ -263,6 +279,10 @@ function main() {
       }
       identifiers.add(identifier)
       const status = normalizedStatus(assertion.status)
+      if (options.units.length && !options.units.includes(identifier)) {
+        if (status !== "skipped") throw new Error("runner executed an unrequested test unit")
+        continue
+      }
       cases.push({
         id: identifier,
         name: assertion.title || fullName,
@@ -276,6 +296,11 @@ function main() {
   }
   if (duplicates && units.length) {
     throw new Error("selected full test names are ambiguous; run the whole target without test-unit filters")
+  }
+  if (options.inventory) {
+    if (exitCode !== 0 || duplicates || !cases.length || native.success === false) return exitCode || 2
+    fs.writeFileSync(options.results, JSON.stringify({ schema: 'struo.test_inventory.v1', target: options.target, units: cases.map(item => item.id).sort() }))
+    return 0
   }
   const suiteUnit = options.unit === "suite" || duplicates
   const metadata = {}
@@ -320,6 +345,7 @@ function main() {
       native_results: [options.native_results],
     },
   }
+  attachCoverage(normalized, options, coverage)
   fs.writeFileSync(options.results, JSON.stringify(normalized, null, 2))
   return status === "passed" ? 0 : exitCode || 1
 }
@@ -344,22 +370,27 @@ def _javascript_test_info(ctx, runner_type, display_name, node, runner, adapter,
         "filtering": {"case_filtering": "unsupported" if suite_unit else "runner_args"},
         "sharding": {"supported": not suite_unit, "granularity": "target" if suite_unit else _javascript_attr(ctx, "batching", "file")},
         "retries": {"supported": False, "default_attempts": 1},
-        "execution": {"cacheable": True, "timeout_ms": _javascript_attr(ctx, "timeout_ms", None), "run_from_workspace_root": True},
+        "execution": {"cacheable": not _javascript_attr(ctx, "coverage_per_test", False), "timeout_ms": _javascript_attr(ctx, "timeout_ms", None), "run_from_workspace_root": True},
         "labels": _javascript_attr(ctx, "labels", []),
         "metadata": {},
     }
 
-def _javascript_test_impl(ctx, runner_type, display_name, default_runner):
+def _javascript_test_impl(ctx, runner_type, display_name, default_runner, cwd = ".", env = {}, inputs = None, discovery_inputs = None):
     node = _javascript_node(ctx)
     runner, runner_via_node, runner_is_workspace_input = _javascript_runner(ctx, runner_type, default_runner)
-    discovery_inputs = _javascript_discovery_inputs(ctx)
-    inputs = _javascript_test_inputs(ctx, runner, runner_is_workspace_input, discovery_inputs)
+    if discovery_inputs == None:
+        discovery_inputs = _javascript_discovery_inputs(ctx)
+    if inputs == None:
+        inputs = _javascript_test_inputs(ctx, runner, runner_is_workspace_input, discovery_inputs)
     test_dir = _test_output_dir(ctx)
     results = test_dir + "/test_results.json"
     log = test_dir + "/" + runner_type + ".log"
     native_results = test_dir + "/" + runner_type + "-results.json"
     adapter = test_dir + "/struo_javascript_test_adapter.mjs"
     info = _javascript_test_info(ctx, runner_type, display_name, node, runner, adapter, results, log, native_results, test_dir)
+    action_env = _javascript_env(ctx, test_dir, node)
+    action_env.update(env)
+    info["command"]["env"] = action_env
     provider = {"label_id": ctx["label"]["id"], "target_kind": runner_type + "_test", "affected_inputs": inputs, "test_discovery_inputs": discovery_inputs, "test_info": info}
     portable_env = _javascript_env(ctx, test_dir, "")
     runner_version_argv = ([node, runner] if runner_via_node else [runner]) + ["--version"]
@@ -367,14 +398,37 @@ def _javascript_test_impl(ctx, runner_type, display_name, default_runner):
         host_command([node, "--version"]).strip(),
         host_command(runner_version_argv, cwd = workspace_root()).strip() if runner_is_workspace_input else host_command(runner_version_argv).strip(),
     ], portable_env)
-    if ctx["capability"] != "test":
+    measured = _javascript_attr(ctx, "coverage_per_test", False)
+    coverage_sources = _file_globs(_javascript_attr(ctx, "coverage_sources", []))
+    if measured:
+        if _javascript_attr(ctx, "unit", "case") != "case":
+            fail("coverage_per_test requires native case units")
+        if not coverage_sources:
+            fail("coverage_per_test requires nonempty coverage_sources")
+        collector_version = " ".join(provider["portable_test_configuration"]["tools"])
+        provider["affected_inputs"] = _unique(inputs + coverage_sources)
+        provider["coverage_selection"] = {
+            "inputs": inputs, "tool": "v8-istanbul", "tool_version": collector_version,
+            "platform": host_command([node, "-p", "process.platform + '/' + process.arch"]).strip(),
+            "configuration": {"instrumentation": coverage_sources, "runtime": provider["portable_test_configuration"]},
+        }
+    discovery = ctx["capability"] == "test-discovery"
+    inventory = test_dir + "/inventory.json"
+    provider["test_inventory"] = inventory
+    if ctx["capability"] != "test" and not discovery:
         return provider
     write_path(adapter, _javascript_test_adapter())
-    argv = [node, adapter, "--struo-runner-type", runner_type, "--struo-runner", runner, "--struo-runner-via-node", "true" if runner_via_node else "false", "--struo-unit", _javascript_attr(ctx, "unit", "case"), "--struo-results", results, "--struo-native-results", native_results, "--struo-target", ctx["label"]["id"]]
+    base = [node, adapter, "--struo-runner-type", runner_type, "--struo-runner", runner, "--struo-runner-via-node", "true" if runner_via_node else "false", "--struo-unit", _javascript_attr(ctx, "unit", "case"), "--struo-target", ctx["label"]["id"]]
+    if cwd != ".":
+        base.extend(["--struo-cwd", cwd])
     for source in glob(ctx["srcs"]):
-        argv.extend(["--struo-source", source])
-    for unit in (ctx.get("test") or {}).get("filters") or []:
+        base.extend(["--struo-source", source])
+    argv = base + ["--struo-results", inventory if discovery or measured else results, "--struo-native-results", native_results]
+    filters = (ctx.get("test") or {}).get("filters") or []
+    for unit in ([] if discovery or measured else filters):
         argv.extend(["--struo-test-unit", unit])
+    if discovery or measured:
+        argv.append("--struo-inventory")
     argv.append("--")
     argv.extend(_javascript_attr(ctx, "args", []))
     version = host_command([node, "--version"]).strip()
@@ -386,15 +440,30 @@ def _javascript_test_impl(ctx, runner_type, display_name, default_runner):
         source_files = _action_source_files(_unique(inputs + [adapter])),
         argv = argv,
         inputs = _unique(inputs + [adapter]),
-        outputs = [test_dir, results, log, native_results],
-        clean_paths = [results, log, native_results],
+        outputs = [inventory, log, native_results] if discovery or measured else [test_dir, results, log, native_results],
+        clean_paths = [inventory, log, native_results] if discovery or measured else [results, log, native_results],
         create_dirs = [test_dir, test_dir + "/home"],
-        env = _javascript_env(ctx, test_dir, node),
+        env = action_env,
         stdout = log,
         stderr = log,
+        cacheable = not discovery and not measured,
         toolchain_identity = "struo." + runner_type + ".v2\x00" + node + "\x00" + version + "\x00" + runner + "\x00" + runner_version,
         identifier = ctx["label"]["id"] + ":" + runner_type,
     )
+    if measured and not discovery:
+        hook = test_dir + "/struo_javascript_coverage.cjs"
+        write_path(hook, _javascript_coverage_hook())
+        isolated = base + ["--struo-coverage-hook", hook, "--struo-collector-version", collector_version]
+        for source in coverage_sources:
+            isolated.extend(["--struo-coverage-source", source])
+        expand_actions(
+            implementation = "isolated_test_coverage_plan", inputs = [inventory], outputs = [results],
+            args = {"target": ctx["label"]["id"], "inventory": inventory, "directory": test_dir,
+                    "argv": isolated, "inputs": _unique(inputs + coverage_sources + [adapter, hook]),
+                    "env": action_env, "runner_args": ["--"] + _javascript_attr(ctx, "args", []),
+                    "filters": filters, "output": results, "success_exit_codes": [0, 1, 2],
+                    "identity": "struo.javascript.coverage.v1\x00" + content_sha256(_json_encode(provider["coverage_selection"]))},
+        )
     return provider
 
 def _vitest_impl(ctx):
@@ -411,6 +480,8 @@ def _javascript_test_attrs(runner, display_name):
         attr("dependencies", "list<string>", default = "[\"node_modules/**/*\"]", docs = "Installed runner and package files required during execution.", configurable = False),
         attr("data", "list<string>", default = "[]", docs = "Runtime data, setup, transform, snapshot, and runner package inputs.", configurable = False),
         attr("args", "list<string>", default = "[]", docs = "Additional runner arguments.", configurable = False),
+        attr("coverage_per_test", "bool", default = "false", docs = "Measure each current exact case independently using native V8 coverage and Istanbul conversion for approximate selection.", configurable = False),
+        attr("coverage_sources", "list<string>", default = "[]", docs = "Product JavaScript or TypeScript source globs to instrument, required for coverage_per_test.", configurable = False),
         attr("env", "map<string,string>", default = "{}", docs = "Environment variables for test execution.", configurable = True),
         attr("env_inherit", "list<string>", default = "[]", docs = "Host environment variables inherited by name.", configurable = False),
         attr("unit", "string", default = "\"case\"", docs = "Result unit: `case` uses unique file/full-name identities, falling back to a whole-target suite when an unfiltered run contains duplicates; `suite` always retains the complete native report as one target-level unit without case listing, filtering, or sharding.", configurable = False, allowed_values = ["case", "suite"]),
@@ -424,7 +495,7 @@ vitest_test = target_kind(
     attrs = _javascript_test_attrs("node_modules/vitest/vitest.mjs", "Vitest"),
     deps = [dep("deps", [], "Targets whose inputs should affect this test suite.")],
     providers = ["struo_test_info"],
-    capabilities = [capability("test", ["default", "test_results", "logs"])],
+    capabilities = [capability("test", ["default", "test_results", "logs"]), capability("test-discovery", ["test_inventory"])],
     tools = [_JAVASCRIPT_TOOL, _VITEST_TOOL],
     examples = [example("vitest-test-minimal", name = "Minimal Vitest suite", use_when = "You want JavaScript or TypeScript tests scheduled by file through Struo.")],
     impl = _vitest_impl,
@@ -435,7 +506,7 @@ jest_test = target_kind(
     attrs = _javascript_test_attrs("node_modules/jest/bin/jest.js", "Jest"),
     deps = [dep("deps", [], "Targets whose inputs should affect this test suite.")],
     providers = ["struo_test_info"],
-    capabilities = [capability("test", ["default", "test_results", "logs"])],
+    capabilities = [capability("test", ["default", "test_results", "logs"]), capability("test-discovery", ["test_inventory"])],
     tools = [_JAVASCRIPT_TOOL, _JEST_TOOL],
     examples = [example("jest-test-minimal", name = "Minimal Jest suite", use_when = "You want JavaScript or TypeScript Jest tests scheduled by file through Struo.")],
     impl = _jest_impl,

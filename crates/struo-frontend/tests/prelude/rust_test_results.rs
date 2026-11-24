@@ -112,6 +112,169 @@ fn attempt<'a>(report: &'a serde_json::Value, name: &str) -> &'a serde_json::Val
     &attempts[0]
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+#[allow(clippy::too_many_lines)]
+fn isolated_llvm_coverage_preserves_case_ownership_and_rejects_child_execution() {
+    use serde_json::{json, Value};
+
+    let sysroot = Command::new("rustc")
+        .args(["--print", "sysroot"])
+        .output()
+        .unwrap();
+    let host = Command::new("rustc").arg("-vV").output().unwrap();
+    let host = String::from_utf8(host.stdout).unwrap();
+    let host = host
+        .lines()
+        .find_map(|line| line.strip_prefix("host: "))
+        .unwrap();
+    let tools = PathBuf::from(String::from_utf8(sysroot.stdout).unwrap().trim())
+        .join("lib/rustlib")
+        .join(host)
+        .join("bin");
+    if !tools.join("llvm-cov").exists() || Command::new("strace").arg("--version").output().is_err()
+    {
+        eprintln!("requires rustup component add llvm-tools and Linux strace");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let runner = compile_runner(dir.path());
+    for (file, value) in [("first.rs", 41), ("second.rs", 17), ("unused.rs", 29)] {
+        std::fs::write(
+            dir.path().join(file),
+            format!("pub fn value() -> u32 {{ {value} }}\n"),
+        )
+        .unwrap();
+    }
+    std::fs::write(dir.path().join("tests.rs"), r#"
+mod first; mod second; mod unused;
+#[test] fn first_case() {
+    if std::env::var_os("CHILD_WORK").is_some() { assert!(std::process::Command::new("/bin/true").status().unwrap().success()); }
+    assert!(std::env::var_os("FAIL_CASE").is_none());
+    assert_eq!(first::value(), 41);
+}
+#[test] fn second_case() { assert_eq!(second::value(), 17); }
+"#).unwrap();
+    let binary = dir.path().join("tests");
+    let compilation = Command::new("rustc")
+        .current_dir(dir.path())
+        .args([
+            "--test",
+            "tests.rs",
+            "-C",
+            "instrument-coverage",
+            "-C",
+            "link-dead-code",
+            "-o",
+        ])
+        .arg(&binary)
+        .output()
+        .unwrap();
+    assert!(compilation.status.success(), "{compilation:?}");
+    std::fs::write(
+        dir.path().join("adapter.py"),
+        eval_prelude_string_function_in(all_prelude_source(), "_rust_coverage_adapter", "()")
+            .unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("config.json"),
+        serde_json::to_vec(&json!({
+            "binary":binary,"reporter":runner,"target":"tests","cwd":null,"args":[],
+            "sources":["first.rs","second.rs","unused.rs"], "version":"fixture",
+            "cov":tools.join("llvm-cov"),"profdata":tools.join("llvm-profdata"),"trace":"strace"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let inventory = json!({"schema":"struo.test_inventory.v1","target":"tests","units":["tests::first_case","tests::second_case"]});
+    let discovery = Command::new("python3")
+        .current_dir(dir.path())
+        .env("FAIL_CASE", "1")
+        .args([
+            "adapter.py",
+            "--struo-config",
+            "config.json",
+            "--struo-results",
+            "out/inventory.json",
+            "--struo-native-results",
+            "out/listing.txt",
+            "--struo-inventory",
+        ])
+        .output()
+        .unwrap();
+    assert!(discovery.status.success(), "{discovery:?}");
+    assert_eq!(
+        serde_json::from_slice::<Value>(
+            &std::fs::read(dir.path().join("out/inventory.json")).unwrap()
+        )
+        .unwrap(),
+        inventory,
+    );
+    assert!(
+        !dir.path().join("default.profraw").exists(),
+        "discovery must not dirty the checkout or contribute a measured profile"
+    );
+    let mut observations = Vec::new();
+    for unit in ["first_case", "second_case"] {
+        let mut command = Command::new("python3");
+        command.current_dir(dir.path()).args([
+            "adapter.py",
+            "--struo-config",
+            "config.json",
+            "--struo-results",
+            &format!("out/{unit}/results.json"),
+            "--struo-native-results",
+            &format!("out/{unit}/native.txt"),
+            "--struo-test-unit",
+            &format!("tests::{unit}"),
+        ]);
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let read = || -> Value {
+            serde_json::from_slice(
+                &std::fs::read(dir.path().join(format!("out/{unit}/results.json"))).unwrap(),
+            )
+            .unwrap()
+        };
+        let measured = read();
+        assert_eq!(
+            measured["coverage"]["partial"], false,
+            "{measured} {output:?}"
+        );
+        observations.push(Ok(measured));
+        command.env("CHILD_WORK", "1");
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        if unit == "first_case" {
+            assert_eq!(read()["coverage"]["partial"], true);
+        }
+        command.env_remove("CHILD_WORK").env("FAIL_CASE", "1");
+        let output = command.output().unwrap();
+        if unit == "first_case" {
+            assert!(!output.status.success());
+            assert_eq!(read()["status"], "failed");
+            assert_eq!(read()["coverage"]["partial"], true);
+        }
+    }
+    let merged = struo_core::merge_test_coverage("tests", &inventory, observations, false).unwrap();
+    assert_eq!(merged["coverage"]["partial"], false, "{merged}");
+    assert_eq!(merged["coverage"]["files"][2]["path"], "unused.rs");
+    assert_eq!(merged["coverage"]["files"][2]["covered_lines"], 0);
+    assert_eq!(
+        merged["coverage_evidence"]["paths"],
+        json!(["first.rs", "second.rs"])
+    );
+    assert_eq!(
+        merged["coverage_evidence"]["scopes"][0]["files"],
+        json!([0])
+    );
+    assert_eq!(
+        merged["coverage_evidence"]["scopes"][1]["files"],
+        json!([1])
+    );
+}
+
 /// The stable harness prints no per-test timing, so the runner opts into
 /// libtest's timing report. Every case that ran carries its measured
 /// duration, every failure carries the output libtest captured for that case

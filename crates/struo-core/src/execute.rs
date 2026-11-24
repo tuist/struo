@@ -331,6 +331,53 @@ async fn execute_portable_action(
             capture_file_action_outputs(std::slice::from_ref(output), workspace_root, cache, lease)
                 .await
         }
+        Action::MergeTestCoverage {
+            target,
+            inventory,
+            results,
+            output,
+            partial,
+            ..
+        } => {
+            let root = workspace_root.to_owned();
+            let target = target.clone();
+            let inventory = inventory.clone();
+            let results = results.clone();
+            let destination = output.clone();
+            let partial = *partial;
+            let passed = spawn_admitted(lease, move || {
+                crate::test_results::merge_files(
+                    &root,
+                    &target,
+                    &inventory,
+                    &results,
+                    &destination,
+                    partial,
+                )
+            })
+            .await
+            .map_err(|error| Error::FileAction {
+                action: "merge_test_coverage",
+                path: output.to_string(),
+                source: std::io::Error::other(error),
+            })?
+            .map_err(|error| Error::FileAction {
+                action: "merge_test_coverage",
+                path: output.to_string(),
+                source: std::io::Error::other(error.to_string()),
+            })?;
+            let mut result = capture_file_action_outputs(
+                std::slice::from_ref(output),
+                workspace_root,
+                cache,
+                lease,
+            )
+            .await?;
+            if !passed {
+                result.exit_code = 1;
+            }
+            Ok(result)
+        }
         Action::WriteArchive {
             entries,
             output,

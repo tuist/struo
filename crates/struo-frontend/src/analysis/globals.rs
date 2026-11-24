@@ -24,6 +24,7 @@ mod file_actions;
 mod host;
 mod observation;
 mod paths;
+mod test_actions;
 
 pub(super) use observation::validate_observations;
 pub use observation::{expansion_could_differ, StaleObservation, UnchangedWorkspace};
@@ -51,6 +52,7 @@ pub fn globals_for_prelude() -> Globals {
         .with(paths::path_globals)
         .with(actions::action_globals)
         .with(file_actions::file_action_globals)
+        .with(test_actions::test_action_globals)
         .with(codecs::codec_globals)
         .build()
 }
@@ -705,6 +707,7 @@ mod observation_completeness_tests {
         "expand_actions",
         "json_decode",
         "link_path",
+        "merge_test_coverage",
         "plist_decode",
         "plist_encode",
         "prepare_path",

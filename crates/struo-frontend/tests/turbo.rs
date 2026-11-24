@@ -23,6 +23,47 @@ fn task(id: &str, directory: &str, command: &str, dependencies: &[&str]) -> serd
 }
 
 #[test]
+fn coverage_opt_in_reaches_only_generated_test_targets() {
+    let workspace = TempDir::new().unwrap();
+    fs::create_dir(workspace.path().join("app")).unwrap();
+    fs::write(workspace.path().join("app/product.js"), "export default 42").unwrap();
+    let graph = json!({"packages": [], "dry": {"tasks": [
+        task("app#build", "app", "compile", &[]),
+        task("app#test", "app", "vitest run", &[])
+    ]}});
+    for enabled in [false, true] {
+        write_seed(&workspace, &graph);
+        let manifest = workspace.path().join("struo.toml");
+        let original = fs::read_to_string(&manifest).unwrap();
+        fs::write(
+            &manifest,
+            format!(
+                "{original}coverage_per_test = {enabled}\ncoverage_sources = ['app/product.js']\n"
+            ),
+        )
+        .unwrap();
+        let targets = struo_frontend::load_graph_workspace(workspace.path()).unwrap();
+        let test = targets.iter().find(|t| t.label.id == "app__test").unwrap();
+        assert_eq!(
+            test.attrs
+                .get("coverage_per_test")
+                .map(|v| serde_json::to_value(v).unwrap()),
+            enabled.then_some(json!(true))
+        );
+        if enabled {
+            assert_eq!(
+                serde_json::to_value(&test.attrs["coverage_sources"]).unwrap(),
+                json!(["app/product.js"])
+            );
+        }
+        let build = targets.iter().find(|t| t.label.id == "app__build").unwrap();
+        assert!(!build.attrs.contains_key("coverage_per_test"));
+        let diagnostics = struo_frontend::validate_workspace(workspace.path()).unwrap();
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+}
+
+#[test]
 fn resolver_bridges_scriptless_tasks_and_maps_package_paths() {
     let workspace = TempDir::new().unwrap();
     for path in ["apps/web", "packages/ui", "packages/config"] {

@@ -62,6 +62,8 @@ A complete discovery run is required before smaller batches are planned.
 | `config` | list&lt;string&gt; | no | `Gemfile`, `Gemfile.lock` | Dependency and runner configuration inputs |
 | `data` | list&lt;string&gt; | no | `[]` | Runtime data and support inputs |
 | `args` | list&lt;string&gt; | no | `[]` | Additional runner arguments |
+| `coverage_per_test` | bool | no | `false` | Measure each example independently with Ruby Coverage |
+| `coverage_sources` | list&lt;string&gt; | no | `[]` | Product Ruby source globs to instrument |
 | `env` | map&lt;string, string&gt; | no | `{}` | Explicit test environment variables |
 | `env_inherit` | list&lt;string&gt; | no | `[]` | Host environment variables inherited by name |
 | `batching` | string | no | `file` | Automatic granularity: `file`, `case`, or `target` |
@@ -76,6 +78,14 @@ A complete discovery run is required before smaller batches are planned.
 
 The target emits `struo_test_info` and exposes `test` with the `default`,
 `test_results`, and `logs` output groups.
+
+`test-discovery` emits the current example identifiers through native dry-run
+collection. Failed collection cannot publish an inventory. Opt-in
+`coverage_per_test` uses the current inventory and measures one exact example
+per process, without reusing cached observations. Declare product Ruby paths
+in `coverage_sources`. Ruby Coverage must support `line_stub` so unloaded
+sources remain in the zero-hit instrumented universe. Child processes,
+skipped examples and failed runs cannot establish complete checkpoints.
 
 ## Example
 

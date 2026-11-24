@@ -1,0 +1,9 @@
+[[target]]
+name = "bazel"
+kind = "bazel_workspace"
+srcs = ["WORKSPACE", "BUILD", ".bazelrc", ".bazelversion"]
+
+[target.attrs]
+coverage_per_test = true
+coverage_sources = ["product.cc", "unused.cc"]
+toolchain_inputs = ["/usr/bin/cc", "/usr/bin/gcov"]

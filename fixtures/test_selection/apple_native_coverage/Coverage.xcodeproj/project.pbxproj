@@ -1,0 +1,28 @@
+// !$*UTF8*$!
+{
+    archiveVersion = 1;
+    classes = {};
+    objectVersion = 56;
+    objects = {
+        ROOT = {isa = PBXProject; buildConfigurationList = PROJECT_CONFIGS; mainGroup = GROUP; targets = (PRODUCT, TESTS); };
+        PROJECT_CONFIGS = {isa = XCConfigurationList; buildConfigurations = (PROJECT_DEBUG); defaultConfigurationName = Debug; };
+        PROJECT_DEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 14.0; SWIFT_VERSION = 6.0; ENABLE_TESTABILITY = YES; CODE_SIGNING_ALLOWED = NO; }; };
+        GROUP = {isa = PBXGroup; children = (COVERED, UNUSED, TEST_FILE); sourceTree = "<group>"; };
+        COVERED = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Product/Covered.swift; sourceTree = "<group>"; };
+        UNUSED = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Product/Unused.swift; sourceTree = "<group>"; };
+        TEST_FILE = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XCTestTests.swift; sourceTree = "<group>"; };
+        COVERED_BUILD = {isa = PBXBuildFile; fileRef = COVERED; };
+        UNUSED_BUILD = {isa = PBXBuildFile; fileRef = UNUSED; };
+        TEST_BUILD = {isa = PBXBuildFile; fileRef = TEST_FILE; };
+        PRODUCT_SOURCES = {isa = PBXSourcesBuildPhase; files = (COVERED_BUILD, UNUSED_BUILD); };
+        TEST_SOURCES = {isa = PBXSourcesBuildPhase; files = (TEST_BUILD); };
+        PRODUCT_CONFIGS = {isa = XCConfigurationList; buildConfigurations = (PRODUCT_DEBUG); defaultConfigurationName = Debug; };
+        PRODUCT_DEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {PRODUCT_NAME = Product; PRODUCT_MODULE_NAME = Product; }; };
+        PRODUCT = {isa = PBXNativeTarget; buildConfigurationList = PRODUCT_CONFIGS; buildPhases = (PRODUCT_SOURCES); dependencies = (); name = Product; productType = "com.apple.product-type.library.static"; productName = Product; };
+        TEST_CONFIGS = {isa = XCConfigurationList; buildConfigurations = (TEST_DEBUG); defaultConfigurationName = Debug; };
+        TEST_DEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {PRODUCT_NAME = XCTestTests; PRODUCT_BUNDLE_IDENTIFIER = dev.struo.coverage.tests; GENERATE_INFOPLIST_FILE = YES; }; };
+        TEST_DEP = {isa = PBXTargetDependency; target = PRODUCT; };
+        TESTS = {isa = PBXNativeTarget; buildConfigurationList = TEST_CONFIGS; buildPhases = (TEST_SOURCES); dependencies = (TEST_DEP); name = XCTestTests; productType = "com.apple.product-type.bundle.unit-test"; productName = XCTestTests; };
+    };
+    rootObject = ROOT;
+}

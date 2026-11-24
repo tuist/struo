@@ -70,6 +70,8 @@ whole-target reporting mode, even when names are unique.
 | `dependencies` | list&lt;string&gt; | no | `node_modules/**/*` | Installed runner and package files required during execution |
 | `data` | list&lt;string&gt; | no | `[]` | Setup, transform, snapshot, and runtime inputs |
 | `args` | list&lt;string&gt; | no | `[]` | Additional Jest arguments |
+| `coverage_per_test` | bool | no | `false` | Measure each exact case with native V8 coverage |
+| `coverage_sources` | list&lt;string&gt; | no | `[]` | Product source globs to instrument, required for coverage selection |
 | `env` | map&lt;string, string&gt; | no | `{}` | Explicit test environment variables |
 | `env_inherit` | list&lt;string&gt; | no | `[]` | Host environment variables inherited by name |
 | `unit` | string | no | `case` | `case` for unique case identities with automatic whole-target fallback on duplicates; `suite` to always disable case selection and sharding |
@@ -85,6 +87,15 @@ whole-target reporting mode, even when names are unique.
 
 The target emits `struo_test_info` and exposes `test` with the `default`,
 `test_results`, and `logs` output groups.
+
+`test-discovery` collects current case identities without running test bodies.
+With `coverage_per_test = true`, Struo runs each exact case in isolation,
+disables Watchman and cached observations, and converts V8 coverage into
+normalized per-case evidence. Declare product inputs in `coverage_sources`;
+unexecuted sources remain in the zero-hit universe. Child processes, worker
+threads, missing instrumentation, duplicate identities, skipped cases and
+failures cannot establish a complete coverage checkpoint. Suite units do not
+support this collector.
 
 ## Example
 

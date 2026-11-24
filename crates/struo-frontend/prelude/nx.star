@@ -292,6 +292,9 @@ def _nx_workspace_resolver(ctx):
             elif executor:
                 attrs["runnable"] = True
                 attrs["executor_graph"] = _json_encode(graph)
+            if task_name == "test" and _nx_attr(ctx, "coverage_per_test", False):
+                attrs["coverage_per_test"] = True
+                attrs["coverage_sources"] = _nx_attr(ctx, "coverage_sources", [])
             targets.append({
                 "name": _nx_task_name(project_name, task_name),
                 "kind": "nx_test" if task_name == "test" else "nx_task",
@@ -487,6 +490,13 @@ def _nx_task_impl(ctx, is_test = False):
     for name, value in _nx_attr(ctx, "env", {}).items():
         env[name] = value
 
+    if is_test and _nx_attr(ctx, "coverage_per_test", False):
+        if executor_graph or len(commands) != 1 or outputs:
+            fail("Nx coverage requires one native Jest or Vitest command without plugin execution or task outputs")
+        provider.update(_javascript_task_coverage(ctx, commands[0], cwd, inputs, env, "nx_test"))
+        provider["artifact_inputs"] = dependency_artifacts
+        return provider
+
     node_version = host_command([node, "--version"]).strip()
 
     argv = _nx_shell_argv(commands) if commands else []
@@ -565,6 +575,8 @@ nx_workspace = target_kind(
         attr("targets", "list<string>", default = "[\"build\", \"test\", \"lint\"]", docs = "Nx task names to emit, together with their transitive task dependencies. Defaults to build, test, and lint. Set an empty list to include every task in the graph.", configurable = False),
         attr("resolver_inputs", "list<string>", default = "[]", docs = "Package-relative text globs supplied to native integration resolution. Defaults to srcs when empty.", configurable = False),
         attr("graph_file", "string", default = "\"\"", docs = "Optional workspace-relative path to a checked-in Nx project-graph JSON snapshot. Include external package nodes for plugin execution. Struo reads it directly instead of invoking Nx, allowing graph inspection without Node.js or node_modules/nx.", configurable = False),
+        attr("coverage_per_test", "bool", default = "false", docs = "Forward isolated coverage opt-in to generated native Jest or Vitest test command targets.", configurable = False),
+        attr("coverage_sources", "list<string>", default = "[]", docs = "Product source globs forwarded to generated coverage-enabled test targets.", configurable = False),
         attr("_default_test_roots", "list<string>", default = "[]", docs = "Resolver-owned first-party test target names, including library suites, for targetless test selection.", configurable = False),
     ],
     resolver = _nx_workspace_resolver,
@@ -622,10 +634,13 @@ nx_task = target_kind(
 
 nx_test = target_kind(
     docs = "One Nx test task, executed as a cacheable target-level suite with normalized results and logs. Uses the same resolved commands and plugin executor API as nx_task.",
-    attrs = _nx_task_attrs(),
+    attrs = _nx_task_attrs() + [
+        attr("coverage_per_test", "bool", default = "false", docs = "Discover and isolate native cases for a single Jest or Vitest command task.", configurable = False),
+        attr("coverage_sources", "list<string>", default = "[]", docs = "Product JavaScript or TypeScript source globs to instrument.", configurable = False),
+    ],
     deps = [dep("deps", ["nx_task"], "Prerequisite Nx tasks built before the test suite.")],
     providers = ["nx_task", "struo_test_info"],
-    capabilities = [capability("build", []), capability("test", ["default", "test_results", "logs"])],
+    capabilities = [capability("build", []), capability("test", ["default", "test_results", "logs"]), capability("test-discovery", ["test_inventory"])],
     tools = [_NX_NODE_TOOL, _NX_TOOL],
     examples = [example("nx-test", name = "Nx test suite", use_when = "Run one Nx test command as a cacheable suite with normalized results.")],
     impl = _nx_test_impl,

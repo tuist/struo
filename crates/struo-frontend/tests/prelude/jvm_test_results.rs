@@ -84,6 +84,38 @@ fn jvm_runner_discovers_static_nested_suites_and_propagates_their_failures() {
     let dir = tempfile::tempdir().unwrap();
     compile_suite(&dir);
     for runner_type in ["kotlin_jvm", "android_local"] {
+        let discovered = Command::new("java")
+            .args([
+                "-cp",
+                "classes",
+                "StruoJvmTestRunner",
+                "classes",
+                "results.json",
+                "test.log",
+                "native.txt",
+                "Tests",
+                runner_type,
+            ])
+            .env("STRUO_TEST_INVENTORY", dir.path().join("inventory.json"))
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            discovered.status.success(),
+            "discovery executed failing bodies: {discovered:?}"
+        );
+        let inventory: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.path().join("inventory.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            inventory["units"].as_array().unwrap().len(),
+            8,
+            "{inventory}"
+        );
+        assert!(inventory["units"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("Tests::Suite$Nested$Deep.testFails")));
         let output = Command::new("java")
             .args([
                 "-cp",
@@ -284,6 +316,7 @@ public class InheritedInvalidTest extends InvalidBase {}
 
 #[test]
 #[ignore = "requires JUNIT4_CLASSPATH containing JUnit 4 and Hamcrest jars"]
+#[allow(clippy::too_many_lines)]
 fn junit4_runner_preserves_native_lifecycle_rules_parameters_and_failures() {
     let classpath = std::env::var("JUNIT4_CLASSPATH").unwrap();
     let dir = tempfile::tempdir().unwrap();
@@ -338,5 +371,67 @@ fn junit4_runner_preserves_native_lifecycle_rules_parameters_and_failures() {
             assert!(log.contains("first execution fails"), "{log}");
             assert!(!log.contains("duplicate execution"), "{log}");
         }
+    }
+    for (unit, filter, status) in [
+        (
+            "Tests::ParameterSuite.parameter[0]",
+            "ParameterSuite",
+            "passed",
+        ),
+        ("Tests::IgnoredSuite.second", "IgnoredSuite", "skipped"),
+        ("Tests::ZOnceTest.once", "ASuite", "failed"),
+    ] {
+        let output = Command::new("java")
+            .arg("-cp")
+            .arg(&runtime_classpath)
+            .args([
+                "StruoJvmTestRunner",
+                "classes",
+                "results.json",
+                "run.log",
+                "native.txt",
+                "Tests",
+                "kotlin_jvm",
+                filter,
+            ])
+            .env("STRUO_TEST_UNIT", unit)
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert_eq!(output.status.success(), status != "failed", "{output:?}");
+        let report: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.path().join("results.json")).unwrap())
+                .unwrap();
+        assert_eq!(report["cases"].as_array().unwrap().len(), 1, "{report}");
+        assert_eq!(report["cases"][0]["id"], unit);
+        assert_eq!(report["cases"][0]["status"], status);
+        let discovered = Command::new("java")
+            .arg("-cp")
+            .arg(&runtime_classpath)
+            .args([
+                "StruoJvmTestRunner",
+                "classes",
+                "results.json",
+                "run.log",
+                "native.txt",
+                "Tests",
+                "kotlin_jvm",
+                filter,
+            ])
+            .env("STRUO_TEST_INVENTORY", dir.path().join("inventory.json"))
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(discovered.status.success(), "{discovered:?}");
+        let inventory: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.path().join("inventory.json")).unwrap())
+                .unwrap();
+        assert!(
+            inventory["units"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!(unit)),
+            "{inventory}"
+        );
     }
 }

@@ -38,9 +38,8 @@ run_action(["tool"])
 fn cargo_history_is_stable_across_versions_labels_revisions_and_registry_protocols() {
     let tmp = TempDir::new().unwrap();
     let source = format!(
-        "{}\n{}\n{}",
-        include_str!("../../../prelude/common.star"),
-        include_str!("../../../prelude/rust.star"),
+        "{}\n{}",
+        crate::modules::built_in_module_source(),
         r#"
 def ctx(version, source, label, host = False):
     return {"attr": {"package_name": "serde", "crate_name": "serde", "version": version, "source": source, "_cargo_host_tool": host, "_cargo_resolver": "pkg/dependencies"}, "label": {"id": label, "name": label}}
@@ -99,9 +98,8 @@ emit(bad)
 fn cargo_resolvers_in_one_package_have_distinct_history_for_products_and_host_tools() {
     let tmp = TempDir::new().unwrap();
     let source = format!(
-        "{}\n{}\n{}",
-        include_str!("../../../prelude/common.star"),
-        include_str!("../../../prelude/rust.star"),
+        "{}\n{}",
+        crate::modules::built_in_module_source(),
         r#"
 package = {"name": "serde", "version": "1.0.228", "source": "sparse+https://index.crates.io/"}
 target = {"name": "serde", "kind": ["lib"]}
@@ -126,7 +124,7 @@ emit("pkg/dependencies_release", True)
 
 #[test]
 fn cargo_history_buckets_separate_incompatible_zero_and_prerelease_versions() {
-    let source = format!("{}\n{}\nvalue = repr([_rust_history_bucket(v) for v in [\"1.2.3\", \"1.9.9+build\", \"0.3.6\", \"0.3.9\", \"0.0.5\", \"0.0.6\", \"1.0.0-beta.2\", \"0.11.0+wasi-snapshot-preview1\", \"1.0.0-rc.1+b\", \"opaque\"]])", include_str!("../../../prelude/common.star"), include_str!("../../../prelude/rust.star"));
+    let source = format!("{}\nvalue = repr([_rust_history_bucket(v) for v in [\"1.2.3\", \"1.9.9+build\", \"0.3.6\", \"0.3.9\", \"0.0.5\", \"0.0.6\", \"1.0.0-beta.2\", \"0.11.0+wasi-snapshot-preview1\", \"1.0.0-rc.1+b\", \"opaque\"]])", crate::modules::built_in_module_source());
     assert_eq!(
         eval_string(&source).unwrap(),
         "[\"1\", \"1\", \"0.3\", \"0.3\", \"0.0.5\", \"0.0.6\", \"1.0.0-beta.2\", \"0.11\", \"1.0.0-rc.1\", \"opaque\"]"

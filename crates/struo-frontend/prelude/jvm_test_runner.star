@@ -52,12 +52,27 @@ public final class StruoJvmTestRunner {
     createParent(log);
     createParent(nativeResults);
 
+    String inventory = System.getenv("STRUO_TEST_INVENTORY");
+    if (inventory != null) Files.deleteIfExists(Paths.get(inventory));
     StringBuilder logText = new StringBuilder();
     List<String> filters = new ArrayList<>();
     for (int i = 6; i < args.length; i++) {
       filters.add(args[i]);
     }
     List<TestCase> cases = runTests(classes, target, filters, logText);
+    if (inventory != null) {
+      java.util.Set<String> units = new java.util.TreeSet<>();
+      for (TestCase testCase : cases) {
+        if ("failed".equals(testCase.status) || !units.add(testCase.id)) System.exit(2);
+      }
+      StringBuilder encoded = new StringBuilder();
+      for (String unit : units) {
+        if (encoded.length() > 0) encoded.append(',');
+        encoded.append(jsonString(unit));
+      }
+      Files.writeString(Paths.get(inventory), "{\\"schema\\":\\"struo.test_inventory.v1\\",\\"target\\":" + jsonString(target) + ",\\"units\\":[" + encoded + "]}", StandardCharsets.UTF_8);
+      return;
+    }
     if (cases.isEmpty()) {
       String reason = filters.isEmpty()
           ? "no test classes found under " + classes
@@ -118,6 +133,11 @@ public final class StruoJvmTestRunner {
           continue;
         }
         TestCase testCase = new TestCase(target + "::" + className + "." + method.getName(), method.getName(), className);
+        if (System.getenv("STRUO_TEST_UNIT") != null && !testCase.id.equals(System.getenv("STRUO_TEST_UNIT"))) continue;
+        if (System.getenv("STRUO_TEST_INVENTORY") != null) {
+          cases.add(testCase);
+          continue;
+        }
         if (isIgnored(type) || isIgnored(method)) {
           testCase.status = "skipped";
           logText.append("skipped ").append(className).append(".").append(method.getName()).append(System.lineSeparator());
@@ -412,6 +432,7 @@ def _jvm_junit4_methods():
             return;
           }
         }
+        if (System.getenv("STRUO_TEST_UNIT") != null && !(target + "::" + description.getClassName() + "." + description.getMethodName()).equals(System.getenv("STRUO_TEST_UNIT"))) return;
         TestCase result = entry(description);
         if (!"failed".equals(result.status)) result.status = "skipped";
       }
@@ -468,6 +489,24 @@ def _jvm_junit4_methods():
         if (!filter.shouldRun(described)) continue;
         request = request.filterWith(filter);
       }
+      String exact = System.getenv("STRUO_TEST_UNIT");
+      if (exact != null) {
+        org.junit.runner.manipulation.Filter filter = new org.junit.runner.manipulation.Filter() {
+          @Override public boolean shouldRun(org.junit.runner.Description description) {
+            if (description.isTest() && description.getMethodName() != null) return exact.equals(target + "::" + description.getClassName() + "." + description.getMethodName());
+            for (org.junit.runner.Description child : description.getChildren()) if (shouldRun(child)) return true;
+            return false;
+          }
+          @Override public String describe() { return exact; }
+        };
+        org.junit.runner.Description described = request.getRunner().getDescription();
+        if (described.getChildren().isEmpty() && type.isAnnotationPresent(org.junit.Ignore.class)) {
+          org.junit.runner.Description expanded = ignoredClassDescription(className);
+          if (expanded != null) described = expanded;
+        }
+        if (!filter.shouldRun(described)) continue;
+        request = request.filterWith(filter);
+      }
       runners.put(className, request.getRunner());
     }
     java.util.Set<String> owned = new java.util.HashSet<>();
@@ -475,13 +514,33 @@ def _jvm_junit4_methods():
       collectJUnit4OwnedClasses(runner.getValue().getDescription(), runner.getKey(), owned);
     }
     for (java.util.Map.Entry<String, org.junit.runner.Runner> runner : runners.entrySet()) {
-      if (!owned.contains(runner.getKey())) core.run(runner.getValue());
+      if (!owned.contains(runner.getKey())) {
+        if (System.getenv("STRUO_TEST_INVENTORY") != null) {
+          collectJUnit4Inventory(runner.getValue().getDescription(), target, cases);
+        } else core.run(runner.getValue());
+      }
     }
     for (TestCase result : cases) {
       logText.append(result.status).append(" ").append(result.suite).append(".").append(result.name).append(System.lineSeparator());
       if (!result.failure.isEmpty()) logText.append(result.failure);
     }
     return cases;
+  }
+
+  private static void collectJUnit4Inventory(org.junit.runner.Description description, String target, List<TestCase> out) {
+    if (description.isTest() && description.getClassName() != null && description.getMethodName() != null) {
+      out.add(new TestCase(target + "::" + description.getClassName() + "." + description.getMethodName(), description.getMethodName(), description.getClassName()));
+    } else if (description.getChildren().isEmpty() && description.getClassName() != null) {
+      org.junit.runner.Description expanded = ignoredClassDescription(description.getClassName());
+      if (expanded != null && !expanded.getChildren().isEmpty()) collectJUnit4Inventory(expanded, target, out);
+      else {
+        TestCase unresolved = new TestCase(target + "::" + description.getClassName(), description.getDisplayName(), description.getClassName());
+        unresolved.status = "failed";
+        out.add(unresolved);
+      }
+    } else {
+      for (org.junit.runner.Description child : description.getChildren()) collectJUnit4Inventory(child, target, out);
+    }
   }
 
   private static org.junit.runner.Description ignoredClassDescription(String className) {

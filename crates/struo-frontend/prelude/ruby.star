@@ -32,13 +32,14 @@ def _ruby_test_inputs(ctx):
     return _unique(glob(ctx["srcs"]) + _file_globs(_ruby_attr(ctx, "config", [])) + _file_globs(_ruby_attr(ctx, "data", [])))
 
 def _ruby_rspec_adapter():
-    return '''require "fileutils"
+    return _ruby_coverage_adapter_support() + '''require "fileutils"
 require "json"
 require "open3"
 require "optparse"
 
 options = { sources: [], units: [] }
 parser = OptionParser.new do |opts|
+  StruoCoverage.configure(opts, options)
   opts.on("--struo-results PATH") { |value| options[:results] = value }
   opts.on("--struo-native-results PATH") { |value| options[:native_results] = value }
   opts.on("--struo-runner PATH") { |value| options[:runner] = value }
@@ -61,7 +62,10 @@ end
 selection = selected.empty? ? options[:sources] : selected
 native_results = options.fetch(:native_results)
 args = runner_args + selection + ["--format", "RSpec::Core::Formatters::JsonFormatter", "--out", native_results]
-stdout, stderr, status = Open3.capture3(options.fetch(:runner), *args)
+args << "--dry-run" if options[:inventory]
+FileUtils.rm_f(options[:results]) if options[:inventory]
+FileUtils.rm_f(native_results)
+stdout, stderr, status = Open3.capture3(StruoCoverage.environment(options), options.fetch(:runner), *args)
 $stdout.write(stdout)
 $stderr.write(stderr)
 exit_code = status.exitstatus || 1
@@ -92,6 +96,12 @@ end
 passed = cases.count { |item| item["status"] == "passed" }
 failed = cases.count { |item| item["status"] == "failed" }
 skipped = cases.count { |item| item["status"] == "skipped" }
+if options[:inventory]
+  if exit_code == 0
+    File.write(options[:results], JSON.generate({"schema" => "struo.test_inventory.v1", "target" => options[:target], "units" => cases.map { |item| item["id"] }.sort}))
+  end
+  exit exit_code
+end
 normalized = {
   "schema" => "struo.test_results.v1",
   "target" => options[:target],
@@ -105,18 +115,20 @@ normalized = {
   },
 }
 FileUtils.mkdir_p(File.dirname(options[:results])) unless Dir.exist?(File.dirname(options[:results]))
+StruoCoverage.attach(normalized, options)
 File.write(options[:results], JSON.pretty_generate(normalized))
 exit exit_code
 '''
 
 def _ruby_minitest_adapter():
-    return '''require "json"
+    return _ruby_coverage_adapter_support() + '''require "json"
 require "open3"
 require "optparse"
 require "rbconfig"
 
 options = { sources: [], units: [] }
 parser = OptionParser.new do |opts|
+  StruoCoverage.configure(opts, options)
   opts.on("--struo-results PATH") { |value| options[:results] = value }
   opts.on("--struo-native-results PATH") { |value| options[:native_results] = value }
   opts.on("--struo-target TARGET") { |value| options[:target] = value }
@@ -139,7 +151,7 @@ cases = []
 native_chunks = []
 sources.sort.each do |source|
   started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-  stdout, stderr, status = Open3.capture3(RbConfig.ruby, source, *runner_args)
+  stdout, stderr, status = Open3.capture3(StruoCoverage.environment(options), RbConfig.ruby, source, *runner_args)
   duration_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round
   output = stdout + stderr
   native_chunks << "$ #{RbConfig.ruby} #{source}\n#{output}"
@@ -171,6 +183,7 @@ normalized = {
     "native_results" => [options[:native_results]],
   },
 }
+StruoCoverage.attach(normalized, options)
 File.write(options[:results], JSON.pretty_generate(normalized))
 exit(failed == 0 ? 0 : 1)
 '''
@@ -186,7 +199,7 @@ def _ruby_test_info(ctx, runner_type, display_name, ruby, adapter, results, log,
         "filtering": {"case_filtering": "runner_args"},
         "sharding": {"supported": True, "granularity": _ruby_attr(ctx, "batching", "file")},
         "retries": {"supported": False, "default_attempts": 1},
-        "execution": {"cacheable": True, "timeout_ms": _ruby_attr(ctx, "timeout_ms", None), "run_from_workspace_root": True},
+        "execution": {"cacheable": not _ruby_attr(ctx, "coverage_per_test", False), "timeout_ms": _ruby_attr(ctx, "timeout_ms", None), "run_from_workspace_root": True},
         "labels": _ruby_attr(ctx, "labels", []),
         "metadata": {},
     }
@@ -205,38 +218,80 @@ def _ruby_test_impl(ctx, runner_type, display_name, adapter_source, adapter_name
         host_command([ruby, "--version"]).strip(),
         host_command([runner, "--version"]).strip() if runner else "minitest",
     ], _ruby_env(ctx, test_dir))
-    if ctx["capability"] != "test":
+    measured = _ruby_attr(ctx, "coverage_per_test", False)
+    coverage_sources = _file_globs(_ruby_attr(ctx, "coverage_sources", []))
+    if measured:
+        if not coverage_sources:
+            fail("coverage_per_test requires nonempty coverage_sources")
+        provider["affected_inputs"] = _unique(inputs + coverage_sources)
+        provider["coverage_selection"] = {
+            "inputs": inputs, "tool": "ruby-coverage",
+            "tool_version": host_command([ruby, "-e", "print RUBY_VERSION"]).strip(),
+            "platform": host_command([ruby, "-e", "print RUBY_PLATFORM"]).strip(),
+            "configuration": {"instrumentation": coverage_sources, "runtime": provider["portable_test_configuration"]},
+        }
+    discovery = ctx["capability"] == "test-discovery"
+    inventory = test_dir + "/inventory.json"
+    provider["test_inventory"] = inventory
+    if ctx["capability"] != "test" and not discovery:
         return provider
+    if file_units and (discovery or measured):
+        write_path(inventory, _json_encode({"schema": "struo.test_inventory.v1", "target": ctx["label"]["id"], "units": [ctx["label"]["id"] + "::" + source for source in glob(ctx["srcs"])]}))
+        if discovery:
+            return provider
     write_path(adapter, adapter_source)
-    argv = [ruby, adapter, "--struo-results", results, "--struo-native-results", native_results]
+    argv = [ruby, adapter, "--struo-results", inventory if discovery or measured else results, "--struo-native-results", native_results]
     if runner:
         argv.extend(["--struo-runner", runner])
     argv.extend(["--struo-target", ctx["label"]["id"]])
     for source in glob(ctx["srcs"]):
         argv.extend(["--struo-source", source])
-    for unit in (ctx.get("test") or {}).get("filters") or []:
+    filters = (ctx.get("test") or {}).get("filters") or []
+    for unit in ([] if discovery or measured else filters):
         argv.extend(["--struo-test-unit", unit])
+    if discovery or measured:
+        argv.append("--struo-inventory")
     argv.append("--")
     argv.extend(_ruby_attr(ctx, "args", []))
     version = host_command([ruby, "--version"]).strip()
     runner_identity = ""
     if runner:
         runner_identity = "\x00runner\x00" + runner + "\x00" + host_command([runner, "--version"]).strip()
-    run_action(
-        display_name = "Run " + runner_type + " tests · " + ctx["label"]["name"],
-        presentation = _action_metadata(context = [_action_context("ruby.runner", runner_type)]),
-        source_files = _action_source_files(_unique(inputs + [adapter])),
-        argv = argv,
-        inputs = _unique(inputs + [adapter]),
-        outputs = [test_dir, results, log, native_results],
-        clean_paths = [results, log, native_results],
-        create_dirs = [test_dir, test_dir + "/home"],
-        env = _ruby_env(ctx, test_dir),
-        stdout = log,
-        stderr = log,
-        toolchain_identity = "struo." + runner_type + ".v2\x00" + ruby + "\x00" + version + runner_identity,
-        identifier = ctx["label"]["id"] + ":" + runner_type,
-    )
+    if not measured or not file_units:
+        run_action(
+            display_name = "Run " + runner_type + " tests · " + ctx["label"]["name"],
+            presentation = _action_metadata(context = [_action_context("ruby.runner", runner_type)]),
+            source_files = _action_source_files(_unique(inputs + [adapter])),
+            argv = argv,
+            inputs = _unique(inputs + [adapter]),
+            outputs = [inventory, log, native_results] if discovery or measured else [test_dir, results, log, native_results],
+            clean_paths = [inventory, log, native_results] if discovery or measured else [results, log, native_results],
+            create_dirs = [test_dir, test_dir + "/home"],
+            env = _ruby_env(ctx, test_dir),
+            stdout = log,
+            stderr = log,
+            cacheable = not discovery and not measured,
+            toolchain_identity = "struo." + runner_type + ".v2\x00" + ruby + "\x00" + version + runner_identity,
+            identifier = ctx["label"]["id"] + ":" + runner_type,
+        )
+    if measured and not discovery:
+        hook = test_dir + "/struo_ruby_coverage.rb"
+        write_path(hook, _ruby_coverage_hook())
+        isolated = [ruby, adapter, "--struo-target", ctx["label"]["id"], "--struo-coverage-hook", hook]
+        if runner:
+            isolated.extend(["--struo-runner", runner])
+        for source in glob(ctx["srcs"]):
+            isolated.extend(["--struo-source", source])
+        for source in coverage_sources:
+            isolated.extend(["--struo-coverage-source", source])
+        expand_actions(
+            implementation = "isolated_test_coverage_plan", inputs = [inventory], outputs = [results],
+            args = {"target": ctx["label"]["id"], "inventory": inventory, "directory": test_dir,
+                    "argv": isolated, "inputs": _unique(inputs + coverage_sources + [adapter, hook]),
+                    "env": _ruby_env(ctx, test_dir), "runner_args": ["--"] + _ruby_attr(ctx, "args", []),
+                    "filters": filters, "output": results, "success_exit_codes": [0, 1, 2],
+                    "identity": "struo.ruby.coverage.v1\x00" + content_sha256(_json_encode(provider["coverage_selection"]))},
+        )
     return provider
 
 def _ruby_rspec_impl(ctx):
@@ -250,6 +305,8 @@ _RUBY_TEST_ATTRS = [
     attr("config", "list<string>", default = "[\"Gemfile\", \"Gemfile.lock\"]", docs = "Configuration and dependency inputs.", configurable = False),
     attr("data", "list<string>", default = "[]", docs = "Runtime data inputs read by tests.", configurable = False),
     attr("args", "list<string>", default = "[]", docs = "Additional runner arguments.", configurable = False),
+    attr("coverage_per_test", "bool", default = "false", docs = "Measure each declared execution unit independently using Ruby Coverage for approximate selection. RSpec units are examples; Minitest units are complete file invocations.", configurable = False),
+    attr("coverage_sources", "list<string>", default = "[]", docs = "Product Ruby source globs to instrument, required for coverage_per_test.", configurable = False),
     attr("env", "map<string,string>", default = "{}", docs = "Environment variables for test execution.", configurable = True),
     attr("env_inherit", "list<string>", default = "[]", docs = "Host environment variables inherited by name.", configurable = False),
     attr("batching", "string", default = "\"file\"", docs = "Automatic batch granularity: `file`, `case`, or `target`.", configurable = False),
@@ -264,7 +321,7 @@ rspec_test = target_kind(
     ],
     deps = [dep("deps", [], "Targets whose inputs should affect this test suite.")],
     providers = ["struo_test_info"],
-    capabilities = [capability("test", ["default", "test_results", "logs"])],
+    capabilities = [capability("test", ["default", "test_results", "logs"]), capability("test-discovery", ["test_inventory"])],
     tools = [_RUBY_TOOL, _RSPEC_TOOL],
     examples = [example("rspec-test-minimal", name = "Minimal Ruby Specification suite", use_when = "You want Ruby examples with normalized results and automatic batching.")],
     impl = _ruby_rspec_impl,
@@ -275,7 +332,7 @@ minitest_test = target_kind(
     attrs = _RUBY_TEST_ATTRS,
     deps = [dep("deps", [], "Targets whose inputs should affect this test suite.")],
     providers = ["struo_test_info"],
-    capabilities = [capability("test", ["default", "test_results", "logs"])],
+    capabilities = [capability("test", ["default", "test_results", "logs"]), capability("test-discovery", ["test_inventory"])],
     tools = [_RUBY_TOOL],
     examples = [example("minitest-test-minimal", name = "Minimal Minitest suite", use_when = "You want Ruby Minitest files scheduled independently by Struo.")],
     impl = _ruby_minitest_impl,

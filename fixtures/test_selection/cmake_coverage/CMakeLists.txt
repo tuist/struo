@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.21)
+project(StruoCoverage C)
+enable_testing()
+add_executable(tests tests.c product.c unused.c)
+target_compile_options(tests PRIVATE -fprofile-instr-generate -fcoverage-mapping)
+target_link_options(tests PRIVATE -fprofile-instr-generate)
+add_test(NAME "alpha.one" COMMAND tests alpha)
+add_test(NAME "beta+two" COMMAND tests beta)

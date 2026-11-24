@@ -37,11 +37,31 @@ with `@Ignore` reports each of its test methods, or each parameterized case,
 as skipped, matching JUnit's own counts, without initializing the class. Convention-only
 methods are not JUnit tests.
 
+## Coverage-assisted Selection
+
+Set `coverage_per_test = true`, declare product `coverage_sources`, and
+provide package-relative `jacoco_agent` and `jacoco_cli` JAR paths. Use
+matching JaCoCo releases compatible with your class-file version. The initial
+collector requires Linux, Python 3 and strace.
+
+Struo discovers current execution units without invoking test bodies and runs
+each exact unit with its own JaCoCo profile. Class-file analysis preserves
+zero-hit sources. Duplicate identities, additional reported cases, missing
+instrumentation, subprocesses, failures and skips cannot establish complete
+coverage evidence. Native parameterized cases keep their discovered names;
+aggregate suites cannot substitute for individual evidence. Coverage runs
+bypass execution caching. Changes to test sources and configuration retain
+the target.
+
 ## Test Attributes
 
 | Attribute | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `test_framework` | string | no | `reflection` | `reflection` for convention-based tests or `junit4` for native JUnit 4 execution |
+| `coverage_per_test` | bool | no | `false` | Measure each exact execution unit with JaCoCo |
+| `coverage_sources` | list&lt;string&gt; | no | `[]` | Product Java or Kotlin source globs required in the class-file universe |
+| `jacoco_agent` | string | no | empty | Package-relative JaCoCo runtime agent JAR |
+| `jacoco_cli` | string | no | empty | Package-relative matching JaCoCo command-line JAR |
 | `test_class` | string | no |  | Fully qualified class or `Class#method` filter |
 | `args` | list&lt;string&gt; | no | `[]` | Additional class or `Class#method` filters |
 | `jvm_flags` | list&lt;string&gt; | no | `[]` | Flags passed to the Java virtual machine before the test classpath |

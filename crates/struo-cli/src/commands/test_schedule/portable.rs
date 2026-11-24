@@ -159,6 +159,13 @@ pub(super) async fn execute(
     portable.validate(workspace, &graph)?;
     invocation.context(&portable.id, "")?;
     let selected = portable.select(batches)?;
+    if selected.batches.is_empty() {
+        return Ok(json!({
+            "schema": "struo.portable_test_execution.v1", "plan_id": portable.id,
+            "selected_batch_ids": [], "complete": true, "success": true,
+            "execution": {"plan": selected, "runs": []},
+        }));
+    }
     let selected_batch_ids = selected
         .batches
         .iter()

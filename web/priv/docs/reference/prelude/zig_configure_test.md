@@ -23,6 +23,8 @@ This target accepts the complete attribute set documented by
 [`zig_test`](/reference/prelude/zig_test), including `strip`,
 `translate_c_identity`, `csrcs`, linker settings, `env_inherit`, `test_env`,
 `test_runner`, `labels`, and `timeout_ms`.
+It also accepts `coverage_per_test`, `coverage_sources` and `kcov` for the
+same atomic-invocation coverage mode and prerequisites as `zig_test`.
 
 ## Dependency Edges
 

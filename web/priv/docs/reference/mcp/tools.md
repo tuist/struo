@@ -1190,6 +1190,11 @@ Returns a `struo.portable_test_plan.v1` document with selection reasons, stable 
     "target": {
       "type": "string",
       "description": "Explicit canonical test target. Conflicts with changed_paths."
+    },
+    "coverage_selection": {
+      "type": "boolean",
+      "default": false,
+      "description": "Opt in to approximate whole-target exclusion using Tuist coverage history. Executes native inventory discovery, so requires --allow-run. Requires changed_paths and conflicts with target. Missing or incompatible evidence retains graph-selected work."
     }
   },
   "additionalProperties": false

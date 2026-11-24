@@ -658,6 +658,8 @@ def _zig_compile_args(ctx, command, output, root, c_module_context, cinfo, emit_
     if command == "test":
         args.append("--test-no-exec")
     args.extend(_zig_common_args(ctx))
+    if command == "test" and _zig_attr(ctx, "coverage_per_test", False):
+        args.extend(["-fllvm", "-fno-strip"])
     args.extend(_zig_c_compile_args(cinfo))
     args.extend(_zig_module_args(root["root_context"], root["dep_contexts"], c_module_context))
     test_runner = _zig_attr(ctx, "test_runner", "")
@@ -1114,6 +1116,8 @@ def _zig_test_impl(ctx):
     results = test_dir + "/test_results.json"
     log = test_dir + "/zig-test.log"
     native_results = test_dir + "/native_results.txt"
+    if ctx["capability"] == "test-discovery" and not _zig_attr(ctx, "coverage_per_test", False):
+        fail("Zig test discovery requires coverage_per_test")
     if ctx["capability"] == "metadata":
         test_binary = ctx["build_dir"] + "/" + _zig_output_name(ctx, "test")
         provider = {
@@ -1123,6 +1127,8 @@ def _zig_test_impl(ctx):
             "test_binary": test_binary,
         }
         provider["test_info"] = _zig_test_info(ctx, provider["test_binary"], results, log, native_results, test_dir)
+        if _zig_attr(ctx, "coverage_per_test", False):
+            _zig_coverage_configuration(ctx, provider)
         return provider
 
     target = _zig_attr(ctx, "target", "")
@@ -1131,6 +1137,11 @@ def _zig_test_impl(ctx):
 
     provider = _zig_compile(ctx, "test", "", "test", "zig_test")
     provider["test_info"] = _zig_test_info(ctx, provider["test_binary"], results, log, native_results, test_dir)
+    if _zig_attr(ctx, "coverage_per_test", False):
+        tools = _zig_coverage_configuration(ctx, provider)
+        if ctx["capability"] in ["test", "test-discovery"]:
+            _zig_coverage_actions(ctx, provider, tools)
+        return provider
     if ctx["capability"] != "test":
         return provider
 
@@ -1789,6 +1800,9 @@ zig_configure_binary = target_kind(
 zig_test = target_kind(
     docs = "Zig test target compiled with `zig test --test-no-exec` and run through Struo's generic test capability.",
     attrs = _ZIG_BUILD_ATTRS + [
+        attr("coverage_per_test", "bool", default = "false", docs = "Measure the complete native invocation as one atomic coverage unit.", configurable = False),
+        attr("coverage_sources", "list<string>", default = "[]", docs = "Product source globs required in the native coverage report.", configurable = False),
+        attr("kcov", "string", default = "kcov", docs = "Native coverage collector executable; complete observations require kcov 43.", configurable = False),
         attr("env", "map<string, string>", default = "{}", docs = "Environment variables passed to the Zig test binary.", configurable = False),
         attr("env_inherit", "list<string>", default = "[]", docs = "Environment variable names inherited from the host for test execution.", configurable = False),
         attr("args", "list<string>", default = "[]", docs = "Arguments passed to the compiled Zig test binary.", configurable = False),
@@ -1802,6 +1816,7 @@ zig_test = target_kind(
     capabilities = [
         capability("build", ["binary", "asm", "llvm_ir", "llvm_bc"]),
         capability("test", ["default", "test_results", "logs"], ["binary"]),
+        capability("test-discovery", ["test_inventory"]),
     ],
     examples = [
         example(
@@ -1816,6 +1831,9 @@ zig_test = target_kind(
 zig_configure_test = target_kind(
     docs = "Struo-native configured Zig test target. Configuration is declared on this target instead of using a transition wrapper.",
     attrs = _ZIG_BUILD_ATTRS + [
+        attr("coverage_per_test", "bool", default = "false", docs = "Measure the complete native invocation as one atomic coverage unit.", configurable = False),
+        attr("coverage_sources", "list<string>", default = "[]", docs = "Product source globs required in the native coverage report.", configurable = False),
+        attr("kcov", "string", default = "kcov", docs = "Native coverage collector executable; complete observations require kcov 43.", configurable = False),
         attr("env", "map<string, string>", default = "{}", docs = "Environment variables passed to the Zig test binary.", configurable = False),
         attr("env_inherit", "list<string>", default = "[]", docs = "Environment variable names inherited from the host for test execution.", configurable = False),
         attr("args", "list<string>", default = "[]", docs = "Arguments passed to the compiled Zig test binary.", configurable = False),
@@ -1829,6 +1847,7 @@ zig_configure_test = target_kind(
     capabilities = [
         capability("build", ["binary", "asm", "llvm_ir", "llvm_bc"]),
         capability("test", ["default", "test_results", "logs"], ["binary"]),
+        capability("test-discovery", ["test_inventory"]),
     ],
     examples = [
         example(

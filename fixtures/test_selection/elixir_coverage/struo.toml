@@ -1,0 +1,18 @@
+[[target]]
+name = "product"
+kind = "elixir_library"
+srcs = ["lib/*.ex"]
+
+[target.attrs]
+app_name = "product"
+mix_env = "test"
+
+[[target]]
+name = "ExUnitTests"
+kind = "elixir_test"
+srcs = ["test/*.exs"]
+deps = ["product"]
+
+[target.attrs]
+coverage_per_test = true
+coverage_sources = ["lib/*.ex"]

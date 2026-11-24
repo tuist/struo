@@ -32,6 +32,7 @@ because there is no single rlib output for downstream host Rust compilation.
 | `rustc_env` | map&lt;string, string&gt; | no | `{}` | Bazel-compatible `rustc` environment variables |
 | `rustc_env_files` | list&lt;string&gt; | no | `[]` | Files with `NAME=value` entries merged into the rustc environment before `env` and `rustc_env` |
 | `rustc_flags` | list&lt;string&gt; | no | `[]` | Additional `rustc` flags appended after Struo-managed flags |
+| `coverage` | bool | no | `false` | Compile with LLVM source coverage and retain unused instrumented functions |
 | `cap_lints` | string | no | empty | Optional `rustc` lint cap passed as `--cap-lints`; generated Cargo dependencies use `allow` |
 | `linker_flags` | list&lt;string&gt; | no | `[]` | Additional linker flags lowered to `-C link-arg=...` |
 | `native_linkopts` | list&lt;string&gt; | no | `[]` | Linker flags propagated to Apple app or framework targets |

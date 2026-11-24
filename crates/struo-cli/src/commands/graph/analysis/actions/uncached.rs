@@ -155,6 +155,7 @@ pub(super) async fn run_uncached_action_admitted(
         | Action::MaterializeHostTree { .. }
         | Action::PreparePath { .. }
         | Action::WriteTreeDigest { .. }
+        | Action::MergeTestCoverage { .. }
         | Action::WriteArchive { .. }
         | Action::DownloadAndExtract { .. } => {
             run_core_admitted(action, workspace, cache, lease).await

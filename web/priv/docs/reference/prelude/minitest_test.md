@@ -54,6 +54,8 @@ separate Struo units.
 | `config` | list&lt;string&gt; | no | `Gemfile`, `Gemfile.lock` | Dependency and runner configuration inputs |
 | `data` | list&lt;string&gt; | no | `[]` | Runtime data and support inputs |
 | `args` | list&lt;string&gt; | no | `[]` | Arguments passed to each test file |
+| `coverage_per_test` | bool | no | `false` | Measure each complete file invocation independently with Ruby Coverage |
+| `coverage_sources` | list&lt;string&gt; | no | `[]` | Product Ruby source globs to instrument |
 | `env` | map&lt;string, string&gt; | no | `{}` | Explicit test environment variables |
 | `env_inherit` | list&lt;string&gt; | no | `[]` | Host environment variables inherited by name |
 | `batching` | string | no | `file` | Accepted for parity; file units remain the scheduling boundary |
@@ -68,6 +70,14 @@ separate Struo units.
 
 The target emits `struo_test_info` and exposes `test` with the `default`,
 `test_results`, and `logs` output groups.
+
+`test-discovery` emits the current declared file invocation units without
+running test bodies. Opt-in `coverage_per_test` measures each complete file
+invocation separately. Its evidence belongs to that file unit, never to the
+individual Minitest methods it runs. Declare product Ruby paths in
+`coverage_sources`. Ruby Coverage must support `line_stub` for unloaded
+sources. Measurement bypasses the action cache; child processes and failed
+invocations cannot establish complete replacement checkpoints.
 
 ## Example
 

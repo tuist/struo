@@ -12,12 +12,14 @@ mod build_receipt;
 mod capability;
 mod configuration;
 mod contract;
+mod discovery;
 mod lint;
 mod trigger;
 mod verification;
 
 pub(crate) use analysis::prepare_graph_tools;
 pub use contract::{validate_action_contracts, ActionContractValidation};
+pub(crate) use discovery::test_inventories;
 pub(crate) use trigger::TriggerBatch;
 pub use verification::verify_build;
 

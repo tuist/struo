@@ -34,6 +34,7 @@ pub(super) fn persist(workspace: &Path, plan: &TestPlan, runs: &[Value]) -> Resu
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn aggregate(target: &str, batches: &[&TestBatch], runs: &BTreeMap<&str, &Value>) -> Result<Value> {
     let mut runner = None;
     let mut cases = BTreeMap::<String, Value>::new();
@@ -122,7 +123,7 @@ fn aggregate(target: &str, batches: &[&TestBatch], runs: &BTreeMap<&str, &Value>
     if !coverage.is_empty() {
         artifacts["coverage"] = json!(coverage.into_iter().collect::<Vec<_>>());
     }
-    let value = json!({
+    let mut value = json!({
         "schema": TEST_RESULTS_SCHEMA,
         "target": target,
         "runner": runner.unwrap_or_else(|| json!({"type": "unknown", "metadata": {}})),
@@ -139,6 +140,20 @@ fn aggregate(target: &str, batches: &[&TestBatch], runs: &BTreeMap<&str, &Value>
         "cases": cases,
         "artifacts": artifacts,
     });
+    if let [batch] = batches {
+        if batch.test_filters.is_empty() {
+            if let Some(result) = runs
+                .get(batch.id.as_str())
+                .and_then(|run| run.get("results"))
+            {
+                for field in ["coverage", "coverage_evidence"] {
+                    if let Some(observation) = result.get(field) {
+                        value[field] = observation.clone();
+                    }
+                }
+            }
+        }
+    }
     struo_core::validate_test_results(&value, target)?;
     Ok(value)
 }

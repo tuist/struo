@@ -1,6 +1,55 @@
 use super::*;
 
 #[test]
+fn swift_package_coverage_instruments_only_reachable_product_sources() {
+    let workspace = TempDir::new().unwrap();
+    for file in [
+        "Product/value.swift",
+        "Native/value.c",
+        "Macro/plugin.swift",
+        "Other/value.swift",
+    ] {
+        let path = workspace.path().join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "").unwrap();
+    }
+    let source = format!(
+        r#"{}
+def _resolve_swiftc(platform, variant, developer):
+    return {{"swiftc_path": "/swiftc", "env": {{}}}}
+def _swiftpm_absolute_package_path(ctx, path):
+    return workspace_root()
+def _swift_package_metadata(argv, absolute, env = {{}}, check = True):
+    return '{{"name":"Coverage","targets":[]}}'
+def _xcode_local_swift_package_specs(ctx, packages, platform, minimum_os, variant, root_identities = None):
+    return {{"products": {{}}, "modules": {{}}, "specs": [
+        {{"name":"Product", "kind":"apple_library", "srcs":["Product/**/*"], "deps":["Native", "Macro"], "attrs":{{"swift_flags":["-DKEEP"]}}}},
+        {{"name":"Native", "kind":"apple_library", "srcs":["Native/**/*"], "deps":[], "attrs":{{}}}},
+        {{"name":"Macro", "kind":"swift_macro", "srcs":["Macro/**/*"], "deps":[], "attrs":{{}}}},
+        {{"name":"Other", "kind":"apple_library", "srcs":["Other/**/*"], "deps":[], "attrs":{{}}}},
+        {{"name":"Tests", "kind":"apple_test_bundle", "deps":["./Product"], "attrs":{{}}}},
+    ]}}
+def configurations():
+    results = []
+    for enabled in [False, True]:
+        graph = _swift_package_workspace_resolver({{"attrs":{{"coverage_per_test":enabled}},
+            "files":{{"Package.swift":"manifest"}}, "label":{{"package":"", "name":"root", "id":"root"}}}})
+        results.append([target["attrs"] for target in graph["targets"]])
+    return results
+result = repr(configurations())
+"#,
+        all_prelude_source()
+    );
+    let (_, result) = with_active_store(store_for(workspace.path(), ""), || {
+        eval_prelude_source_to_repr(source)
+    });
+    assert_eq!(
+        result.unwrap(),
+        r#"[[{"swift_flags": ["-DKEEP"]}, {}, {}, {}, {}], [{"swift_flags": ["-DKEEP", "-profile-generate", "-profile-coverage-mapping"], "clang_flags": ["-fprofile-instr-generate", "-fcoverage-mapping"]}, {"swift_flags": ["-profile-generate", "-profile-coverage-mapping"], "clang_flags": ["-fprofile-instr-generate", "-fcoverage-mapping"]}, {}, {}, {"coverage_per_test": True, "coverage_sources": ["Product/value.swift", "Native/value.c"]}]]"#
+    );
+}
+
+#[test]
 fn implicit_catalog_discovery_supports_a_package_root_target() {
     let workspace = TempDir::new().unwrap();
     std::fs::create_dir(workspace.path().join("Assets.xcassets")).unwrap();

@@ -409,12 +409,23 @@ impl Server {
 
     fn tool_query_test_plan(&self, args: &Value) -> Result<Value> {
         let args: TestPlanQueryArgs = parse_args(args)?;
-        let plan = crate::commands::query::test_plan_record(
-            &self.workspace,
-            &args.changed_paths,
-            args.target.as_deref(),
-        )?;
-        Ok(serde_json::to_value(plan)?)
+        anyhow::ensure!(
+            !args.coverage_selection || self.allow_run,
+            "coverage selection executes native discovery; restart MCP with --allow-run"
+        );
+        let workspace = self.workspace.clone();
+        let limits = self.resource_limits.clone();
+        run_async_result(async move {
+            let plan = crate::commands::query::test_plan_record_with_coverage(
+                &workspace,
+                &args.changed_paths,
+                args.target.as_deref(),
+                args.coverage_selection,
+                limits,
+            )
+            .await?;
+            Ok(serde_json::to_value(plan)?)
+        })
     }
 
     fn tool_query_test_results(&self, args: &Value) -> Result<Value> {

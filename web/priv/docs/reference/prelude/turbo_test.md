@@ -23,6 +23,16 @@ All attributes are shared with
 [`turbo_task`](/docs/reference/prelude/turbo_task), including `package`,
 `task`, `command`, `package_dir`, `outputs`, and `source_dirs`.
 
+Set `coverage_per_test = true` with product `coverage_sources` for a package
+script consisting of one native Jest or Vitest command. Native case discovery
+and isolated measurement reuse the dedicated runner collectors, retaining
+the package working directory and declared environment. Python 3 resolves argv
+without evaluating shell expansion.
+
+Shell pipelines, package-manager wrappers, multiple commands and declared task
+outputs are not supported in this mode. They retain ordinary graph selection
+with coverage disabled. A successful task alone is not complete case evidence.
+
 ## Providers
 
 The target emits `turbo_task` and `struo_test_info`.
@@ -33,6 +43,7 @@ The target emits `turbo_task` and `struo_test_info`.
 | --- | --- |
 | `build` | none, executes when used as a prerequisite |
 | `test` | `default`, `test_results`, `logs` |
+| `test-discovery` | `test_inventory`, in coverage mode |
 
 ## Example
 

@@ -258,6 +258,15 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         input_digest: Option<Digest>,
     },
+    MergeTestCoverage {
+        target: String,
+        inventory: WorkspacePath,
+        results: Vec<WorkspacePath>,
+        output: WorkspacePath,
+        partial: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        input_digest: Option<Digest>,
+    },
     WriteArchive {
         entries: Vec<ArchiveEntry>,
         output: WorkspacePath,
@@ -487,6 +496,7 @@ impl Action {
             | Action::MaterializeHostTree { .. }
             | Action::PreparePath { .. }
             | Action::WriteTreeDigest { .. }
+            | Action::MergeTestCoverage { .. }
             | Action::WriteArchive { .. }
             | Action::DownloadAndExtract { .. } => &DEFAULT_RESOURCE_REQUEST,
         }
@@ -502,6 +512,7 @@ impl Action {
             | Action::MaterializeHostTree { input_digest, .. }
             | Action::PreparePath { input_digest, .. }
             | Action::WriteTreeDigest { input_digest, .. }
+            | Action::MergeTestCoverage { input_digest, .. }
             | Action::WriteArchive { input_digest, .. }
             | Action::DownloadAndExtract { input_digest, .. } => *input_digest,
         }

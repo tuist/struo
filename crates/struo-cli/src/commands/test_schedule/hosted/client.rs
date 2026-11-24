@@ -8,7 +8,7 @@ use struo_cas::TuistAuth;
 use struo_core::Xdg;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-pub(super) struct Host {
+pub(crate) struct Host {
     client: Client,
     storage: Client,
     base: Url,
@@ -18,9 +18,16 @@ pub(super) struct Host {
 impl Host {
     pub fn resolve(workspace: &Path) -> Result<Self> {
         let xdg = Xdg::from_env();
-        let crate::cache_provider::ResolvedCacheProviderConfig::Tuist(config) =
-            crate::cache_provider::resolve_config(workspace, &xdg)?
-        else {
+        let configured = crate::cache_provider::resolve_config(workspace, &xdg)?;
+        let configured = if matches!(
+            configured,
+            crate::cache_provider::ResolvedCacheProviderConfig::Local
+        ) {
+            crate::cache_provider::resolve_auth_provider(workspace, &xdg, "tuist")?
+        } else {
+            configured
+        };
+        let crate::cache_provider::ResolvedCacheProviderConfig::Tuist(config) = configured else {
             anyhow::bail!("hosted test sharding requires a configured Tuist project in [infrastructure.cache]");
         };
         let account = config
@@ -63,6 +70,17 @@ impl Host {
             .post(self.base.join(path)?)
             .bearer_auth(self.token().await?)
             .json(body)
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)?;
+        read_json(response).await
+    }
+
+    pub async fn get(&self, path: &str) -> Result<Value> {
+        let response = self
+            .client
+            .get(self.base.join(path)?)
+            .bearer_auth(self.token().await?)
             .send()
             .await
             .map_err(reqwest::Error::without_url)?;
@@ -177,6 +195,9 @@ async fn stage(mut response: Response, path: &Path, limit: u64) -> Result<()> {
 }
 
 async fn read_json(response: Response) -> Result<Value> {
+    if response.status() == reqwest::StatusCode::NO_CONTENT {
+        return Ok(Value::Null);
+    }
     let file = tempfile::NamedTempFile::new()?;
     stage(response, file.path(), 1024 * 1024).await?;
     serde_json::from_reader(file.as_file()).context("invalid hosted sharding response")

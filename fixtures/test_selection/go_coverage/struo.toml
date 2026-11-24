@@ -1,0 +1,40 @@
+[[target]]
+name = "Shared"
+kind = "go_library"
+srcs = ["shared/*.go"]
+
+[target.attrs]
+package = "./shared"
+
+[[target]]
+name = "AlphaTests"
+kind = "go_test"
+srcs = ["alpha/*.go"]
+deps = ["Shared"]
+
+[target.attrs]
+package = "./alpha"
+coverage_per_test = true
+cover_packages = ["example.com/coverage-selection/shared"]
+
+[[target]]
+name = "BetaTests"
+kind = "go_test"
+srcs = ["beta/*.go"]
+deps = ["Shared"]
+
+[target.attrs]
+package = "./beta"
+coverage_per_test = true
+cover_packages = ["example.com/coverage-selection/shared"]
+
+[[target]]
+name = "NarrowTests"
+kind = "go_test"
+srcs = ["narrow/*.go"]
+deps = ["Shared"]
+
+[target.attrs]
+package = "./narrow"
+coverage_per_test = true
+cover_packages = ["example.com/coverage-selection/narrow"]

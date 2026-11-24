@@ -965,6 +965,19 @@ Built-in history currently covers Rust compilation/build scripts/test-runner com
 - `write_tree_digest(root, output, include_suffixes = [])` writes a
   deterministic digest listing for a workspace tree. The root is
   automatically declared as an input.
+- `merge_test_coverage(target, inventory, results, output, partial = False)`
+  declares an uncached observation-assembly action. `inventory` is a current
+  `struo.test_inventory.v1` file; `results` contains normalized single-unit
+  observation files. Every unit must appear exactly once, using its opaque
+  case ID. Complete evidence requires passing units, matching collector
+  identity, and identical instrumented file and line universes. The action
+  preserves zero-hit files separately from positive per-unit evidence. A
+  selected run must set `partial = True` and cannot establish a replacement
+  checkpoint. Skipped units make evidence incomplete without failing an
+  otherwise successful execution. Failed executions remain failed. The total
+  input JSON size is bounded to 16 MiB, and filesystem paths must stay inside
+  the workspace. Native collection and report conversion belong to target
+  kinds, not this action.
 - `write_archive(entries, output, sha256_output = None, format = "tar", uncompressed_sha256_output = None)`
   writes a deterministic
   [tar archive](https://www.gnu.org/software/tar/manual/html_node/Standard.html),
@@ -1749,6 +1762,58 @@ reporter, native report conversion, validation, execution, and cache
 verification workflow.
 
 ## Script-backed Test Target Kinds
+
+### Fresh Inventory and Coverage Selection
+
+A target kind can declare `capability("test-discovery", ["test_inventory"])`
+and return a `test_inventory` provider containing a workspace-relative JSON
+output path. Its discovery action must collect the current native inventory,
+without relying on a previous test report. The bounded output has this shape:
+
+```json
+{"schema":"struo.test_inventory.v1","target":"tests","units":["opaque-unit-id"]}
+```
+
+Unit IDs must be unique and match normalized result case IDs. Use an uncached
+action for collection when native registration depends on runtime state.
+Discovery runs inside the command's resource budget.
+The built-in pytest kind uses native collect-only discovery, preserving its
+ignore rules and source boundaries without executing test bodies. Collection
+errors cannot publish a complete inventory.
+
+The optional `coverage_selection` provider opts a target into coverage history:
+
+```python
+"coverage_selection": {
+    "inputs": test_and_configuration_paths,
+    "tool": collector_name,
+    "tool_version": collector_version,
+    "platform": platform,
+    "configuration": collector_configuration,
+}
+```
+
+Struo hashes the graph, module implementation, contract, contents of `inputs`,
+canonical target and current inventory into a versioned history scope. Include
+test sources, data, native configuration and relevant inherited environment
+identity. Do not include production-source contents: those are the changes
+that coverage selection evaluates. The producer must report complete isolated
+per-unit `coverage_evidence` and a separate instrumented-file universe in
+`coverage.files`. Aggregate target coverage cannot substitute for unit evidence.
+Built-in collectors use these same generic contracts. A collector must not
+promote suite or target aggregates to constituent case evidence.
+An atomic native invocation can be a unit when discovery, exact execution and
+normalized case identity all describe that invocation. Report one observation
+for that unit, never one copy for each native case it happens to execute.
+Bind test-registration inputs to its scope and require a successful complete
+native invocation before reporting complete evidence.
+
+Native integration seeds can forward this opt-in to the test kinds they
+generate. Cargo keeps each test crate's own sources as registration inputs;
+SwiftPM and Xcode instrument the reachable product dependency closure. Bazel
+uses one atomic native rule invocation and requires a fresh build-event result,
+complete native JUnit summary and combined LCOV instrumentation. These are
+target-kind contracts, not ecosystem branches in the shared selection policy.
 
 `struo query module-contract --format json` returns a complete `test_starter`
 for a project-local script-backed test kind, a matching

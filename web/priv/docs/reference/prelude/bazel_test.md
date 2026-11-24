@@ -12,6 +12,23 @@ rule whose class ends in `_test` (for example `rust_test`, `cc_test`,
 materialize it so the `bazel_label` and `bazel_rule_kind` attributes stay
 tied to real Bazel state.
 
+Set `coverage_per_test = true` and product `coverage_sources` on the workspace
+seed to measure each native test rule as one atomic invocation. This opt-in
+delegates measurement to `bazel coverage`, with native test caching disabled,
+one run and no sharding or flaky retries. Native build-event completion,
+JUnit results and combined LCOV instrumentation must all agree before an
+observation is complete. Missing, remote-only, cached, failed or skipped
+observations cannot authorize exclusion. Native framework cases receive no
+copies of the invocation's aggregate profile.
+
+Coverage-enabled rules expose `test-discovery` with a current native rule query
+and one `target::invocation` unit. Python 3, native Bazel coverage support and
+complete `toolchain_inputs` are required. Toolchain contents bind historical
+compatibility even when compilation uses Bazel's native cache.
+Source files absent from the native instrumentation universe
+retain graph-selected work. Without the opt-in the execution strategy below
+is unchanged.
+
 Both capabilities select the default output, runfiles and validation closure
 from Bazel's analysis and execute it in `<workspace>/.struo/bazel-actions/`.
 Build skips test execution. Test uses the exposed launcher and runfiles

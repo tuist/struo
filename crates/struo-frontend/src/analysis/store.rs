@@ -53,6 +53,13 @@ pub enum DeclaredActionOperation {
         output: String,
         include_suffixes: Vec<String>,
     },
+    MergeTestCoverage {
+        target: String,
+        inventory: String,
+        results: Vec<String>,
+        output: String,
+        partial: bool,
+    },
     WriteArchive {
         entries: Vec<DeclaredArchiveEntry>,
         output: String,

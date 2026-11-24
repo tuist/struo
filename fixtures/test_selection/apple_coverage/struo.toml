@@ -1,0 +1,34 @@
+[[target]]
+name = "Product"
+kind = "apple_library"
+srcs = ["Product/*.swift"]
+
+[target.attrs]
+platform = "macos"
+minimum_os = "14.0"
+swift_flags = ["-profile-generate", "-profile-coverage-mapping"]
+
+[[target]]
+name = "SwiftTests"
+kind = "apple_test_bundle"
+srcs = ["SwiftTests.swift"]
+deps = ["Product"]
+
+[target.attrs]
+platform = "macos"
+minimum_os = "14.0"
+swift_testing = true
+coverage_per_test = true
+coverage_sources = ["Product/*.swift"]
+
+[[target]]
+name = "XCTestTests"
+kind = "apple_test_bundle"
+srcs = ["XCTestTests.swift"]
+deps = ["Product"]
+
+[target.attrs]
+platform = "macos"
+minimum_os = "14.0"
+coverage_per_test = true
+coverage_sources = ["Product/*.swift"]

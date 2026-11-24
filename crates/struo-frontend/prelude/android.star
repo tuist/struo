@@ -1998,18 +1998,34 @@ def _android_local_test_impl(ctx):
         "affected_inputs": _android_source_inputs(ctx, attrs, False) + _android_workspace_inputs(extra_classpath + _android_attr(attrs, "runtime_classpath", [])),
         "test_info": _android_local_test_info(ctx, attrs, command_argv, command_env, results, log, native_results),
     }
-    if ctx["capability"] != "test":
+    measured = _android_attr(attrs, "coverage_per_test", False)
+    configuration = None
+    if measured:
+        prefix = command_argv[:command_argv.index("StruoJvmTestRunner") + 2]
+        configuration = _jvm_coverage_configuration(ctx, provider, prefix, command_env, _android_source_inputs(ctx, attrs, False), [classes_dir] + [path for path in runtime_jars if path != tools["android_jar"]], "android_local")
+        provider["test_info"]["execution"]["cacheable"] = False
+    discovery = ctx["capability"] == "test-discovery"
+    provider["test_inventory"] = test_dir + "/inventory.json"
+    if ctx["capability"] != "test" and not discovery:
         return provider
     runtime_file_inputs = []
     for entry in runtime_classpath:
         if entry != runner_classes and entry != classes_dir:
             runtime_file_inputs.append(entry)
+    if measured:
+        _jvm_coverage_actions(ctx, configuration, _unique([classes_hash, runner_hash] + _android_workspace_inputs(runtime_file_inputs)), command_env)
+        return provider
+    if discovery:
+        command_env["STRUO_TEST_INVENTORY"] = execution_path(provider["test_inventory"])
     run_action(
         display_name = "Run Android unit tests · " + ctx["label"]["name"],
         source_files = _action_source_files(_unique([classes_hash, runner_hash] + _android_workspace_inputs(runtime_file_inputs))),
         argv = command_argv,
         inputs = _unique([classes_hash, runner_hash] + _android_workspace_inputs(runtime_file_inputs)),
-        outputs = [test_dir, results, log, native_results],
+        outputs = [provider["test_inventory"]] if discovery else [test_dir, results, log, native_results],
+        clean_paths = [provider["test_inventory"]] if discovery else [],
+        create_dirs = [test_dir, test_dir + "/home"],
+        cacheable = not discovery,
         env = command_env,
         toolchain_identity = tools["identity"] + "\x00android_local_test_run.v1\x00classpath\x00" + _android_classpath_sep().join(runtime_classpath),
         identifier = "android_local_test:" + ctx["label"]["id"],
@@ -2260,7 +2276,7 @@ _ANDROID_APK_ATTRS = [
     attr("zipalign", "string", docs = "Override zipalign path.", configurable = False),
 ]
 
-_ANDROID_LOCAL_TEST_ATTRS = [
+_ANDROID_LOCAL_TEST_ATTRS = _JVM_COVERAGE_ATTRS + [
     attr("test_framework", "string", default = "\"reflection\"", docs = "`reflection` for convention-based tests or `junit4` for native JUnit lifecycle and runners such as Robolectric. Declare the framework and its runtime inputs explicitly.", configurable = False),
     attr("compile_sdk", "int", docs = "Android Software Development Kit platform level used for android.jar. Defaults to the highest installed platform.", configurable = False),
     attr("build_tools_version", "string", docs = "Android Software Development Kit build-tools version. Defaults to the highest installed version.", configurable = False),
@@ -2454,6 +2470,7 @@ android_local_test = target_kind(
     capabilities = [
         capability("build", ["classes"]),
         capability("test", ["default", "test_results", "logs"]),
+        capability("test-discovery", ["test_inventory"]),
     ],
     examples = [
         example(

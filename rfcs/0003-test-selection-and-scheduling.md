@@ -337,11 +337,36 @@ The delivered test-unit slice includes:
   Android instrumentation tests
 - command-line and agent manifest queries and explicit unit execution
 
+### Opt-in Coverage History
+
+The client supports explicit approximate whole-target exclusion through Tuist.
+Graph selection remains the strict default. Target kinds own fresh inventory
+discovery and isolated unit coverage collection; shared Rust policy uses only
+generic providers and normalized evidence. Producers either isolate a native
+case or declare a complete atomic invocation as the execution unit. An atomic
+invocation's aggregate profile is not copied onto its native constituent cases.
+The Go producer isolates top-level invocations and rejects dynamic-subtest
+attribution when the reported inventory cannot establish that boundary.
+
+Each target has a versioned scope bound to current inventory, test inputs,
+collector, configuration and platform, excluding production-source contents.
+Reports use canonical target and opaque unit IDs for both cases and evidence.
+The planner sends one target per request with `coverage_policy: "instrumented"`.
+Tuist proves zero-hit changed paths against that target's complete checkpoint;
+unknown instrumentation retains work. A target leaves the plan only when the
+decision excludes its complete current inventory. Discovery and provider
+failures, incompatible history and non-modification changes retain the graph
+envelope. Portable-plan validation remains unchanged.
+
+Coverage measurements bypass execution caching. Full reporting and selected
+plan execution are separate operations, so partial execution cannot replace a
+full-scope checkpoint. Fresh workers need no retained profiles.
+
 The next compatible additions are isolated per-batch result paths, automatic
 case batching for fresh manifests, remote placement, fresh-audit policy, and
 complete sandbox-backed dependency observation. Predictive ordering follows
-only after the result ledger can measure it. Approximate exclusion follows only
-after full audits can quantify missed failures.
+only after the result ledger can measure it. Coverage-assisted exclusion remains
+explicit and approximate; full audits are still needed to quantify missed failures.
 
 ## Rejected Alternatives
 

@@ -24,6 +24,18 @@ All attributes are shared with [`nx_task`](/docs/reference/prelude/nx_task),
 including `project`, `task`, `commands`, `command_cwd`, `command_env`, `outputs`,
 `executor_graph`, and `workspace_outputs`.
 
+Set `coverage_per_test = true` with product `coverage_sources` to enable
+coverage-assisted selection for a single resolved Jest or Vitest command.
+This mode discovers and isolates native cases through the same collector as
+the dedicated runner target kinds. It preserves the command working directory
+and declared environment. Python 3 is required to resolve native argv without
+executing shell expansion.
+
+Plugin executors, shell pipelines, multi-command tasks and task outputs are
+not supported in coverage mode. They must retain graph selection rather than
+treating a task's exit status as complete case evidence. Ordinary suite
+execution remains unchanged when coverage is disabled.
+
 ## Providers
 
 The target emits `nx_task` and `struo_test_info`.
@@ -34,6 +46,7 @@ The target emits `nx_task` and `struo_test_info`.
 | --- | --- |
 | `build` | none, executes when used as a prerequisite |
 | `test` | `default`, `test_results`, `logs` |
+| `test-discovery` | `test_inventory`, in coverage mode |
 
 ## Example
 

@@ -269,6 +269,7 @@ def _cmake_test_impl(ctx):
         "metadata": {"counts": "suite", "path_bound": True},
     }
     provider = {"label_id": ctx["label"]["id"], "target_kind": "cmake_test", "default_output": build_root, "test_info": info}
+    coverage = _cmake_coverage_configuration(ctx, provider, cmake, ctest, action_env) if _cmake_attr(ctx, "coverage_per_test", False) else None
     if ctx["capability"] == "metadata":
         return provider
 
@@ -298,6 +299,9 @@ def _cmake_test_impl(ctx):
         identifier = ctx["label"]["id"] + ":cmake-test-build",
         display_name = "Build CMake test suite · " + ctx["label"]["name"],
     )
+    if coverage and ctx["capability"] in ["test", "test-discovery"]:
+        _cmake_coverage_actions(ctx, provider, coverage, ctest, action_env, inputs, build_root, build_type)
+        return provider
     test_argv = [ctest, "--test-dir", "${STRUO_BUILD_DIR}", "--build-config", build_type, "--parallel", str(jobs), "--output-on-failure", "--no-tests=error", "--output-junit", "${STRUO_JUNIT}"]
     if test_targets:
         test_argv = [cmake, "--build", "${STRUO_BUILD_DIR}", "--config", build_type, "--parallel", str(jobs), "--target"] + test_targets
@@ -577,11 +581,15 @@ cmake_test = target_kind(
         attr("jobs", "int", default = "1", docs = "Native build and CTest concurrency, reserved through the action resource pool.", configurable = False),
         attr("data", "list<string>", default = "[]", docs = "Runtime and configuration input globs.", configurable = False),
         attr("env", "map<string,string>", default = "{}", docs = "Declared build and test environment.", configurable = False),
+        attr("coverage_per_test", "bool", default = "false", docs = "Measure isolated registered CTest invocations with LLVM coverage. Each invocation is one atomic execution unit, not its internal framework cases. Requires Linux strace and Python 3.", configurable = False),
+        attr("coverage_sources", "list<string>", default = "[]", docs = "Instrumented product source globs. Other declared inputs bind test inventory and configuration; do not include test sources here.", configurable = False),
+        attr("llvm_cov", "string", default = "\"llvm-cov\"", docs = "Compiler-matching LLVM coverage exporter.", configurable = False),
+        attr("llvm_profdata", "string", default = "\"llvm-profdata\"", docs = "Compiler-matching LLVM profile merger.", configurable = False),
         attr("labels", "list<string>", default = "[]", docs = "Labels exposed through test discovery.", configurable = False),
         attr("timeout_ms", "int", docs = "Optional positive suite timeout in milliseconds, excluding configure and build. A timeout retains normalized failed results; native JUnit may be incomplete.", configurable = False),
     ],
     providers = ["struo_test_info"],
-    capabilities = [capability("build", ["default"]), capability("test", ["default"])],
+    capabilities = [capability("build", ["default"]), capability("test", ["default"]), capability("test-discovery", ["test_inventory"])],
     tools = [tool("cmake"), tool("ctest")],
     examples = [example("cmake-test-minimal", name = "CTest suite", use_when = "Keep an existing CMake test suite authoritative and report one normalized suite with native JUnit.")],
     source_references = _CMAKE_SOURCE_REFERENCES,

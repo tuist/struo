@@ -146,6 +146,8 @@ def _bazel_workspace_resolver(ctx):
                 "env": ctx["attr"].get("env") or {},
                 "toolchain_inputs": ctx["attr"].get("toolchain_inputs") or [],
                 "test_env": ctx["attr"].get("test_env") or {},
+                "coverage_per_test": ctx["attr"].get("coverage_per_test") or False,
+                "coverage_sources": ctx["attr"].get("coverage_sources") or [],
                 "_bazel_resolved": True,
             },
         })
@@ -761,6 +763,8 @@ def _bazel_target_impl(ctx):
     return _bazel_common_impl(ctx, ["bazel_target"])
 
 def _bazel_test_impl(ctx):
+    if ctx["attr"].get("coverage_per_test"):
+        return _bazel_coverage_impl(ctx)
     return _bazel_common_impl(ctx, ["bazel_test", "bazel_target"])
 
 def _bazel_binary_impl(ctx):
@@ -776,6 +780,8 @@ _BAZEL_TARGET_ATTRS = [
     attr("env", "map<string,string>", default = "{}", docs = "Declared environment forwarded from bazel_workspace. Empty values override inherited host variables.", configurable = False),
     attr("toolchain_inputs", "list<string>", default = "[]", docs = "Absolute host toolchain files and trees whose contents complete the native action input contract. Without this declaration spawn actions are uncached.", configurable = False),
     attr("test_env", "map<string,string>", default = "{}", docs = "Test runtime environment, including native test command options not reported by aquery. Rule environment is applied first.", configurable = False),
+    attr("coverage_per_test", "bool", default = "false", docs = "Measure the native Bazel test invocation as one atomic unit using fresh BEP completion and combined LCOV coverage.", configurable = False),
+    attr("coverage_sources", "list<string>", default = "[]", docs = "Product source globs that must appear in the native instrumentation universe.", configurable = False),
     attr("_bazel_resolved", "bool", default = "false", docs = "Resolver-owned marker preventing direct manifest authoring.", configurable = False),
 ]
 
@@ -790,6 +796,8 @@ _BAZEL_EXAMPLES = [
 bazel_workspace = target_kind(
     docs = "Native Bazel workspace seed. Discovers rules with bazel query and executes their selected action closures in Struo. Complete toolchain_inputs enable owned spawn caching; test execution remains uncached. Unsupported required action contracts delegate to Bazel and are reported on the provider.",
     attrs = [
+        attr("coverage_per_test", "bool", default = "false", docs = "Forward opt-in native atomic coverage measurement to generated test rules.", configurable = False),
+        attr("coverage_sources", "list<string>", default = "[]", docs = "Product source globs expected in each generated test rule's coverage universe.", configurable = False),
         attr("bazel", "string", default = "\"bazel\"", docs = "Bazel executable name or workspace-relative executable path. Defaults to `bazel`, which resolves through `bazelisk` when installed.", configurable = False),
         attr("env", "map<string,string>", default = "{}", docs = "Environment for Bazel discovery, analysis, and execution. Empty values override inherited host variables. Native action environments reported by aquery take precedence.", configurable = False),
         attr("toolchain_inputs", "list<string>", default = "[]", docs = "Absolute host toolchain files and trees omitted by aquery, including system headers, compiler subprocesses and link libraries. Contents participate in every spawn action key. Without a complete declaration spawn actions remain uncached. These host inputs do not enable remote execution.", configurable = False),
@@ -844,8 +852,8 @@ bazel_target = target_kind(
 bazel_test = target_kind(
     docs = "Resolver-generated Bazel test rule (rule class ending in `_test`) materialized as a Struo graph target. Exposes `build` and `test` capabilities.",
     attrs = _BAZEL_TARGET_ATTRS,
-    providers = ["bazel_test", "bazel_target"],
-    capabilities = [capability("build", []), capability("test", [])],
+    providers = ["bazel_test", "bazel_target", "struo_test_info"],
+    capabilities = [capability("build", []), capability("test", []), capability("test-discovery", ["test_inventory"])],
     tools = [_BAZEL_TOOL],
     examples = _BAZEL_EXAMPLES,
     impl = _bazel_test_impl,

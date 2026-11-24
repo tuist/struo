@@ -6,6 +6,7 @@ use serde_json::json;
 use super::{artifact, client, metadata};
 use crate::cli::{Format, Output};
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn plan(
     workspace: &Path,
     output: Output,
@@ -13,6 +14,8 @@ pub(crate) async fn plan(
     target: Option<&str>,
     shards: u32,
     reference: Option<String>,
+    coverage_selection: bool,
+    limits: struo_core::ResourceLimits,
 ) -> Result<()> {
     ensure!(shards > 0, "--shards must be positive");
     let reference = reference
@@ -20,7 +23,14 @@ pub(crate) async fn plan(
         .or_else(|| metadata::ci_run().map(|(provider, id)| format!("{provider}-{id}")))
         .filter(|value| !value.trim().is_empty())
         .context("pass --reference or set TUIST_SHARD_REFERENCE")?;
-    let portable = crate::commands::query::test_plan_record(workspace, changed_paths, target)?;
+    let portable = crate::commands::query::test_plan_record_with_coverage(
+        workspace,
+        changed_paths,
+        target,
+        coverage_selection,
+        limits,
+    )
+    .await?;
     let value = if portable.plan.batches.is_empty() {
         json!({"shard_plan_id": "", "shards": []})
     } else {

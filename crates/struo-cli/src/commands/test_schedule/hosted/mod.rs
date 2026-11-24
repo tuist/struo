@@ -1,8 +1,8 @@
 mod artifact;
-mod client;
-mod metadata;
+pub(crate) mod client;
+pub(crate) mod metadata;
 mod plan;
-mod report;
+pub(crate) mod report;
 mod run;
 
 pub(crate) use plan::plan;

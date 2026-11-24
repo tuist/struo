@@ -32,6 +32,9 @@ mod swift_testing_results;
 #[path = "prelude/elixir_test_results.rs"]
 mod elixir_test_results;
 
+#[path = "prelude/elixir_coverage.rs"]
+mod elixir_coverage;
+
 #[path = "prelude/elixir_execution.rs"]
 mod elixir_execution;
 
@@ -40,6 +43,21 @@ mod rust_test_results;
 
 #[path = "prelude/jvm_test_results.rs"]
 mod jvm_test_results;
+
+#[path = "prelude/jvm_coverage.rs"]
+mod jvm_coverage;
+
+#[path = "prelude/cmake_coverage.rs"]
+mod cmake_coverage;
+
+#[path = "prelude/zig_coverage.rs"]
+mod zig_coverage;
+
+#[path = "prelude/bazel_coverage.rs"]
+mod bazel_coverage;
+
+#[path = "prelude/shellspec_coverage.rs"]
+mod shellspec_coverage;
 
 #[path = "prelude/android_archives.rs"]
 mod android_archives;
@@ -53,6 +71,15 @@ mod rust_build_script;
 
 #[path = "prelude/test_result_adapters.rs"]
 mod test_result_adapters;
+
+#[path = "prelude/go_coverage.rs"]
+mod go_coverage;
+
+#[path = "prelude/ruby_coverage.rs"]
+mod ruby_coverage;
+
+#[path = "prelude/javascript_coverage.rs"]
+mod javascript_coverage;
 
 #[path = "prelude/apple_modules.rs"]
 mod apple_modules;
@@ -174,8 +201,12 @@ fn fake_android_ndk_for_mobile_test(workspace: &Path) -> std::path::PathBuf {
 
 fn apple_prelude_source() -> String {
     format!(
-        "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\ndef host_os():\n    return \"macos\"\n",
+        "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\ndef host_os():\n    return \"macos\"\n",
         include_str!("../prelude/common.star"),
+        include_str!("../prelude/test_coverage.star"),
+        include_str!("../prelude/llvm_coverage.star"),
+        include_str!("../prelude/apple_coverage.star"),
+        include_str!("../prelude/shellspec_coverage.star"),
         include_str!("../prelude/apple_modules.star"),
         include_str!("../prelude/apple_execution.star"),
         include_str!("../prelude/apple_linux.star"),
@@ -197,7 +228,9 @@ fn archive_prelude_source() -> String {
 fn android_prelude_source() -> String {
     [
         include_str!("../prelude/common.star"),
+        include_str!("../prelude/test_coverage.star"),
         include_str!("../prelude/jvm_test_runner.star"),
+        include_str!("../prelude/jvm_coverage.star"),
         include_str!("../prelude/android.star"),
     ]
     .join("\n")
@@ -206,8 +239,11 @@ fn android_prelude_source() -> String {
 fn react_native_prelude_source() -> String {
     [
         include_str!("../prelude/common.star"),
+        include_str!("../prelude/test_coverage.star"),
+        include_str!("../prelude/javascript_coverage.star"),
         include_str!("../prelude/javascript.star"),
         include_str!("../prelude/jvm_test_runner.star"),
+        include_str!("../prelude/jvm_coverage.star"),
         include_str!("../prelude/android.star"),
         include_str!("../prelude/react_native.star"),
     ]

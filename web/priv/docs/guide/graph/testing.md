@@ -68,6 +68,64 @@ repository uses a different runtime layout.
 
 ## Start With the Safety Model
 
+### Coverage-assisted Selection
+
+Graph-based selection remains the strict default. You can opt into approximate
+whole-target exclusion with Tuist history when your target kind supports fresh
+inventory discovery and isolated coverage evidence. Set `coverage_per_test = true`
+on a supported producer: Go, pytest, RSpec, Minitest, Jest, Vitest, Rust libtest,
+JVM or Android host tests, ExUnit, CTest, Zig, Bazel, ShellSpec or Apple host bundles. Nx and
+Turborepo test tasks can reuse the Jest or Vitest collector for a single native
+command without task outputs, shell expansion or plugin executor wrapping. Each target
+reference documents its native collector, source declarations and runtime
+prerequisites. CTest, Zig, Bazel, ShellSpec and Apple bundles measure declared atomic invocations,
+not their constituent native cases. Cargo, SwiftPM, Xcode, Nx and Turborepo seeds forward their
+explicit coverage opt-in to generated native test targets.
+
+Android device instrumentation does not yet have a coverage producer and retains
+graph-selected work. Apple coverage collection has been validated on macOS host
+bundles, not simulators or devices.
+
+Configure a [Tuist project](/guide/infrastructure/tuist), then record a full run
+and export a plan for a clean, committed change:
+
+```sh
+struo test --all --coverage-report --format json
+struo query test-plan --changed-path lib/source.go --coverage-selection --format json > plan.json
+struo test --plan plan.json --format json
+```
+
+Keep plan files outside tracked inputs, or in a gitignored directory. The
+portable-plan validator still checks the graph and source fingerprints before
+execution, including inputs of coverage-excluded targets and fully empty plans.
+Plans produced with `--coverage-selection` declare
+`policy.safety = "approximate"`, including when the planner retains all work.
+Omit the flag to use only the graph envelope, without querying coverage history.
+
+The planner discovers current units on fresh workers, then queries Tuist using
+a versioned per-target scope bound to inventory, test inputs, collector,
+configuration and platform. It requests the explicit `instrumented` policy for
+one target at a time. Tuist must prove changed paths belong to that target's
+complete baseline instrumentation. Struo removes a target only when Tuist
+excludes its whole current inventory. It does not exclude individual cases.
+Struo uploads bounded commit history and tracked-file listings through Tuist's
+Git-history API. Use a consistent `origin` URL and run from the repository root.
+Missing local ancestry or listings beyond the server's limits retain work.
+Fetch enough Git history on CI workers to contain the baseline; this planner
+does not deepen shallow clones automatically.
+
+Missing or incompatible history, unknown instrumentation, actual coverage hits,
+new or changed test inputs, added/deleted/renamed paths, dirty checkouts and
+provider failures retain graph-selected work. Struo requires the supplied
+changed paths to match the baseline diff. Partial observations and unattributed aggregate
+profiles cannot establish these checkpoints. Coverage collection bypasses
+execution caching so a cached profile cannot masquerade as a new measurement.
+
+Selected plan execution does not publish a replacement baseline. Publish a new
+full observation with `--coverage-report` when you want to refresh history.
+Coverage only describes observed execution; retain regular full test runs to
+audit missed dependencies and behavioral changes.
+
 ### Inspect Retained Case Evidence
 
 Read a target's retained normalized report with `struo query test-results tests
@@ -285,6 +343,9 @@ configuration, dependency inputs, and loaded target-kind implementations.
 Missing or stale discovery exports a whole-target fallback, never an old exact
 inventory. Execution rejects stale bindings, malformed identities, overlapping
 scopes, incomplete inventory coverage, and split file fixtures before scheduling.
+Coverage-assisted plans also carry `excluded_bindings` for every removed target
+in the original graph-selected envelope. These input fingerprints participate in
+the plan identity and must remain current even when the plan has no batches.
 The content digest detects changes, not authorship: retrieve plans through a
 trusted, authenticated coordinator and treat them like repository configuration.
 

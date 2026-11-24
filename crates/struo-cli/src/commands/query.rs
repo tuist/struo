@@ -740,9 +740,38 @@ pub async fn test_plan_request(
     output: Output,
     changed_paths: &[String],
     target: Option<&str>,
+    coverage_selection: bool,
+    limits: struo_core::ResourceLimits,
 ) -> Result<()> {
-    let plan = test_plan_record(workspace, changed_paths, target)?;
+    let plan = test_plan_record_with_coverage(
+        workspace,
+        changed_paths,
+        target,
+        coverage_selection,
+        limits,
+    )
+    .await?;
     write_body(output, || render_test_plan_human(&plan.plan), &plan).await
+}
+
+pub(crate) async fn test_plan_record_with_coverage(
+    workspace: &Path,
+    changed_paths: &[String],
+    target: Option<&str>,
+    coverage_selection: bool,
+    limits: struo_core::ResourceLimits,
+) -> Result<test_plan::portable::PortableTestPlan> {
+    if !coverage_selection {
+        return test_plan_record(workspace, changed_paths, target);
+    }
+    anyhow::ensure!(
+        target.is_none(),
+        "coverage selection cannot narrow an explicit target"
+    );
+    let graph = struo_frontend::load_graph_workspace(workspace).context("loading graph")?;
+    let plan = test_plan::plan(workspace, &graph, changed_paths)?;
+    let plan = super::test_coverage::narrow(workspace, &graph, plan, limits).await?;
+    test_plan::portable::PortableTestPlan::export(workspace, &graph, plan)
 }
 
 pub(crate) fn test_plan_record(

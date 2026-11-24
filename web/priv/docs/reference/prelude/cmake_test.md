@@ -32,6 +32,28 @@ handling, and exit status. Struo reports their nonzero exits and timeouts as
 failures, but cannot infer case counts from arbitrary native output. It does
 not fall back automatically when CTest finds no tests.
 
+## Coverage-assisted selection
+
+Set `coverage_per_test = true` to discover registered CTest invocations and
+measure each in a fresh process. A registered invocation is an atomic execution
+unit. Its profile is never attributed to individual framework cases inside
+the executable. CTest remains responsible for environment, working directory,
+timeouts and native execution semantics.
+
+Compile and link the test executables with Clang's
+`-fprofile-instr-generate` and compile with `-fcoverage-mapping`. Declare
+instrumented product sources in `coverage_sources`, and set `llvm_cov` and
+`llvm_profdata` to tools matching that compiler. Declare test sources and
+configuration in `srcs` or `data`, outside `coverage_sources`, so changes to
+them invalidate coverage history. Linux, Python 3 and `strace` are currently
+required. Explicit `test_targets` cannot use this mode.
+
+Discovery uses CTest's JSON inventory without running test bodies. Exact
+selection uses the complete registered name. Extra subprocesses, fixture
+invocations, missing instrumentation, skipped invocations and failures cannot
+produce complete exclusion evidence. Native shared libraries not represented
+in the exported executable's coverage also prevent complete observations.
+
 ## Attributes
 
 | Attribute | Type | Default | Description |
@@ -48,6 +70,10 @@ not fall back automatically when CTest finds no tests.
 | `jobs` | int | `1` | Positive native build and test concurrency |
 | `data` | list&lt;string&gt; | `[]` | Additional runtime and configuration input globs |
 | `env` | map&lt;string, string&gt; | `{}` | Declared build and test environment |
+| `coverage_per_test` | bool | `false` | Isolated registered CTest invocation coverage |
+| `coverage_sources` | list&lt;string&gt; | `[]` | Instrumented product sources, excluding test/configuration inputs |
+| `llvm_cov` | string | `llvm-cov` | Compiler-matching LLVM coverage exporter |
+| `llvm_profdata` | string | `llvm-profdata` | Compiler-matching LLVM profile merger |
 | `labels` | list&lt;string&gt; | `[]` | Test discovery labels |
 | `timeout_ms` | int | none | Positive suite timeout in milliseconds, excluding configure and build |
 
@@ -92,7 +118,7 @@ Custom test targets retain `cmake-test.log` instead of `ctest.log` and expose no
 native JUnit artifact; their `native_results` list is empty.
 When `timeout_ms` expires, Struo retains a normalized failed suite and a timeout
 reason in the log; CTest may not finish writing its native JUnit report.
-Exact native case filtering, case listing, sharding, retries, and coverage
-are unsupported. An exact test-unit request is rejected rather than silently
+Without `coverage_per_test`, exact native case filtering, case listing,
+sharding, retries, and coverage are unsupported. An exact test-unit request is rejected rather than silently
 running a different selection. Use separate targets for independently
 configurable upstream suites.

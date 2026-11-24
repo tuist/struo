@@ -5213,6 +5213,9 @@ def _xcode_workspace_resolver(ctx):
     for spec in specs:
         spec["deps"] = [dep for dep in spec["deps"] if dep[2:] in emitted]
 
+    if ctx["attr"].get("coverage_per_test"):
+        _apple_coverage_native_specs(specs)
+
     # Native applications are the natural build roots. Library-only projects
     # build their non-test products, while resolver metadata selects native test
     # bundles. Package targets remain reachable only through native dependencies.
@@ -5592,6 +5595,7 @@ xcode_workspace = target_kind(
         attr("project", "string", docs = "Package-relative path to the `.xcodeproj` directory, such as `App.xcodeproj`. Inferred from a single `*.xcodeproj` when omitted.", configurable = False),
         attr("configuration", "string", default = "Debug", docs = "Xcode build configuration whose settings drive target lowering.", configurable = False),
         attr("build_settings", "map<string,string>", default = "{}", docs = "Native command-line build-setting overrides applied after project, target, and xcconfig settings.", configurable = False),
+        attr("coverage_per_test", "bool", default = "false", docs = "Instrument reachable native products and measure each complete test bundle as an atomic LLVM coverage unit.", configurable = False),
         attr("sdk_variant", "string", default = "simulator", docs = "`simulator` or `device` SDK selection applied to lowered Apple targets on non-macOS platforms.", configurable = False),
         attr("xcode_developer_dir", "string", docs = "Optional `DEVELOPER_DIR` override folded into lowered Apple target cache keys.", configurable = False),
         attr("explicit_modules", "bool", default = "false", docs = "Discover and cache module dependencies for lowered Apple targets.", configurable = False),

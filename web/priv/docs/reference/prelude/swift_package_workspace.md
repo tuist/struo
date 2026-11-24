@@ -82,6 +82,7 @@ for native propagation, dependency errors, and current limitations.
 
 | Attribute | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
+| `coverage_per_test` | bool | no | `false` | Instrument reachable product dependencies and measure complete test bundles as atomic LLVM coverage units |
 | `package_path` | string | no | `.` | Package-relative directory containing `Package.swift` |
 | `resolver_inputs` | list&lt;string&gt; | no | `srcs` | Package-relative source globs available while deriving the graph |
 | `platform` | string | no | `macos` | Apple platform used when lowering package targets |

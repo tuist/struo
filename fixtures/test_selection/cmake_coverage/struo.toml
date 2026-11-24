@@ -1,0 +1,11 @@
+[[target]]
+name = "CMakeTests"
+kind = "cmake_test"
+srcs = ["CMakeLists.txt", "*.c"]
+
+[target.attrs]
+coverage_per_test = true
+coverage_sources = ["product.c", "unused.c"]
+llvm_cov = "llvm-cov-18"
+llvm_profdata = "llvm-profdata-18"
+configure_args = ["-DCMAKE_C_COMPILER=clang"]

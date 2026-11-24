@@ -34,6 +34,8 @@ environment, so a changed environment reloads the graph.
 | `targets` | list&lt;string&gt; | no | `["build", "test", "lint"]` | Task names to emit with the tasks they depend on; empty list includes every task |
 | `resolver_inputs` | list&lt;string&gt; | no | `srcs` | Text inputs available while deriving the graph |
 | `graph_file` | string | no |  | Optional workspace-relative graph snapshot with `packages` (the package items of `turbo query`) and `dry` (the output of `turbo run --dry=json`). Struo reads it directly instead of invoking turbo |
+| `coverage_per_test` | bool | no | `false` | Forward isolated coverage opt-in to generated test targets running one native Jest or Vitest command |
+| `coverage_sources` | list&lt;string&gt; | no | `[]` | Product source globs forwarded to coverage-enabled test targets |
 | `_default_test_roots` | list&lt;string&gt; | no | `[]` | Resolver-owned test target names selected by targetless `struo test` |
 
 ## Providers

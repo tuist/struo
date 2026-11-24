@@ -1,0 +1,9 @@
+{
+  "name": "struo-task-coverage-selection-fixture",
+  "private": true,
+  "devDependencies": {
+    "@vitest/coverage-v8": "4.1.11",
+    "jest": "30.5.2",
+    "vitest": "4.1.11"
+  }
+}

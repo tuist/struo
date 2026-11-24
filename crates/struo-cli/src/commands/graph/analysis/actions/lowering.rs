@@ -305,6 +305,23 @@ pub(super) fn operation_to_action(
             include_suffixes,
             input_digest: Some(input_digest),
         },
+        DeclaredActionOperation::MergeTestCoverage {
+            target,
+            inventory,
+            results,
+            output,
+            partial,
+        } => Action::MergeTestCoverage {
+            target,
+            inventory: workspace_path(&inventory, "coverage inventory")?,
+            results: results
+                .iter()
+                .map(|path| workspace_path(path, "coverage observation"))
+                .collect::<Result<_>>()?,
+            output: workspace_path(&output, "coverage output")?,
+            partial,
+            input_digest: Some(input_digest),
+        },
         DeclaredActionOperation::WriteArchive {
             entries,
             output,

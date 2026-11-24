@@ -1,0 +1,9 @@
+[[target]]
+name = "ShellTests"
+kind = "shellspec_test"
+srcs = ["product_spec.sh"]
+
+[target.attrs]
+coverage_per_test = true
+coverage_sources = ["product.sh", "unused.sh", "lifecycle.sh"]
+data = ["product.sh", "lifecycle.sh"]

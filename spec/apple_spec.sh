@@ -290,7 +290,7 @@ SH
     The stdout should include 'apps/ios/AppCore (apple_library) [build]'
     The stdout should include 'apps/ios/DesignSystem (apple_framework) [build]'
     The stdout should include 'apps/ios/App (apple_application) [build, run, artifact]'
-    The stdout should include 'apps/ios/AppTests (apple_test_bundle) [build, test]'
+    The stdout should include 'apps/ios/AppTests (apple_test_bundle) [build, test, test-discovery]'
   End
 
   It 'exposes runnable Apple application artifacts'

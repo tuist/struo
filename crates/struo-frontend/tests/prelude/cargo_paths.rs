@@ -27,6 +27,42 @@ result = repr([target["srcs"], target["attrs"]["crate_root"]])
 }
 
 #[test]
+fn cargo_coverage_opt_in_reaches_generated_tests_and_product_compilation() {
+    let source = format!(
+        r#"{}
+package = {{
+    "id": "app", "name": "app", "version": "0.1.0", "edition": "2024",
+    "manifest_path": "/workspace/Cargo.toml",
+    "targets": [{{"name": "app", "kind": ["lib"], "src_path": "/workspace/src/lib.rs", "test": True}}],
+}}
+def _cargo_resolved_metadata(ctx, default_vendor_dir, materialize_sources):
+    return {{"metadata": {{"packages": [package], "workspace_members": ["app"]}}, "specs": [], "split_host": False}}
+def configurations():
+    results = []
+    for enabled in [False, True]:
+        ctx = {{"label": {{"package": "", "name": "cargo", "id": "cargo"}},
+            "attr": {{"coverage_per_test": enabled, "coverage_sources": ["src/product.rs"], "llvm_cov": "cov", "llvm_profdata": "profdata"}},
+            "files": {{"Cargo.toml": "[workspace]"}}}}
+        targets = _cargo_workspace_resolver(ctx)["targets"]
+        results.append([[target["kind"], target["attrs"].get("coverage"), target["attrs"].get("coverage_per_test"),
+            target["attrs"].get("coverage_sources"), target["attrs"].get("llvm_cov"), target["attrs"].get("llvm_profdata")] for target in targets])
+    return results
+result = repr(configurations())
+"#,
+        all_prelude_source()
+    );
+    let result = with_active_store(store_for(Path::new("/workspace"), ""), || {
+        eval_prelude_source_to_repr(source)
+    })
+    .1
+    .unwrap();
+    assert_eq!(
+        result,
+        r#"[[["rust_library", None, None, None, None, None], ["rust_test", None, None, None, None, None]], [["rust_library", True, None, None, None, None], ["rust_test", None, True, ["src/product.rs"], "cov", "profdata"]]]"#
+    );
+}
+
+#[test]
 fn cargo_workspace_accepts_windows_verbatim_and_metadata_path_spellings() {
     let drive = r"D:\a\_temp\desktop-package\source";
     let verbatim_drive = r"\\?\D:\a\_temp\desktop-package\source";

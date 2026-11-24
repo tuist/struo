@@ -66,6 +66,7 @@ for native propagation, dependency errors, and current limitations.
 
 | Attribute | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
+| `coverage_per_test` | bool | no | `false` | Instrument reachable product dependencies and measure complete test bundles as atomic LLVM coverage units |
 | `project` | string | no | single `*.xcodeproj` in the package | Package-relative path to the `.xcodeproj` or `.xcworkspace` |
 | `configuration` | string | no | `Debug` | Xcode build configuration whose settings drive target lowering |
 | `build_settings` | map&lt;string,string&gt; | no | `{}` | Native build-setting overrides applied after project, target, and xcconfig settings |

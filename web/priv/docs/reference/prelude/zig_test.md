@@ -19,10 +19,32 @@ escaping. `import_names` keys must match exactly one Zig module dependency by
 full label, short label name, import name, or canonical name; ambiguous or
 unknown keys fail validation.
 
+## Coverage-assisted selection
+
+Set `coverage_per_test = true` and declare product source globs in
+`coverage_sources`. Struo measures the complete native test-binary invocation
+as one atomic execution unit, matching the target's existing normalized unit.
+It does not attribute the aggregate profile to individual Zig tests.
+Discovery builds the current binary without executing its tests.
+
+This mode requires Linux, Python 3 and kcov 43. Set `kcov` when the collector
+is not on PATH. Struo uses the LLVM backend and keeps debug information for
+native line instrumentation. Declare test sources, configuration and runtime
+data outside `coverage_sources` so edits invalidate the history scope.
+The compiler, collector, platform and configuration also bind the scope.
+
+Custom runners, arguments and cross-target execution cannot use this mode.
+Skipped or failed tests, subprocesses, missing source instrumentation and an
+unrecognized collector trace produce incomplete evidence and retain graph
+work. Ordinary test execution remains unchanged without the flag.
+
 ## Attributes
 
 | Attribute | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
+| `coverage_per_test` | bool | no | `false` | Measure the complete atomic test invocation |
+| `coverage_sources` | list&lt;string&gt; | no | `[]` | Instrumented product source globs |
+| `kcov` | string | no | `kcov` | Native collector executable, version 43 |
 | `zig` | string | no | `zig` on PATH | Zig compiler path |
 | `zig_version` | string | no | empty | Expected `zig version` output |
 | `bootstrapped` | int | no | `-1` | Compatibility selector for bootstrapped Zig toolchains; choose the compiler with `zig` |

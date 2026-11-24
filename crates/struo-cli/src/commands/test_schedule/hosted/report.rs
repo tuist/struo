@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use crate::commands::query::test_plan::portable::PortableTestPlan;
 
 #[allow(clippy::too_many_lines)]
-pub(super) fn project(
+pub(crate) fn project(
     value: &Value,
     plan: &PortableTestPlan,
     assigned: &[String],
@@ -96,7 +96,7 @@ pub(super) fn project(
             };
             success &= final_status != "failure";
             by_target.entry(batch.target.clone()).or_default().push(json!({
-                "name": case["name"], "test_suite_name": case["suite"], "status": final_status,
+                "name": case["id"], "test_suite_name": "", "status": final_status,
                 "duration": duration(&repetitions), "repetitions": repetitions, "failures": failures,
             }));
         }

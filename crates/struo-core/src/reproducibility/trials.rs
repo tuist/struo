@@ -3,20 +3,33 @@ use std::sync::Arc;
 use struo_cas::ActionResult;
 
 use super::{ReproducibilityReport, ReproducibilityTrial};
-use crate::{execute, outputs, Action, Error, Executor, OutputSymlinkMode, Result, Runner};
+use crate::{
+    execute, outputs, Action, Error, Executor, OutputSymlinkMode, Result, Runner, WorkspacePath,
+};
 
-pub(super) async fn verify(runner: &Runner, action: &Action) -> Result<ReproducibilityReport> {
-    let inputs = match action {
+fn action_inputs(action: &Action) -> Vec<WorkspacePath> {
+    match action {
         Action::RunCommand { inputs, .. } => inputs.clone(),
         Action::CopyPath { sources, .. } => sources.clone(),
         Action::LinkPath { source, .. } => vec![source.clone()],
         Action::WriteTreeDigest { root, .. } => vec![root.clone()],
+        Action::MergeTestCoverage {
+            inventory, results, ..
+        } => {
+            let mut inputs = vec![inventory.clone()];
+            inputs.extend(results.clone());
+            inputs
+        }
         Action::WriteArchive { entries, .. } => entries
             .iter()
             .filter_map(|entry| entry.source.clone())
             .collect(),
         _ => Vec::new(),
-    };
+    }
+}
+
+pub(super) async fn verify(runner: &Runner, action: &Action) -> Result<ReproducibilityReport> {
+    let inputs = action_inputs(action);
     let temporary = Arc::new(tempfile::tempdir().map_err(|source| Error::FileAction {
         action: "prepare_verification",
         path: runner.workspace_root().display().to_string(),

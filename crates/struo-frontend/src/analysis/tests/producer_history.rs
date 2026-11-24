@@ -4,9 +4,8 @@ use super::*;
 fn zig_native_history_matches_unset_target_and_separates_hosts() {
     let tmp = TempDir::new().unwrap();
     let source = format!(
-        "{}\n{}\n{}",
-        include_str!("../../../prelude/common.star"),
-        include_str!("../../../prelude/zig.star"),
+        "{}\n{}",
+        crate::modules::built_in_module_source(),
         r#"
 def host_os():
     return current_os

@@ -494,6 +494,18 @@ def test_collection():
         assert 'ignored directory imported' not in result.stdout
         assert 'outside target imported' not in result.stdout
 
+    discovery = command + ['--struo-inventory', '--', '-q']
+    result = subprocess.run(discovery, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    inventory = json.load(open('out/results.json'))
+    assert inventory == {'schema': 'struo.test_inventory.v1', 'target': 'tests',
+                         'units': ['tests::tests/test_kept.py::test_fail', 'tests::tests/test_kept.py::test_pass']}, inventory
+    from pathlib import Path
+    Path('tests/test_broken.py').write_text('raise RuntimeError()\n')
+    result = subprocess.run(command + ['--struo-inventory', '--struo-source', 'tests/test_broken.py', '--', '-q'], capture_output=True, text=True)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert not Path('out/results.json').exists(), 'failed collection reused the previous complete inventory'
+
     for source in ['tests/test_ignored.py', 'tests/ignored_dir/test_nested.py']:
         ignored = [sys.executable, 'adapter.py', '--struo-target', 'tests', '--struo-source', source, '--struo-results', 'out/ignored.json', '--struo-native-results', 'out/ignored-native.json', '--', '-q']
         result = subprocess.run(ignored, capture_output=True, text=True)
@@ -530,6 +542,83 @@ def test_package_configuration():
         .env("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
         .current_dir(dir.path()));
     assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn pytest_isolated_coverage_preserves_universe_and_rejects_child_process_evidence() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("adapter.py"),
+        runner_source("_python_pytest_adapter"),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("alpha.py"), "def value():\n    return 41\n").unwrap();
+    std::fs::write(dir.path().join("beta.py"), "def value():\n    return 17\n").unwrap();
+    std::fs::write(
+        dir.path().join("test_cases.py"),
+        r"import pytest
+def test_alpha():
+    import alpha
+    assert alpha.value() == 41
+def test_beta():
+    import beta
+    assert beta.value() == 17
+def test_child():
+    import subprocess, sys
+    subprocess.run([sys.executable, '-c', 'import alpha; alpha.value()'], check=True)
+def test_skipped():
+    pytest.skip('not measured')
+def test_failure():
+    assert False
+",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("check_coverage.py"), r"import json, subprocess, sys
+from pathlib import Path
+def test_measurements():
+    for name, code in [('alpha', 0), ('beta', 0), ('child', 0), ('skipped', 0), ('failure', 1)]:
+        command = [sys.executable, 'adapter.py', '--struo-target', 'tests', '--struo-source', 'test_cases.py', '--struo-test-unit', 'tests::test_cases.py::test_' + name, '--struo-results', 'out/' + name + '.json', '--struo-native-results', 'out/' + name + '-native.json', '--struo-coverage-source', 'alpha.py', '--struo-coverage-source', 'beta.py', '--', '-q']
+        result = subprocess.run(command, capture_output=True, text=True)
+        assert result.returncode == code, result.stdout + result.stderr
+        report = json.loads(Path('out/' + name + '.json').read_text())
+        assert len(report['cases']) == 1, report
+        assert report['coverage']['partial'] == (name in ['child', 'failure']), report
+        assert [file['path'] for file in report['coverage']['files']] == ['alpha.py', 'beta.py'], report
+").unwrap();
+    let output = run(Command::new("pytest")
+        .args(["-q", "check_coverage.py"])
+        .env("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+        .current_dir(dir.path()));
+    assert!(output.status.success(), "{output:?}");
+    let inventory = serde_json::json!({"schema":"struo.test_inventory.v1", "target":"tests", "units":["tests::test_cases.py::test_alpha", "tests::test_cases.py::test_beta"]});
+    let result = struo_core::merge_test_coverage(
+        "tests",
+        &inventory,
+        [
+            Ok(read_report(&dir.path().join("out/alpha.json"))),
+            Ok(read_report(&dir.path().join("out/beta.json"))),
+        ],
+        false,
+    )
+    .unwrap();
+    assert_eq!(result["coverage"]["partial"], false);
+    assert_eq!(
+        result["coverage_evidence"]["paths"],
+        serde_json::json!(["alpha.py", "beta.py"])
+    );
+    assert_eq!(
+        result["coverage_evidence"]["scopes"][0]["files"],
+        serde_json::json!([0])
+    );
+    assert_eq!(
+        result["coverage_evidence"]["scopes"][1]["files"],
+        serde_json::json!([1])
+    );
+    let skipped = read_report(&dir.path().join("out/skipped.json"));
+    let result = struo_core::merge_test_coverage("tests", &serde_json::json!({"schema":"struo.test_inventory.v1","target":"tests","units":["tests::test_cases.py::test_skipped"]}), [Ok(skipped)], false).unwrap();
+    assert_eq!(result["status"], "passed");
+    assert_eq!(result["coverage"]["partial"], true);
+    assert_eq!(result["coverage_evidence"]["scopes"], serde_json::json!([]));
 }
 
 #[test]

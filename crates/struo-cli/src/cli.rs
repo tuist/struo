@@ -435,6 +435,20 @@ pub enum Cmd {
         #[usage(short = 'j', long, value_name = "COUNT")]
         jobs: Option<usize>,
 
+        /// Publish complete attributed observations to the configured Tuist project.
+        #[usage(
+            long,
+            conflicts(
+                "plan",
+                "shard_plan",
+                "test_unit",
+                "test_batch",
+                "batch_test_units",
+                "config"
+            )
+        )]
+        coverage_report: bool,
+
         /// Download, execute, and report an exact hosted shard plan UUID.
         #[usage(
             long,

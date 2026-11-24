@@ -1805,6 +1805,9 @@ def _rust_compile(ctx, crate_type, default_root, output_name, test = False, prov
     ]
     if test:
         rustc_args.append("--test")
+    if _rust_attr(ctx, "coverage", False) or (test and _rust_attr(ctx, "coverage_per_test", False)):
+        rustc_args.extend(["-C", "instrument-coverage", "-C", "link-dead-code"])
+        rustc_args.extend(["--remap-path-prefix", workspace_root() + "=."])
     rustc_args.extend(_rust_extra_filename_args(ctx, crate_type))
     rustc_args.extend(_rust_output_args(crate_type, output))
     rustc_args.extend(_rust_compile_target_args(target, host_triple))
@@ -2173,7 +2176,7 @@ def _rust_test_info(ctx, test_binary, results, log, native_results, test_dir):
             "default_attempts": 1,
         },
         "execution": {
-            "cacheable": _rust_attr(ctx, "cacheable", True),
+            "cacheable": not _rust_attr(ctx, "coverage_per_test", False) and _rust_attr(ctx, "cacheable", True),
             "timeout_ms": timeout_ms,
             "run_from_workspace_root": True,
         },
@@ -2236,6 +2239,13 @@ fn main() {
         Err(error) => (format!("failed to list tests: {error}\\n"), false),
     };
     let cases = parse_list(&list_text);
+    if let Some(inventory) = env::var_os("STRUO_TEST_INVENTORY") {
+        let _ = fs::remove_file(&inventory);
+        if !list_succeeded { process::exit(2); }
+        let units = cases.iter().map(|case| json_string(&format!("{target}::{case}"))).collect::<Vec<_>>();
+        fs::write(inventory, format!("{{\\"schema\\":\\"struo.test_inventory.v1\\",\\"target\\":{},\\"units\\":[{}]}}", json_string(target), units.join(","))).expect("write inventory");
+        process::exit(0);
+    }
     let report_time = report_time_requested
         && list_succeeded
         && report_time_supported(binary, cwd, runner_args, &cases);
@@ -2266,7 +2276,12 @@ fn main() {
 }
 
 fn test_command(binary: &str, cwd: &str, report_time: bool, leading_args: &[&str], runner_args: &[String]) -> Command {
-    let mut command = Command::new(binary);
+    let mut command = if let (Some(trace), Some(output)) = (env::var_os("STRUO_PROCESS_TRACE"), env::var_os("STRUO_PROCESS_TRACE_OUTPUT")) {
+        let mut command = Command::new(trace);
+        command.args(["-f", "-e", "trace=process", "-e", "raw=execve,execveat", "-o"]).arg(output).arg(binary);
+        if !leading_args.is_empty() { command.env("LLVM_PROFILE_FILE", "/dev/null"); }
+        command
+    } else { Command::new(binary) };
     if report_time {
         command.args(REPORT_TIME_ARGS);
         if env::var_os("RUSTC_BOOTSTRAP").is_none() {
@@ -2589,7 +2604,14 @@ def _rust_test_impl(ctx):
     _, _, host_triple = _rustc_toolchain(_rust_target(ctx))
     provider["test_info"] = _rust_test_info(ctx, provider["test_binary"], results, log, native_results, test_dir)
 
-    if ctx["capability"] != "test":
+    measured = _rust_attr(ctx, "coverage_per_test", False)
+    coverage_tools, coverage_sources = None, []
+    if measured:
+        coverage_rustc, _, coverage_triple = _rustc_toolchain("")
+        coverage_tools, coverage_sources = _rust_coverage_configuration(ctx, provider, coverage_rustc, coverage_triple)
+    discovery = ctx["capability"] == "test-discovery"
+    provider["test_inventory"] = test_dir + "/inventory.json"
+    if ctx["capability"] != "test" and not discovery:
         return provider
 
     target = _rust_target(ctx)
@@ -2646,6 +2668,12 @@ def _rust_test_impl(ctx):
         toolchain_identity = runner_identity + "\x00struo.rust_test.runner.v1",
         identifier = _rust_action_identifier(ctx, "test-runner-rustc"),
     )
+    if measured:
+        _rust_coverage_actions(ctx, provider, coverage_tools, coverage_sources, staged_test_binary, runner, _unique([runner, staged_test_binary] + staged_bin_exe_paths + _rust_bin_exe_inputs(ctx) + _rust_test_package_inputs(ctx) + (provider.get("transitive_data") or [])))
+        return provider
+    test_env = _rust_test_env(ctx, test_dir)
+    if discovery:
+        test_env["STRUO_TEST_INVENTORY"] = execution_path(provider["test_inventory"])
     run_action(
         display_name = "Run Rust tests · " + ctx["label"]["name"],
         source_files = _action_source_files(_unique(
@@ -2672,12 +2700,12 @@ def _rust_test_impl(ctx):
             _rust_test_package_inputs(ctx) +
             (provider.get("transitive_data") or [])
         ),
-        outputs = [test_dir],
-        clean_paths = [_rust_scratch_dir(ctx) + "/test-home"],
-        create_dirs = [_rust_scratch_dir(ctx) + "/test-home"],
+        outputs = [provider["test_inventory"]] if discovery else [test_dir],
+        clean_paths = [_rust_scratch_dir(ctx) + "/test-home"] + ([provider["test_inventory"]] if discovery else []),
+        create_dirs = [test_dir, _rust_scratch_dir(ctx) + "/test-home"],
         cwd = _rust_test_cwd(ctx),
-        env = _rust_test_env(ctx, test_dir),
-        cacheable = _rust_attr(ctx, "cacheable", True),
+        env = test_env,
+        cacheable = not discovery and _rust_attr(ctx, "cacheable", True),
         toolchain_identity = runner_identity + "\x00struo.rust_test.run.v1",
         identifier = _rust_action_identifier(ctx, "test"),
     )
@@ -4176,6 +4204,16 @@ def _cargo_workspace_resolver(ctx):
             spec["attrs"]["test_env"] = _rust_attr(ctx, "test_env", {})
             spec["attrs"]["env_inherit"] = _rust_attr(ctx, "test_env_inherit", [])
             spec["attrs"]["cacheable"] = _rust_attr(ctx, "test_cacheable", True)
+            if _rust_attr(ctx, "coverage_per_test", False):
+                sources = _rust_attr(ctx, "coverage_sources", [])
+                if sources:
+                    spec["attrs"]["coverage_per_test"] = True
+                    spec["attrs"]["coverage_sources"] = sources
+                    for tool in ["llvm_cov", "llvm_profdata"]:
+                        if _rust_attr(ctx, tool, ""):
+                            spec["attrs"][tool] = _rust_attr(ctx, tool, "")
+        elif spec["kind"] in ["rust_library", "rust_binary"] and _rust_attr(ctx, "coverage_per_test", False):
+            spec["attrs"]["coverage"] = True
 
     return {
         "targets": targets,
@@ -4202,6 +4240,7 @@ _RUST_COMMON_ATTRS = [
     attr("rustc_env", "map<string, string>", default = "{}", docs = "Bazel-compatible rustc environment variables.", configurable = False),
     attr("rustc_env_files", "list<string>", default = "[]", docs = "Package-relative files containing `NAME=value` entries merged into the rustc environment before `env` and `rustc_env`.", configurable = False),
     attr("rustc_flags", "list<string>", default = "[]", docs = "Additional rustc flags appended after Struo-managed flags.", configurable = False),
+    attr("coverage", "bool", default = "false", docs = "Compile this crate with LLVM source coverage and retain unused instrumented functions.", configurable = False),
     attr("cap_lints", "string", docs = "Optional rustc lint cap passed as `--cap-lints`; generated Cargo dependencies use `allow` to match Cargo dependency builds.", configurable = False),
     attr("linker", "string", docs = "Optional linker path passed as `-C linker=...`. Defaults to `cc` for host Unix binary-like targets and to the Android Native Development Kit clang wrapper for Android targets when ANDROID_NDK_HOME or android_ndk is set.", configurable = False),
     attr("linker_flags", "list<string>", default = "[]", docs = "Additional linker flags lowered to `-C link-arg=...`.", configurable = False),
@@ -4301,6 +4340,10 @@ cargo_workspace = target_kind(
         attr("test_env", "map<string, string>", default = "{}", docs = "Environment variables passed to generated test targets after inherited variables.", configurable = False),
         attr("test_env_inherit", "list<string>", default = "[]", docs = "Host environment variable names explicitly inherited by generated test targets. Disable test_cacheable when tests depend on undeclared host tools or configuration.", configurable = False),
         attr("test_cacheable", "bool", default = "true", docs = "Whether generated test targets may cache successful test results. Set false for host-dependent tests; compilation remains cacheable.", configurable = False),
+        attr("coverage_per_test", "bool", default = "false", docs = "Instrument first-party libraries and binaries and collect isolated libtest coverage for generated tests with declared product sources.", configurable = False),
+        attr("coverage_sources", "list<string>", default = "[]", docs = "Product Rust source paths or globs forwarded to generated tests. Keep test registration sources separate; a test's own crate root is retained as a test input.", configurable = False),
+        attr("llvm_cov", "string", docs = "Compiler-matching llvm-cov; defaults to the Rust toolchain llvm-tools component.", configurable = False),
+        attr("llvm_profdata", "string", docs = "Compiler-matching llvm-profdata; defaults to the Rust toolchain llvm-tools component.", configurable = False),
         attr("_default_test_roots", "list<string>", default = "[]", docs = "Resolver-owned first-party test target names used by targetless test selection.", configurable = False),
     ],
     resolver = _cargo_workspace_resolver,
@@ -4449,6 +4492,10 @@ rust_binary = target_kind(
 rust_test = target_kind(
     docs = "Rust test crate compiled with rustc --test and run through the generic Struo test capability.",
     attrs = _RUST_COMMON_ATTRS + [
+        attr("coverage_per_test", "bool", default = "false", docs = "Measure each exact libtest case with LLVM coverage and process-tree validation. Currently requires Linux strace.", configurable = False),
+        attr("coverage_sources", "list<string>", default = "[]", docs = "Product Rust source globs expected in the instrumented binary. Instrument dependency crates with coverage = true.", configurable = False),
+        attr("llvm_cov", "string", docs = "llvm-cov executable matching the compiler, defaults to the compiler llvm-tools component.", configurable = False),
+        attr("llvm_profdata", "string", docs = "llvm-profdata executable matching the compiler, defaults to the compiler llvm-tools component.", configurable = False),
         attr("args", "list<string>", default = "[]", docs = "Arguments passed to the compiled libtest binary when running the test capability.", configurable = False),
         attr("test_env", "map<string, string>", default = "{}", docs = "Environment variables passed to the test runner.", configurable = False),
         attr("test_cwd", "string", docs = "Package-relative working directory for the test process. Targets derived from Cargo metadata set it to the package root, matching where Cargo runs a test binary; leave it unset to run from the workspace root.", configurable = False),
@@ -4468,6 +4515,7 @@ rust_test = target_kind(
     capabilities = [
         capability("build", ["binary"]),
         capability("test", ["default", "test_results", "logs"]),
+        capability("test-discovery", ["test_inventory"]),
     ],
     tools = [_RUST_TOOL],
     examples = [

@@ -1,0 +1,16 @@
+[[target]]
+name = "Product"
+kind = "kotlin_jvm_library"
+srcs = ["Product.kt", "Unused.kt"]
+
+[[target]]
+name = "AndroidTests"
+kind = "android_local_test"
+srcs = ["ProductTest.kt"]
+deps = ["Product"]
+
+[target.attrs]
+coverage_per_test = true
+coverage_sources = ["Product.kt", "Unused.kt"]
+jacoco_agent = "tools/jacocoagent.jar"
+jacoco_cli = "tools/jacococli.jar"

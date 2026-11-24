@@ -549,7 +549,7 @@ def _kotlin_jvm_test_info(ctx, command_argv, command_env, results, log, native_r
             "default_attempts": 1,
         },
         "execution": {
-            "cacheable": True,
+            "cacheable": not _kotlin_jvm_attr(ctx, "coverage_per_test", False),
             "timeout_ms": _kotlin_jvm_attr(ctx, "timeout_ms", None),
             "run_from_workspace_root": True,
         },
@@ -562,7 +562,7 @@ def _kotlin_jvm_test_impl(ctx):
     if len(sources) == 0:
         fail("kotlin_jvm_test " + ctx["label"]["id"] + " has no Kotlin test sources (.kt/.kts)")
     java_sources = _kotlin_jvm_java_sources(ctx)
-    tools = _kotlin_jvm_tools(ctx, True, len(java_sources) > 0)
+    tools = _kotlin_jvm_tools(ctx, True, True)
     compile_jars = _kotlin_jvm_compile_jars(_kotlin_jvm_compile_deps(ctx))
     runtime_jars = _kotlin_jvm_runtime_jars(_kotlin_jvm_runtime_deps(ctx))
     plugin_jars = [_package_relative(ctx, path) for path in _kotlin_jvm_attr(ctx, "compiler_plugin_jars", [])]
@@ -618,18 +618,33 @@ def _kotlin_jvm_test_impl(ctx):
         "affected_inputs": _unique(all_sources + _kotlin_jvm_workspace_inputs(compile_jars + plugin_jars) + _kotlin_jvm_data(ctx)),
         "test_info": _kotlin_jvm_test_info(ctx, command_argv, command_env, results, log, native_results),
     }
-    if ctx["capability"] != "test":
+    measured = _kotlin_jvm_attr(ctx, "coverage_per_test", False)
+    configuration = None
+    if measured:
+        prefix = command_argv[:command_argv.index("StruoJvmTestRunner") + 2]
+        configuration = _jvm_coverage_configuration(ctx, provider, prefix, command_env, _unique(all_sources + _kotlin_jvm_data(ctx)), _unique([classes] + runtime_jars), "kotlin_jvm")
+    discovery = ctx["capability"] == "test-discovery"
+    provider["test_inventory"] = test_dir + "/inventory.json"
+    if ctx["capability"] != "test" and not discovery:
         return provider
     runtime_file_inputs = []
     for entry in runtime_classpath:
         if entry != runner_classes and entry != classes:
             runtime_file_inputs.append(entry)
+    if measured:
+        _jvm_coverage_actions(ctx, configuration, _unique([classes_hash, runner_hash] + _kotlin_jvm_workspace_inputs(runtime_file_inputs) + _kotlin_jvm_data(ctx)), command_env)
+        return provider
+    if discovery:
+        command_env["STRUO_TEST_INVENTORY"] = execution_path(provider["test_inventory"])
     run_action(
         display_name = "Run Kotlin tests · " + ctx["label"]["name"],
         source_files = _action_source_files(_unique([classes_hash, runner_hash] + _kotlin_jvm_workspace_inputs(runtime_file_inputs) + _kotlin_jvm_data(ctx))),
         argv = command_argv,
         inputs = _unique([classes_hash, runner_hash] + _kotlin_jvm_workspace_inputs(runtime_file_inputs) + _kotlin_jvm_data(ctx)),
-        outputs = [test_dir, results, log, native_results],
+        outputs = [provider["test_inventory"]] if discovery else [test_dir, results, log, native_results],
+        clean_paths = [provider["test_inventory"]] if discovery else [],
+        create_dirs = [test_dir, test_dir + "/home"],
+        cacheable = not discovery,
         env = command_env,
         toolchain_identity = tools["identity"] + "\x00kotlin_jvm_test_run.v1\x00classpath\x00" + _kotlin_jvm_classpath_separator().join(runtime_classpath),
         identifier = "kotlin_jvm_test:" + ctx["label"]["id"],
@@ -719,7 +734,7 @@ kotlin_jvm_binary = target_kind(
 
 kotlin_jvm_test = target_kind(
     docs = "Compiles Kotlin tests, and Java test sources jointly with them, for the Java virtual machine and emits normalized Struo test results.",
-    attrs = _KOTLIN_JVM_COMMON_ATTRS + [
+    attrs = _KOTLIN_JVM_COMMON_ATTRS + _JVM_COVERAGE_ATTRS + [
         attr("test_framework", "string", default = "\"reflection\"", docs = "`reflection` for convention-based tests or `junit4` for native JUnit lifecycle, rules, and runners. Declare JUnit on the runtime classpath.", configurable = False),
         attr("test_class", "string", docs = "Optional fully qualified test class or Class#method filter.", configurable = False),
         attr("args", "list<string>", default = "[]", docs = "Additional fully qualified class or Class#method filters.", configurable = False),
@@ -733,7 +748,7 @@ kotlin_jvm_test = target_kind(
     ],
     deps = _KOTLIN_JVM_DEP_EDGES,
     providers = ["kotlin_jvm_test", "struo_test_info"],
-    capabilities = [capability("test", ["default", "test_results", "logs"])],
+    capabilities = [capability("test", ["default", "test_results", "logs"]), capability("test-discovery", ["test_inventory"])],
     tools = [_KOTLIN_TOOL, _JAVA_RUNTIME_TOOL, _JAVA_COMPILER_TOOL],
     source_references = [
         source_reference("Buck2", "kotlin_test", "https://buck2.build/docs/prelude/rules/kotlin/kotlin_test/", "Use when adopting a Buck2 host-side Kotlin test and its test runner settings."),

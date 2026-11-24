@@ -149,6 +149,32 @@ result = True
     assert_eq!(store.actions[0].argv, ["swiftc", "Main.swift"]);
 }
 
+#[test]
+fn instrumented_compilation_uses_execution_time_workspace_mapping() {
+    let (store, result) = evaluate(
+        r#"
+_apple_swift_action({}, {}, {}, [],
+    argv = ["swiftc", "-profile-generate", "-profile-coverage-mapping", "Product/Covered.swift"],
+    inputs = ["Product/Covered.swift"], outputs = ["Product.o"])
+result = True
+"#,
+    );
+    result.unwrap();
+    assert_eq!(
+        store.actions[0].argv,
+        [
+            "swiftc",
+            "-profile-generate",
+            "-profile-coverage-mapping",
+            "Product/Covered.swift",
+            "-coverage-prefix-map",
+            "{{struo.execution_root}}=.",
+            "-file-compilation-dir",
+            ".",
+        ]
+    );
+}
+
 fn scan_fixture() -> serde_json::Value {
     serde_json::json!({
         "mainModuleName": "Main",

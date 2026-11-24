@@ -15,6 +15,6 @@ Describe 'struo graph query'
 
     When call struo_under_test query targets
     The status should be success
-    The stdout should include 'smoke (shellspec_test) [test]'
+    The stdout should include 'smoke (shellspec_test) [test, test-discovery]'
   End
 End

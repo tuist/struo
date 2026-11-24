@@ -4,6 +4,43 @@ use serde_json::json;
 use tempfile::TempDir;
 
 #[test]
+fn coverage_opt_in_reaches_only_generated_test_targets() {
+    let workspace = TempDir::new().unwrap();
+    fs::create_dir(workspace.path().join("app")).unwrap();
+    fs::write(workspace.path().join("app/product.js"), "export default 42").unwrap();
+    let graph = json!({"nodes": {"app": {"type": "app", "data": {
+        "root": "app", "targets": {
+            "build": {"executor": "nx:run-commands", "options": {"command": "compile"}},
+            "test": {"executor": "nx:run-commands", "options": {"command": "jest"}}
+        }
+    }}}, "dependencies": {}});
+    fs::write(workspace.path().join("graph.json"), graph.to_string()).unwrap();
+    for enabled in [false, true] {
+        fs::write(workspace.path().join("struo.toml"), format!(
+            "[[target]]\nname = 'nx'\nkind = 'nx_workspace'\n[target.attrs]\ngraph_file = 'graph.json'\ncoverage_per_test = {enabled}\ncoverage_sources = ['app/product.js']\n"
+        )).unwrap();
+        let targets = struo_frontend::load_graph_workspace(workspace.path()).unwrap();
+        let test = targets.iter().find(|t| t.label.id == "app__test").unwrap();
+        assert_eq!(
+            test.attrs
+                .get("coverage_per_test")
+                .map(|v| serde_json::to_value(v).unwrap()),
+            enabled.then(|| json!(true))
+        );
+        if enabled {
+            assert_eq!(
+                serde_json::to_value(&test.attrs["coverage_sources"]).unwrap(),
+                json!(["app/product.js"])
+            );
+        }
+        let build = targets.iter().find(|t| t.label.id == "app__build").unwrap();
+        assert!(!build.attrs.contains_key("coverage_per_test"));
+        let diagnostics = struo_frontend::validate_workspace(workspace.path()).unwrap();
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+}
+
+#[test]
 fn task_filter_preserves_transitive_dependencies_without_including_unrelated_tasks() {
     let workspace = TempDir::new().unwrap();
     for path in ["apps/app", "libs/bridge", "libs/lib"] {
@@ -171,7 +208,7 @@ fn test_tasks_report_suite_success_and_failure_without_hashing_generated_outputs
                 .iter()
                 .map(|c| c.name.as_str())
                 .collect::<Vec<_>>(),
-            ["build", "test"]
+            ["build", "test", "test-discovery"]
         );
         let seed = targets.iter().find(|t| t.label.id == "nx").unwrap();
         assert_eq!(

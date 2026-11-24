@@ -1,0 +1,9 @@
+[[target]]
+name = "PythonTests"
+kind = "pytest_test"
+srcs = ["test_cases.py"]
+
+[target.attrs]
+coverage_per_test = true
+coverage_sources = ["product.py", "unused.py"]
+batching = "target"

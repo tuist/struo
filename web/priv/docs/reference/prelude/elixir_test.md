@@ -33,10 +33,30 @@ events rather than log text. Skipped tests count once, excluded tests are omitte
 from executed totals, and invalid tests caused by failed setup count as failures.
 This avoids differences between Elixir versions and summary-looking test output.
 
+## Coverage-assisted selection
+
+Set `coverage_per_test = true` and declare product Elixir sources in
+`coverage_sources`. Struo discovers current ExUnit module/test IDs without
+executing their bodies, then measures each exact ID in a new VM with OTP
+`cover`. Duplicate test names in different modules keep distinct identities.
+Every declared source must map to instrumented dependency bytecode, including
+zero-hit modules. Test inputs, configuration, runtime and collector versions
+bind the history scope.
+
+This mode requires Python 3 and the native default test configuration.
+Additional `test_args`, setup tasks, shell setup and `staged_workspace` are
+currently rejected. Mix test aliases are also rejected rather than bypassed.
+Mix discovery respects native test paths, patterns and load filters. Ports
+opened during the observation, distributed VMs, failures, skipped tests and
+incomplete instrumentation cannot establish complete exclusion evidence.
+Ordinary test execution is unchanged when `coverage_per_test` is false.
+
 ## Attributes
 
 | Attribute | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
+| `coverage_per_test` | bool | no | `false` | Isolated native ExUnit discovery and OTP coverage |
+| `coverage_sources` | list&lt;string&gt; | no | `[]` | Instrumented product source globs |
 | `_mix_test_defaults` | bool | no | `false` | Resolver-owned marker that delegates test path and file-pattern selection to Mix |
 | `staged_workspace` | bool | no | `false` | Run Mix tests in a fresh private copy of declared files with a native `_build/test` layout |
 | `mix_config` | string | no | empty | Optional package-relative Mix project file. When omitted, tests run through direct ExUnit without requiring a Mix project |

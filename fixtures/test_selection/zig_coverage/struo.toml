@@ -1,0 +1,9 @@
+[[target]]
+name = "Tests"
+kind = "zig_test"
+srcs = ["*.zig"]
+
+[target.attrs]
+main = "tests.zig"
+coverage_per_test = true
+coverage_sources = ["product.zig", "unused.zig"]

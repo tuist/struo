@@ -97,9 +97,9 @@ async fn hosted_batches_round_trip_exact_bytes_and_publish_native_retries() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|case| case["name"] == "recovers")
+        .find(|case| case["name"] == "native::a")
         .unwrap();
-    assert_eq!(case["test_suite_name"], "NativeSuite");
+    assert_eq!(case["test_suite_name"], "");
     assert_eq!(case["status"], "success");
     assert_eq!(case["duration"], 10);
     assert_eq!(
@@ -157,7 +157,7 @@ async fn empty_failed_incomplete_and_rejected_reports_never_become_successful_pa
                 .as_array()
                 .unwrap()
                 .iter()
-                .find(|case| case["name"] == "recovers")
+                .find(|case| case["name"] == "native::a")
                 .unwrap();
             assert_eq!(case["status"], "failure");
             assert_eq!(case["duration"], 13);

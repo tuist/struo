@@ -1,0 +1,19 @@
+[[target]]
+name = "RSpecTests"
+kind = "rspec_test"
+srcs = ["product_spec.rb"]
+
+[target.attrs]
+coverage_per_test = true
+coverage_sources = ["product.rb", "unused.rb"]
+batching = "target"
+
+[[target]]
+name = "MinitestFiles"
+kind = "minitest_test"
+srcs = ["test_product.rb"]
+
+[target.attrs]
+coverage_per_test = true
+coverage_sources = ["product.rb", "unused.rb"]
+batching = "target"

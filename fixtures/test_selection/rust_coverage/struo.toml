@@ -1,0 +1,20 @@
+[[target]]
+name = "Product"
+kind = "rust_library"
+srcs = ["product_lib.rs", "product.rs", "unused.rs"]
+
+[target.attrs]
+crate_name = "product"
+crate_root = "product_lib.rs"
+coverage = true
+
+[[target]]
+name = "RustTests"
+kind = "rust_test"
+srcs = ["tests.rs"]
+deps = ["Product"]
+
+[target.attrs]
+crate_root = "tests.rs"
+coverage_per_test = true
+coverage_sources = ["product.rs", "unused.rs"]

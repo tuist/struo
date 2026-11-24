@@ -1,6 +1,7 @@
+mod exclusions;
 mod fingerprint;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::{ensure, Context, Result};
@@ -19,6 +20,8 @@ pub(crate) struct PortableTestPlan {
     pub id: String,
     pub plan: TestPlan,
     pub bindings: Vec<Binding>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub excluded_bindings: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +52,7 @@ impl PortableTestPlan {
         let mut portable = Self {
             schema: SCHEMA.to_string(),
             id: String::new(),
+            excluded_bindings: exclusions::bind(workspace, graph, &plan)?,
             plan,
             bindings,
         };
@@ -60,6 +64,10 @@ impl PortableTestPlan {
     fn identity(&self) -> Result<String> {
         let mut digest = struo_core::InputDigestBuilder::new(SCHEMA.as_bytes());
         digest.push_bytes(&serde_json::to_vec(&(&self.plan, &self.bindings))?);
+        if !self.excluded_bindings.is_empty() {
+            digest.push_bytes(b"coverage_excluded_bindings.v1");
+            digest.push_bytes(&serde_json::to_vec(&self.excluded_bindings)?);
+        }
         Ok(digest.finish().to_string())
     }
 
@@ -73,6 +81,7 @@ impl PortableTestPlan {
             "portable test plan identity mismatch"
         );
         self.plan.validate()?;
+        exclusions::validate(workspace, graph, &self.plan, &self.excluded_bindings)?;
         ensure!(
             self.bindings.len() == self.plan.selection.tests.len(),
             "portable plan bindings do not match selected targets"

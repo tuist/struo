@@ -78,6 +78,8 @@ mapping are reported as a resolver error instead of silently deduplicated.
 | `env` | map&lt;string,string&gt; | no | `{}` | Declared environment for discovery, analysis, and execution. Empty values override inherited host variables. Native action environments reported by `aquery` take precedence. |
 | `toolchain_inputs` | list&lt;string&gt; | no | `[]` | Absolute host files and trees covering implicit toolchain inputs. Contents fingerprint owned spawn actions. Required for spawn caching, not a remote execution declaration. |
 | `test_env` | map&lt;string,string&gt; | no | `{}` | Additional declared test runtime environment. Overrides rule environment. |
+| `coverage_per_test` | bool | no | `false` | Measure generated native test rules as atomic invocations using Bazel coverage |
+| `coverage_sources` | list&lt;string&gt; | no | `[]` | Product source globs expected in each test rule's native instrumentation universe |
 | `query` | string | no | `kind("rule", //...)` | Bazel query expression used to enumerate rules. |
 | `test_query` | string | no | All enumerated test rules | Bazel query selecting default test roots from the enumerated graph, independently of build selection. |
 | `exclude_packages` | list&lt;string&gt; | no | `[]` | Package prefixes to strip from the default query. Each entry excludes both `//<prefix>/...` and `//<prefix>:*`. |

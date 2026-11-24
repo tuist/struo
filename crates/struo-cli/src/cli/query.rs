@@ -147,6 +147,9 @@ pub enum QueryCmd {
         /// Create an explicit plan for this target instead of selecting by changed path.
         #[usage(long, conflicts = "changed_paths")]
         target: Option<String>,
+        /// Opt in to approximate whole-target exclusion using Tuist coverage history.
+        #[usage(long, conflicts = "target")]
+        coverage_selection: bool,
         /// Upload the plan to the configured host and emit a CI shard matrix.
         #[usage(long, value_name = "COUNT")]
         shards: Option<u32>,

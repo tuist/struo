@@ -32,6 +32,24 @@ The test process, and any compiler or Cargo invocation it spawns, inherits
 `report_time = false` for tests whose behavior depends on that variable, such
 as tests that build crates whose build scripts probe for nightly features.
 
+## Coverage-assisted Selection
+
+Set `coverage_per_test = true` and declare product source globs in
+`coverage_sources`. Struo discovers current cases with libtest, then measures
+one exact case per process with LLVM source coverage. The collector preserves
+zero-hit sources and rejects missing profiles, subprocess execution and
+failed or skipped observations. Coverage runs bypass execution caching.
+
+The initial collector requires Linux, Python 3, strace and the compiler's
+`llvm-tools` component. You can override the matching `llvm-cov` and
+`llvm-profdata` executables. Instrument dependency crates with `coverage = true`.
+Struo includes the entire test crate in compatibility inputs because Rust can
+declare tests beside product code. Use a separate integration test crate to
+allow coverage exclusion for changes to a product dependency. Changes inside
+the test crate retain the target. The collector accepts only ignored-test,
+capture and thread-count arguments; other libtest modes require disabling
+isolated coverage.
+
 ## Attributes
 
 | Attribute | Type | Required | Default | Description |
@@ -46,6 +64,11 @@ as tests that build crates whose build scripts probe for nightly features.
 | `rustc_env` | map&lt;string, string&gt; | no | `{}` | Rust compiler environment variables |
 | `rustc_env_files` | list&lt;string&gt; | no | `[]` | Files with `NAME=value` entries merged into the rustc environment before `env` and `rustc_env` |
 | `rustc_flags` | list&lt;string&gt; | no | `[]` | Additional `rustc` flags appended after Struo-managed flags |
+| `coverage` | bool | no | `false` | Compile with LLVM source coverage and retain unused instrumented functions |
+| `coverage_per_test` | bool | no | `false` | Measure each exact libtest case for approximate coverage selection |
+| `coverage_sources` | list&lt;string&gt; | no | `[]` | Product source globs required in the instrumented binary |
+| `llvm_cov` | string | no | compiler component | Matching `llvm-cov` executable |
+| `llvm_profdata` | string | no | compiler component | Matching `llvm-profdata` executable |
 | `cap_lints` | string | no | empty | Optional rustc lint cap passed as `--cap-lints` |
 | `linker` | string | no | inferred | Optional linker path passed as `-C linker=...` |
 | `linker_flags` | list&lt;string&gt; | no | `[]` | Additional linker flags lowered to `-C link-arg=...` |

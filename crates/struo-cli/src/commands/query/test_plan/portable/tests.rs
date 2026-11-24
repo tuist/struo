@@ -86,6 +86,12 @@ fn fixture() -> (tempfile::TempDir, Vec<GraphTarget>, PortableTestPlan) {
 fn portable_document_rejects_invalid_identity_scopes_and_fixture_splitting() {
     let (workspace, graph, portable) = fixture();
     assert_eq!(portable.plan.batches.len(), 2);
+    let legacy = serde_json::to_value(&portable).unwrap();
+    assert!(legacy.get("excluded_bindings").is_none());
+    serde_json::from_value::<PortableTestPlan>(legacy)
+        .unwrap()
+        .validate(workspace.path(), &graph)
+        .unwrap();
     for filters in [
         vec![vec!["a"], vec!["a", "b", "c"]],
         vec![vec!["a"], vec!["b"], vec!["c"]],
@@ -152,6 +158,51 @@ fn portable_binding_rejects_changed_inputs_configuration_and_module_implementati
         .unwrap_err()
         .to_string()
         .contains("stale"));
+}
+
+#[test]
+fn coverage_plans_bind_excluded_targets_even_when_no_batches_remain() {
+    for retain_other in [false, true] {
+        let (workspace, mut graph, portable) = fixture();
+        let mut other = graph[0].clone();
+        other.label.id = "retained".into();
+        other.label.name = "retained".into();
+        other.srcs = vec!["other".into()];
+        graph.push(other);
+        std::fs::write(workspace.path().join("other"), "unrelated input").unwrap();
+        let mut selection = portable.plan.selection;
+        selection.policy.safety = "approximate".into();
+        selection.policy.evidence = "declared_graph_and_opt_in_coverage".into();
+        selection.changed_paths = vec!["struo.toml".into()];
+        selection.tests.clear();
+        let batches = if retain_other {
+            selection.tests.push(SelectedTest {
+                id: "retained".into(),
+                kind: "custom_test".into(),
+                reasons: vec![],
+            });
+            vec![TestBatch::new("retained", vec![]).unwrap()]
+        } else {
+            vec![]
+        };
+        let plan = PortableTestPlan::export(
+            workspace.path(),
+            &graph,
+            TestPlan::new(selection, batches).unwrap(),
+        )
+        .unwrap();
+        plan.validate(workspace.path(), &graph).unwrap();
+        let mut incomplete = plan.clone();
+        incomplete.excluded_bindings.clear();
+        incomplete.id = incomplete.identity().unwrap();
+        assert!(incomplete.validate(workspace.path(), &graph).is_err());
+        std::fs::write(workspace.path().join("input"), "excluded input changed").unwrap();
+        assert!(plan
+            .validate(workspace.path(), &graph)
+            .unwrap_err()
+            .to_string()
+            .contains("stale"));
+    }
 }
 
 #[test]

@@ -1,0 +1,20 @@
+[[target]]
+name = "JestTests"
+kind = "jest_test"
+srcs = ["product.test.cjs"]
+
+[target.attrs]
+coverage_per_test = true
+coverage_sources = ["product.cjs", "unused.cjs"]
+batching = "target"
+
+[[target]]
+name = "VitestTests"
+kind = "vitest_test"
+srcs = ["product.test.cjs"]
+
+[target.attrs]
+coverage_per_test = true
+coverage_sources = ["product.cjs", "unused.cjs"]
+args = ["--globals"]
+batching = "target"

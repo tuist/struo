@@ -902,7 +902,7 @@ defmodule Struo.ElixirCompiler do
 
     warning_lines = Enum.map(diagnostics, &"warning\t#{encode_term(&1)}")
 
-    lines = ["version\t1"] ++ input_lines ++ external_lines ++ compile_env_lines ++ recompile_lines ++ protocol_lines ++ warning_lines
+    lines = ["version\t1", "source_root\t#{encode_term(workspace_root)}"] ++ input_lines ++ external_lines ++ compile_env_lines ++ recompile_lines ++ protocol_lines ++ warning_lines
     File.write!(path, Enum.sort(lines) |> Enum.join("\n") |> Kernel.<>("\n"))
   end
 
@@ -1677,7 +1677,10 @@ def _elixir_test_impl(ctx):
         "affected_inputs": _unique(_elixir_optional_inputs(input_srcs + config + data + tools + [mix_config])),
         "test_info": _elixir_test_info_for(ctx, "elixir", mix_config, [], srcs, results, log, native_results),
     }
-    if ctx["capability"] != "test":
+    coverage = _elixir_coverage_configuration(ctx, provider) if _elixir_attr(ctx, "coverage_per_test", False) else None
+    if ctx["capability"] == "test-discovery" and not coverage:
+        fail("ExUnit discovery requires coverage_per_test")
+    if ctx["capability"] not in ["test", "test-discovery"]:
         return provider
     if len(ctx["deps"]) != 1:
         fail(ctx["label"]["id"] + ": elixir_test expects exactly one elixir_app dependency compiled with mix_env = \"test\"")
@@ -1694,6 +1697,9 @@ def _elixir_test_impl(ctx):
     apps = _elixir_collect_apps([lib])
     provider["affected_inputs"] = _unique(_elixir_optional_inputs(input_srcs + config + data + tools + [mix_config]) + _elixir_app_inputs(apps))
     provider["test_info"] = _elixir_test_info_for(ctx, toolchain["mix"] if mix_config else toolchain["elixir"], mix_config, apps, srcs, results, log, native_results)
+    if coverage:
+        provider["test_info"]["listing"] = {"supported":True,"strategy":"exunit"}
+        provider["test_info"]["filtering"] = {"case_filtering":"exact"}
     if _elixir_attr(ctx, "setup", ""):
         run_action(
             display_name = "Run Elixir tests · " + ctx["label"]["name"],
@@ -1737,6 +1743,10 @@ def _elixir_test_impl(ctx):
         )
     staged_inputs = _elixir_stage_test_workspace(ctx, project_inputs) if staged_workspace else []
     staged_inputs += _elixir_stage_consumer(ctx, lib, apps, build_root, "test", ctx["label"]["id"] + ":test-apps", cacheable = not staged_workspace)
+    if coverage:
+        env = _elixir_action_env_with(ctx, toolchain, _elixir_test_env(ctx, toolchain, home_dir, build_root, action_cwd))
+        _elixir_coverage_actions(ctx, provider, coverage, apps, srcs, env, _unique(provider["affected_inputs"] + project_inputs + staged_inputs), mix_config)
+        return provider
     run_action(
         display_name = "Run Elixir tests · " + ctx["label"]["name"],
         source_files = _action_source_files(_unique(provider["affected_inputs"] + project_inputs + staged_inputs + [runner_script, args_file])),
@@ -3517,6 +3527,8 @@ _ELIXIR_LIBRARY_ATTRS = [
 ]
 
 _ELIXIR_TEST_ATTRS = [
+    attr("coverage_per_test", "bool", default = "false", docs = "Collect current ExUnit IDs and isolate each with OTP cover. Requires Python 3 and the native default test configuration.", configurable = False),
+    attr("coverage_sources", "list<string>", default = "[]", docs = "Product Elixir source globs that must all be represented by instrumented dependency BEAM modules.", configurable = False),
     attr("_mix_test_defaults", "bool", default = "false", docs = "Resolver-owned marker selecting the native Mix project's test paths and patterns instead of passing every input file to the runner.", configurable = False),
     attr("staged_workspace", "bool", default = "false", docs = "Opt into a fresh private Mix test cwd containing only declared files and copied native _build application trees. Changes cwd but preserves compiled source locations. Rejects symbolic links and shell setup.", configurable = False),
     attr("mix_config", "string", default = "", docs = "Optional package-relative Mix project file. When omitted, tests run through direct ExUnit without requiring a Mix project.", configurable = False),
@@ -3791,7 +3803,7 @@ elixir_test = target_kind(
     attrs = _ELIXIR_TEST_ATTRS,
     deps = [dep("deps", ["elixir_app"], "The test-environment Elixir application under test.")],
     providers = ["struo_test_info"],
-    capabilities = [capability("test", ["default", "test_results", "logs"])],
+    capabilities = [capability("test", ["default", "test_results", "logs"]), capability("test-discovery", ["test_inventory"])],
     tools = _ELIXIR_TOOLS,
     examples = [
         example(

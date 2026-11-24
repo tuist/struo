@@ -70,6 +70,8 @@ uses smaller batches.
 | `config` | list&lt;string&gt; | no | `pyproject.toml`, `pytest.ini`, `conftest.py` | Configuration and collection inputs |
 | `data` | list&lt;string&gt; | no | `[]` | Runtime data inputs read by tests |
 | `args` | list&lt;string&gt; | no | `[]` | Additional pytest arguments |
+| `coverage_per_test` | bool | no | `false` | Run each current case in an isolated process using coverage.py |
+| `coverage_sources` | list&lt;string&gt; | no | `[]` | Product Python source globs to instrument; required with `coverage_per_test` |
 | `env` | map&lt;string, string&gt; | no | `{}` | Explicit test environment variables |
 | `env_inherit` | list&lt;string&gt; | no | `[]` | Host environment variables inherited by name |
 | `batching` | string | no | `file` | Automatic granularity: `file`, `case`, or `target` |
@@ -84,6 +86,23 @@ uses smaller batches.
 
 The target emits `struo_test_info` and exposes `test` with the `default`,
 `test_results`, and `logs` output groups.
+
+It also exposes `test-discovery` with the `test_inventory` output group.
+This uncached action collects the current native node identifiers without
+executing test bodies or using retained test results. Native ignore rules,
+configuration and declared source boundaries still apply. A collection error
+does not publish an inventory.
+
+Set `coverage_per_test = true` and declare product paths in `coverage_sources`
+to collect attributed observations for opt-in approximate selection. The
+chosen interpreter must import both pytest and coverage.py. Collection,
+measurement and evidence assembly bypass the action cache. Every current
+case runs separately; selected runs and skipped or failed cases cannot
+establish complete replacement checkpoints. Starting a subprocess makes
+coverage incomplete because the parent measurement does not cover its work.
+Uninstrumented paths always retain graph-selected work. Test, data,
+configuration, interpreter, collector and environment identities bind the
+coverage history scope.
 
 ## Example
 

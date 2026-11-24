@@ -30,6 +30,25 @@ normalized cases are marked passed when the runner succeeds and unknown
 when it fails. Parameterized examples and native skips are not counted
 individually in the normalized summary.
 
+## Coverage-assisted selection
+
+On Linux, set `coverage_per_test = true` and declare product shell sources
+with `coverage_sources`. Install Python 3, Bash, kcov and strace; `kcov`
+can name an alternate collector executable. Coverage mode declares the
+complete configured invocation as one atomic execution unit. Its aggregate
+profile is never assigned to individual ShellSpec examples.
+
+Collection covers setup, evaluation, assertions and teardown, rather than
+only ShellSpec's default evaluation hook. Fresh native discovery, complete
+JUnit results and an observed instrumented universe are required. Skips,
+failures, missing profiles and external child executions cannot authorize
+exclusion. Bash function evaluations are supported; tests that launch
+external commands conservatively retain graph-selected work.
+
+Use `struo test --coverage-report` to publish observations. Coverage-based
+exclusion still requires `struo query test-plan --coverage-selection`,
+produces an approximate plan, and leaves default graph selection unchanged.
+
 ```sh
 struo query schema shellspec_test
 struo query example shellspec_test shellspec-test-minimal

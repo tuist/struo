@@ -477,6 +477,10 @@ pub fn module_authoring_contract() -> ModuleAuthoringContract {
                 "Declare a deterministic workspace tree digest action that automatically hashes its root.",
             ),
             entry(
+                "merge_test_coverage(target, inventory, results, output, *, partial = False)",
+                "Merge freshly measured single-unit normalized results against a current inventory, preserving instrumented zero-hit files and attributing positive hits only to their exact units. The bounded merge is uncached and preserves failed execution verdicts.",
+            ),
+            entry(
                 "write_archive(entries, output, sha256_output = None, format = \"tar\", inputs = [], identifier = None, cacheable = True, uncompressed_sha256_output = None, *, display_name = None, source_files = [], presentation = None)",
                 "Declare a deterministic archive from explicit file, directory, tree, and symlink entries with fixed metadata. Format tar.gz compresses with a fixed gzip header; sha256_output then digests the compressed bytes and uncompressed_sha256_output the tar.",
             ),

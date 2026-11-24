@@ -111,7 +111,8 @@ pub use test_plan::{
     TEST_SELECTION_SCHEMA,
 };
 pub use test_results::{
-    validate_test_results, validate_test_results_for_units, TEST_RESULTS_SCHEMA,
+    merge_test_coverage, validate_test_results, validate_test_results_for_units,
+    TEST_RESULTS_SCHEMA,
 };
 pub use test_schedule::{
     TestBatchAttempt, TestBatchAttemptSpec, TestBatchStatus, TestSchedule, TestTimingStore,

@@ -1,0 +1,27 @@
+[[target]]
+name = "NxTests"
+kind = "nx_test"
+srcs = ["packages/native/**/*"]
+
+[target.attrs]
+project = "native"
+task = "test"
+runnable = true
+commands = ["jest"]
+command_cwd = "packages/native"
+coverage_per_test = true
+coverage_sources = ["packages/native/product.cjs", "packages/native/unused.cjs"]
+
+[[target]]
+name = "TurboTests"
+kind = "turbo_test"
+srcs = ["packages/native/**/*"]
+
+[target.attrs]
+package = "native"
+task = "test"
+command = "node ../../node_modules/vitest/vitest.mjs run --globals"
+package_dir = "packages/native"
+source_dirs = ["packages/native"]
+coverage_per_test = true
+coverage_sources = ["packages/native/product.cjs", "packages/native/unused.cjs"]

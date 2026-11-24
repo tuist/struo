@@ -32,6 +32,8 @@ the empty list to include every task Nx reports.
 | `targets` | list&lt;string&gt; | no | `["build", "test", "lint"]` | Nx task names to emit with their transitive task dependencies; empty list includes every task |
 | `resolver_inputs` | list&lt;string&gt; | no | `srcs` | Text inputs available while deriving the graph |
 | `graph_file` | string | no |  | Optional workspace-relative Nx project-graph JSON snapshot; include external package nodes for plugin execution. Struo reads it directly instead of invoking Nx |
+| `coverage_per_test` | bool | no | `false` | Forward isolated coverage opt-in to generated test targets running one native Jest or Vitest command |
+| `coverage_sources` | list&lt;string&gt; | no | `[]` | Product source globs forwarded to coverage-enabled test targets |
 | `_default_test_roots` | list&lt;string&gt; | no | `[]` | Resolver-owned application and library test names selected by targetless `struo test` |
 
 ## Providers

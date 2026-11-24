@@ -87,6 +87,8 @@ pub(super) struct TestPlanQueryArgs {
     pub(super) changed_paths: Vec<String>,
     #[serde(default)]
     pub(super) target: Option<String>,
+    #[serde(default)]
+    pub(super) coverage_selection: bool,
 }
 
 #[derive(Deserialize, Default)]

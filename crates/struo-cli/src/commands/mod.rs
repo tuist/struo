@@ -22,6 +22,7 @@ pub mod runtime;
 pub mod sound_seed;
 pub mod surface;
 pub mod swift;
+pub(crate) mod test_coverage;
 pub mod test_schedule;
 pub mod toolchain;
 pub mod triggers;

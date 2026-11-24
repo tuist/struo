@@ -59,6 +59,16 @@ dependencies outside that list remain ordinary dependency targets.
 | `test_env` | map&lt;string, string&gt; | no | `{}` | Environment variables applied to generated tests after inherited variables |
 | `test_env_inherit` | list&lt;string&gt; | no | `[]` | Host environment variable names explicitly inherited by generated tests |
 | `test_cacheable` | bool | no | `true` | Cache successful generated test results; disable for tests depending on undeclared host tools or configuration |
+| `coverage_per_test` | bool | no | `false` | Instrument first-party products and enable isolated coverage on generated tests with declared product sources |
+| `coverage_sources` | list&lt;string&gt; | no | `[]` | Product Rust source globs forwarded to generated test targets |
+| `llvm_cov` | string | no | compiler llvm-tools | Compiler-matching coverage exporter |
+| `llvm_profdata` | string | no | compiler llvm-tools | Compiler-matching profile merger |
+
+Coverage selection is opt-in and approximate. Keep product dependency sources
+separate from test-registration inputs. A generated test's own crate sources
+remain compatibility inputs, including product code declared beside its tests.
+Changing those files retains work rather than assuming that coverage can prove
+test registration unchanged. See [coverage selection](/guide/graph/testing#coverage-assisted-selection).
 
 ## Providers
 

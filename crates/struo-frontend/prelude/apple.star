@@ -1351,6 +1351,8 @@ def _apple_ui_test_install_script(xcrun, bundle_id, app_path):
 
 def _shellspec_test_impl(ctx):
     attrs = ctx["attr"]
+    if attrs.get("coverage_per_test"):
+        return _shellspec_coverage_impl(ctx)
     shellspec = attrs.get("shellspec") or "shellspec"
     args = attrs.get("args") or []
     env = attrs.get("env") or {}
@@ -2574,6 +2576,8 @@ def _apple_library_impl(ctx):
                     if language != "c++" and flag.startswith("-std=c++"):
                         continue
                     argv.append(flag)
+                if "-fcoverage-mapping" in argv:
+                    argv.append("-fcoverage-compilation-dir=.")
                 argv.append(src)
                 inputs = [src]
                 for h in own_exported_headers:
@@ -3661,9 +3665,11 @@ def _apple_xctestrun(module_name, test_bundle_path, host_application, xctest_fra
         "host_settings": "",
         "host_environment": "",
     }
+    test_env = dict(test_env)
     if host_application:
         values["host_settings"] = "<key>IsAppHostedTestBundle</key><true/><key>TestHostBundleIdentifier</key><string>" + _xml_escape(host_application.get("bundle_id") or "") + "</string>"
-        values["host_environment"] = "<key>DYLD_INSERT_LIBRARIES</key><string>" + _xml_escape(xctest_usr_lib_dir + "/libXCTestBundleInject.dylib") + "</string><key>XCInjectBundleInto</key><string>" + _xml_escape(workspace_root() + "/" + host_application["app_executable"]) + "</string>"
+        test_env["DYLD_INSERT_LIBRARIES"] = xctest_usr_lib_dir + "/libXCTestBundleInject.dylib" + ((":" + test_env["DYLD_INSERT_LIBRARIES"]) if test_env.get("DYLD_INSERT_LIBRARIES") else "")
+        values["host_environment"] = "<key>XCInjectBundleInto</key><string>" + _xml_escape(workspace_root() + "/" + host_application["app_executable"]) + "</string>"
     environment_entries = []
     for key in sorted(test_env.keys()):
         environment_entries.append("      <key>" + _xml_escape(key) + "</key><string>" + _xml_escape(test_env[key]) + "</string>")
@@ -5457,6 +5463,8 @@ def _apple_application_impl(ctx):
                 if language != "c++" and language != "objective-c++" and flag.startswith("-std=c++"):
                     continue
                 argv.append(flag)
+            if "-fcoverage-mapping" in argv:
+                argv.append("-fcoverage-compilation-dir=.")
             argv.append(src)
 
             inputs = [src]
@@ -5932,6 +5940,12 @@ def _apple_test_bundle_impl(ctx):
     swift_flags = attrs.get("swift_flags") or []
     clang_flags = attrs.get("clang_flags") or []
     per_source_clang_flags = attrs.get("per_source_clang_flags") or {}
+    coverage = attrs.get("coverage_per_test") or False
+    if coverage:
+        swift_flags = swift_flags + ["-profile-generate", "-profile-coverage-mapping"]
+        clang_flags = clang_flags + ["-fprofile-instr-generate", "-fcoverage-mapping"]
+    if ctx["capability"] == "test-discovery" and not coverage:
+        fail("Apple test discovery requires coverage_per_test")
     defines = attrs.get("defines") or []
     swift_defines = _unique(defines + (attrs.get("swift_defines") or []))
     clang_defines = _unique(defines + (attrs.get("clang_defines") or []))
@@ -5950,7 +5964,7 @@ def _apple_test_bundle_impl(ctx):
     private_header_files = _unique((attrs.get("private_headers") or []) + _apple_header_inputs(ctx, private_header_dirs))
     swift_testing = attrs.get("swift_testing") or False
     ui_testing = attrs.get("ui_testing") or False
-    test_env = attrs.get("test_env") or {}
+    test_env = dict(attrs.get("test_env") or {})
     test_arguments = attrs.get("test_arguments") or []
     skipped_tests = attrs.get("skipped_tests") or []
     labels = attrs.get("labels") or []
@@ -5989,6 +6003,15 @@ def _apple_test_bundle_impl(ctx):
     triple = _apple_triple(platform, target_sdk_version, sdk_variant, arch, False)
     for key in swiftc["env"]:
         action_env[key] = swiftc["env"][key]
+    coverage_hook = ""
+    if coverage:
+        coverage_hook = ctx["build_dir"] + "/coverage/process_hook.dylib"
+        coverage_dir = workspace_root() + "/" + test_dir + "/coverage"
+        inserted = ((test_env.get("DYLD_INSERT_LIBRARIES") + ":") if test_env.get("DYLD_INSERT_LIBRARIES") else "") + workspace_root() + "/" + coverage_hook
+        test_env.update({"LLVM_PROFILE_FILE":coverage_dir + "/%p.profraw", "DYLD_INSERT_LIBRARIES":inserted,
+            "STRUO_COVERAGE_LOADED":coverage_dir + "/loaded", "STRUO_COVERAGE_CHILD":coverage_dir + "/children"})
+        if ctx["capability"] == "test":
+            _apple_coverage_hook_action(ctx, _resolve_clang(platform, sdk_variant, xcode_developer_dir), _resolve_codesign(xcode_developer_dir), triple)
 
     # XCTest lives in the platform's developer-frameworks tree, not the
     # SDK's default search path. With a developer dir we resolve it
@@ -6117,6 +6140,9 @@ def _apple_test_bundle_impl(ctx):
         "affected_inputs": affected_inputs,
         "test_info": _apple_test_info(ctx, runner_type, command_argv, action_env, labels, results, log, native_results),
     }
+    coverage_tools = None
+    if coverage:
+        coverage_tools = _apple_coverage_configuration(ctx, provider, swiftc, _file_globs(attrs.get("coverage_sources") or []), affected_inputs)
 
     link_tool = swiftc
     if swift_srcs:
@@ -6125,6 +6151,8 @@ def _apple_test_bundle_impl(ctx):
         link_tool = _resolve_clang(platform, sdk_variant, xcode_developer_dir)
         linker = link_tool["clangxx_path"] if cxx_srcs or [src for src in objc_srcs if src.endswith(".mm")] else link_tool["clang_path"]
         swift_argv = [linker, "-isysroot", link_tool["sdk_path"], "-target", triple, "-fobjc-link-runtime"]
+        if coverage:
+            swift_argv.append("-fprofile-instr-generate")
     swift_argv.extend([
         "-Xlinker",
         "-bundle",
@@ -6293,6 +6321,8 @@ def _apple_test_bundle_impl(ctx):
                 if language != "c++" and language != "objective-c++" and flag.startswith("-std=c++"):
                     continue
                 argv.append(flag)
+            if "-fcoverage-mapping" in argv:
+                argv.append("-fcoverage-compilation-dir=.")
             argv.append(src)
 
             inputs = [src]
@@ -6537,9 +6567,17 @@ def _apple_test_bundle_impl(ctx):
         )
         runner_files.append(runner_cs_stamp)
 
+    if coverage and ctx["capability"] in ["test", "test-discovery"]:
+        inventory = provider["test_inventory"]
+        run_action(argv = [coverage_tools["python"], "-c", "import json,pathlib,sys;pathlib.Path(sys.argv[1]).resolve(strict=True);pathlib.Path(sys.argv[2]).write_text(json.dumps({'schema':'struo.test_inventory.v1','target':sys.argv[3],'units':[sys.argv[3]+'::invocation']}))", test_binary, inventory, ctx["label"]["id"]],
+            inputs = [test_binary], outputs = [inventory], create_dirs = [test_dir], cacheable = False, identifier = ctx["label"]["id"] + ":coverage-discovery")
     if ctx["capability"] == "test":
         cases_file = test_dir + "/cases.jsonl"
         case_filters = (ctx.get("test") or {}).get("filters") or []
+        if coverage and case_filters:
+            if case_filters != [ctx["label"]["id"] + "::invocation"]:
+                fail("coverage_per_test accepts only the complete Apple invocation unit")
+            case_filters = []
         selector_prefix = ctx["label"]["id"] + "::"
         selectors = []
         for case_filter in case_filters:
@@ -6639,6 +6677,12 @@ SIMCTL_CHILD_DYLD_LIBRARY_PATH={usr_lib} SIMCTL_CHILD_DYLD_FALLBACK_FRAMEWORK_PA
             )
         else:
             fail(ctx["label"]["id"] + ": apple_test_bundle execution supports macos and simulator targets; device runners need xctestrun support")
+        if coverage:
+            coverage_keys = ["LLVM_PROFILE_FILE", "DYLD_INSERT_LIBRARIES", "STRUO_COVERAGE_LOADED", "STRUO_COVERAGE_CHILD"]
+            if sdk_variant == "simulator" and platform not in ["macos", "macosx"] and not host_application:
+                runner_command = "\n".join(["export SIMCTL_CHILD_" + key + "=" + _shell_literal(test_env[key]) for key in coverage_keys]) + "\n" + runner_command
+            elif not xctestrun_file:
+                runner_command = "\n".join(["export " + key + "=" + _shell_literal(test_env[key]) for key in coverage_keys]) + "\n" + runner_command
         script = """set -eu
 mkdir -p "$HOME"
 log={log}
@@ -6677,6 +6721,8 @@ exit "$status"
             ),
         )
         test_inputs = [test_binary, info_plist, test_cs_stamp]
+        if coverage:
+            test_inputs.append(coverage_hook)
         test_inputs.extend(test_tool_files)
         test_inputs.extend(resource_files)
         test_inputs.extend(asset_files)
@@ -6698,6 +6744,8 @@ exit "$status"
             argv = [host_which("sh"), "-c", script],
             inputs = test_inputs,
             outputs = [test_dir],
+            clean_paths = [test_dir + "/coverage"] if coverage else [],
+            create_dirs = [test_dir + "/coverage"] if coverage else [],
             env = action_env,
             # Test runners are always re-run: their outcome depends on
             # simulator state, network availability, and other runtime
@@ -6707,6 +6755,8 @@ exit "$status"
             toolchain_identity = "struo.apple." + runner_type + ".runner.v2\x00" + swiftc["identity"],
             identifier = "apple_" + runner_type + ":" + ctx["label"]["id"],
         )
+        if coverage:
+            _apple_coverage_finish(ctx, coverage_tools, test_binary, results, native_results, coverage_hook)
 
     return provider
 
@@ -8048,6 +8098,8 @@ apple_test_bundle = target_kind(
     docs = "Builds Apple test targets and can run Swift Testing tests through the generic Struo test capability.",
     impl = _apple_test_bundle_impl,
     attrs = [
+        attr("coverage_per_test", "bool", default = "false", docs = "Measure the complete bundle invocation as one atomic LLVM coverage unit.", configurable = False),
+        attr("coverage_sources", "list<string>", default = "[]", docs = "Instrumented product source globs, separate from test registration sources.", configurable = False),
         attr("prepackage_actions", "list<string>", default = "[]", docs = "Ordered serialized scripts run after linking and before resource packaging.", configurable = False),
         attr("postbuild_actions", "list<string>", default = "[]", docs = "Ordered serialized scripts run after product assembly and before final signing. Undeclared side effects require cache bypass.", configurable = False),
         attr("platform", "string", required = True, docs = "Apple platform for the tests", configurable = False),
@@ -8101,6 +8153,7 @@ apple_test_bundle = target_kind(
     capabilities = [
         capability("build", ["default", "bundle", "dsyms"]),
         capability("test", ["default", "test_results", "coverage"]),
+        capability("test-discovery", ["test_inventory"]),
     ],
     examples = [
         example(
@@ -8114,6 +8167,9 @@ apple_test_bundle = target_kind(
 shellspec_test = target_kind(
     docs = "Runs ShellSpec files through the generic Struo test capability and emits normalized struo.test_results.v1 results.",
     attrs = [
+        attr("coverage_per_test", "bool", default = "false", docs = "Measure the complete Bash invocation as one atomic coverage unit on Linux. External child executions retain graph selection.", configurable = False),
+        attr("coverage_sources", "list<string>", default = "[]", docs = "Product shell source globs to instrument, required for coverage_per_test.", configurable = False),
+        attr("kcov", "string", default = "kcov", docs = "kcov executable used for opt-in Bash coverage.", configurable = False),
         attr("shellspec", "string", default = "shellspec", docs = "ShellSpec executable to invoke"),
         attr("args", "list<string>", default = "[]", docs = "Additional arguments passed to ShellSpec"),
         attr("env", "map<string,string>", default = "{}", docs = "Environment variables passed to the ShellSpec process"),
@@ -8127,6 +8183,7 @@ shellspec_test = target_kind(
     providers = ["struo_test_info"],
     capabilities = [
         capability("test", ["default", "test_results", "logs"]),
+        capability("test-discovery", ["default"]),
     ],
     examples = [
         example(

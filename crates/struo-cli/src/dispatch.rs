@@ -341,6 +341,7 @@ async fn run_command(
             sandbox,
             config,
             jobs,
+            coverage_report,
             shard_plan,
             shard_index,
             shard_attempt,
@@ -380,6 +381,7 @@ async fn run_command(
                     target,
                     sandbox,
                     jobs,
+                    coverage_report,
                     portable: plan.map(|path| commands::test_schedule::portable::Invocation {
                         path,
                         external_group,
@@ -401,7 +403,14 @@ async fn run_command(
         }
         Cmd::Toolchain { cmd } => run_toolchain_command(workspace, output, cmd).await,
         Cmd::Query { expression, cmd } => {
-            run_query_command(workspace, output, expression.as_deref(), cmd).await
+            run_query_command(
+                workspace,
+                output,
+                expression.as_deref(),
+                cmd,
+                resource_limits.clone(),
+            )
+            .await
         }
         Cmd::Edit { cmd } => run_edit_command(workspace, output, cmd).await,
         Cmd::Runtime { cmd } => run_runtime_command(workspace, output, cmd).await,
@@ -532,6 +541,7 @@ struct TestDispatchArgs {
     target: Option<String>,
     sandbox: SandboxMode,
     jobs: Option<usize>,
+    coverage_report: bool,
     portable: Option<commands::test_schedule::portable::Invocation>,
     batches: Vec<String>,
     internal_test_batch: bool,
@@ -601,6 +611,7 @@ async fn dispatch_test(workspace: &Path, xdg: &Xdg, args: TestDispatchArgs) -> R
         && args.jobs.is_none()
         && args.test_unit.is_none()
         && args.test_batch.is_none()
+        && !args.coverage_report
     {
         let target = resolve_required_target(workspace, args.target)?;
         let cache = crate::cache_provider::resolve(workspace, xdg)?;
@@ -666,6 +677,18 @@ async fn dispatch_test(workspace: &Path, xdg: &Xdg, args: TestDispatchArgs) -> R
             plan
         }
     };
+    if args.coverage_report {
+        return Box::pin(commands::test_coverage::run(
+            workspace,
+            graph,
+            args.output,
+            plan,
+            args.jobs,
+            args.sandbox,
+            args.resource_limits,
+        ))
+        .await;
+    }
     Box::pin(commands::test_schedule::run(
         workspace,
         Some(graph),
@@ -699,6 +722,7 @@ async fn run_query_command(
     output: Output,
     expression: Option<&str>,
     command: Option<cli::QueryCmd>,
+    resource_limits: ResourceLimits,
 ) -> Result<ExitCode> {
     match command {
         Some(cli::QueryCmd::Workspace) => commands::query::workspace(workspace, output)
@@ -792,6 +816,7 @@ async fn run_query_command(
         Some(cli::QueryCmd::TestPlan {
             changed_paths,
             target,
+            coverage_selection,
             shards,
             reference,
         }) => {
@@ -803,13 +828,22 @@ async fn run_query_command(
                     target.as_deref(),
                     shards,
                     reference,
+                    coverage_selection,
+                    resource_limits,
                 )
                 .await
                 .map(|()| ExitCode::SUCCESS);
             }
-            commands::query::test_plan_request(workspace, output, &changed_paths, target.as_deref())
-                .await
-                .map(|()| ExitCode::SUCCESS)
+            commands::query::test_plan_request(
+                workspace,
+                output,
+                &changed_paths,
+                target.as_deref(),
+                coverage_selection,
+                resource_limits,
+            )
+            .await
+            .map(|()| ExitCode::SUCCESS)
         }
         Some(cli::QueryCmd::TestResults {
             target,

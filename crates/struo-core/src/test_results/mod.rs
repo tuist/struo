@@ -3,6 +3,11 @@ use std::collections::BTreeSet;
 use anyhow::{bail, ensure, Context, Result};
 use serde_json::{Map, Value};
 
+mod coverage;
+mod coverage_io;
+pub use coverage::merge_test_coverage;
+pub(crate) use coverage_io::merge_files;
+
 pub const TEST_RESULTS_SCHEMA: &str = "struo.test_results.v1";
 
 pub fn validate_test_results(value: &Value, expected_target: &str) -> Result<()> {

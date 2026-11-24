@@ -42,17 +42,8 @@ run_action(["tool"], presentation = {"platforms": [{"scheme": "custom", "id": "t
 fn ecosystem_helpers_keep_native_identity_and_version_semantics() {
     let tmp = TempDir::new().unwrap();
     let source = format!(
-        "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
-        include_str!("../../../prelude/common.star"),
-        include_str!("../../../prelude/rust.star"),
-        include_str!("../../../prelude/elixir.star"),
-        include_str!("../../../prelude/apple_modules.star"),
-        include_str!("../../../prelude/apple_execution.star"),
-        include_str!("../../../prelude/apple_linux.star"),
-        include_str!("../../../prelude/apple_signing.star"),
-        include_str!("../../../prelude/apple_artifacts.star"),
-        include_str!("../../../prelude/apple_build_tools.star"),
-        include_str!("../../../prelude/apple.star"),
+        "{}\n{}",
+        crate::modules::built_in_module_source(),
         r#"
 rust = {"attr": {"package_name": "serde", "version": "1.0", "source": "git+https://example.invalid/repo#abcdef"}, "label": {"name": "serde-1.0"}}
 run_action(["tool"], presentation = _rust_action_metadata(rust, "aarch64-linux-android", "build-tool"))

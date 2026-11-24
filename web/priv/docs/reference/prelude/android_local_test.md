@@ -38,11 +38,28 @@ Android resource tests also need the linked test resource package, its matching
 runtime R classes, and the runner configuration as declared inputs. A static
 library's unassigned resource IDs are not a substitute for linked runtime IDs.
 
+## Coverage-assisted Selection
+
+Host-side tests support the same isolated JaCoCo collector as
+[`kotlin_jvm_test`](/reference/prelude/kotlin_jvm_test#coverage-assisted-selection).
+Set `coverage_per_test = true`, declare product `coverage_sources`, and provide
+matching package-relative `jacoco_agent` and `jacoco_cli` JARs. The initial
+collector requires Linux, Python 3 and strace. Struo discovers current units,
+measures each exact invocation, and preserves zero-hit class-file sources.
+Subprocesses, extra reported cases, missing instrumentation and unsuccessful
+observations cannot establish complete checkpoints. Coverage measurements
+bypass execution caching. This host collector does not collect device
+instrumentation coverage.
+
 ## Attributes
 
 | Attribute | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `test_framework` | string | no | `reflection` | `reflection` for convention-based methods or `junit4` for native lifecycle and runner dispatch |
+| `coverage_per_test` | bool | no | `false` | Measure each exact host execution unit with JaCoCo |
+| `coverage_sources` | list&lt;string&gt; | no | `[]` | Product Java or Kotlin source globs required in the class-file universe |
+| `jacoco_agent` | string | no | empty | Package-relative JaCoCo runtime agent JAR |
+| `jacoco_cli` | string | no | empty | Package-relative matching JaCoCo command-line JAR |
 | `compile_sdk` | int | no | highest installed | Android Software Development Kit platform level used for `android.jar` |
 | `build_tools_version` | string | no | highest installed | Android Software Development Kit build-tools version |
 | `android_sdk` | string | no | env | Android Software Development Kit root, otherwise `ANDROID_HOME` or `ANDROID_SDK_ROOT` |

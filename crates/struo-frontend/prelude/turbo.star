@@ -248,6 +248,9 @@ def _turbo_workspace_resolver(ctx):
     workspace_outputs = sorted(_unique(workspace_outputs))
     for target in targets:
         target["attrs"]["workspace_outputs"] = workspace_outputs
+        if target["kind"] == "turbo_test" and _turbo_attr(ctx, "coverage_per_test", False):
+            target["attrs"]["coverage_per_test"] = True
+            target["attrs"]["coverage_sources"] = _turbo_attr(ctx, "coverage_sources", [])
     return {
         "targets": targets,
         "roots": [target["name"] for target in targets if target["attrs"]["task"] == "build"],
@@ -483,6 +486,12 @@ def _turbo_task_impl(ctx, is_test = False):
             env[name] = value
     for name, value in _turbo_attr(ctx, "env", {}).items():
         env[name] = value
+    if is_test and _turbo_attr(ctx, "coverage_per_test", False):
+        if outputs:
+            fail("Turborepo coverage requires a native Jest or Vitest command without task outputs")
+        provider.update(_javascript_task_coverage(ctx, command, package_dir or ".", inputs, env, "turbo_test"))
+        provider["artifact_inputs"] = dependency_artifacts
+        return provider
     node_version = host_command([node, "--version"]).strip()
 
     snapshot = declare_output("turbo-outputs") if outputs and cacheable else None
@@ -552,6 +561,8 @@ turbo_workspace = target_kind(
         attr("targets", "list<string>", default = "[\"build\", \"test\", \"lint\"]", docs = "Turborepo task names to emit, together with the tasks they depend on. Names that no package defines are skipped. Defaults to build, test, and lint. Set an empty list to include every task.", configurable = False),
         attr("resolver_inputs", "list<string>", default = "[]", docs = "Package-relative text globs supplied to native integration resolution. Defaults to srcs when empty.", configurable = False),
         attr("graph_file", "string", default = "\"\"", docs = "Optional workspace-relative path to a checked-in graph snapshot: a JSON object whose `packages` holds the items of `turbo query` packages (with `name`, `path`, and `allDependencies`) and whose `dry` holds the output of `turbo run --dry=json`. Struo reads it directly instead of invoking turbo.", configurable = False),
+        attr("coverage_per_test", "bool", default = "false", docs = "Forward isolated coverage opt-in to generated native Jest or Vitest test command targets.", configurable = False),
+        attr("coverage_sources", "list<string>", default = "[]", docs = "Product source globs forwarded to generated coverage-enabled test targets.", configurable = False),
         attr("_default_test_roots", "list<string>", default = "[]", docs = "Resolver-owned first-party test target names for targetless test selection.", configurable = False),
     ],
     resolver = _turbo_workspace_resolver,
@@ -607,10 +618,13 @@ turbo_task = target_kind(
 
 turbo_test = target_kind(
     docs = "One Turborepo test task, executed as a cacheable target-level suite with normalized results and logs.",
-    attrs = _turbo_task_attrs(),
+    attrs = _turbo_task_attrs() + [
+        attr("coverage_per_test", "bool", default = "false", docs = "Discover and isolate native cases for a single Jest or Vitest package script.", configurable = False),
+        attr("coverage_sources", "list<string>", default = "[]", docs = "Product JavaScript or TypeScript source globs to instrument.", configurable = False),
+    ],
     deps = [dep("deps", ["turbo_task"], "Prerequisite Turborepo tasks built before the test suite.")],
     providers = ["turbo_task", "struo_test_info"],
-    capabilities = [capability("build", []), capability("test", ["default", "test_results", "logs"])],
+    capabilities = [capability("build", []), capability("test", ["default", "test_results", "logs"]), capability("test-discovery", ["test_inventory"])],
     tools = [_TURBO_NODE_TOOL],
     examples = [example("turbo-test", name = "Turborepo test suite", use_when = "Run one Turborepo test script as a cacheable suite with normalized results.")],
     impl = _turbo_test_impl,

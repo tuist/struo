@@ -74,6 +74,25 @@ when it runs anywhere other than macOS.
 On macOS, XCTest bundles honor `skipped_tests` and exact case filters through
 the Xcode harness's native selection arguments.
 
+## Coverage-assisted Selection
+
+Set `coverage_per_test = true` and declare `coverage_sources` as product source
+globs, separate from the bundle's test registration sources. Instrument those
+product dependencies with Swift's `-profile-generate -profile-coverage-mapping`
+or Clang's `-fprofile-instr-generate -fcoverage-mapping` flags. The test bundle
+itself is instrumented automatically. Python 3 and Xcode's LLVM tools convert
+the profile to normalized observations.
+
+This mode declares the complete bundle invocation as one atomic unit named
+`<target>::invocation`. Fresh discovery builds the bundle without running its
+tests. Coverage belongs to that invocation, never to each native case inside
+it. Exact requests accept only the complete invocation unit. A skipped,
+unknown or failed case, missing profile, uninstrumented declared product source
+or observed child process makes the observation incomplete and retains graph
+selection. A process hook must load exactly once; runners that prevent loading
+it cannot establish complete evidence. Device and multiprocess interface-test
+execution cannot currently establish complete observations.
+
 ## Attributes
 
 `explicit_modules` is a boolean, defaulting to `false`, that enables

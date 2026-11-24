@@ -351,7 +351,7 @@ def _go_common_build_args(ctx, module):
     profile = _go_attr(ctx, "pgoprofile", "")
     if profile:
         args.append("-pgo=" + _go_relative_to_module(module, _package_relative(ctx, profile)))
-    if _go_attr(ctx, "coverage", False) or _go_attr(ctx, "coverage_enabled", False):
+    if _go_attr(ctx, "coverage", False) or _go_attr(ctx, "coverage_enabled", False) or _go_attr(ctx, "coverage_per_test", False):
         args.append("-cover")
         mode = _go_attr(ctx, "coverage_mode", "")
         if mode:
@@ -613,13 +613,17 @@ def _go_test_runner_source():
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"math"
+	"runtime"
+	"strconv"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -674,9 +678,12 @@ type report struct {
 	Summary summary `json:"summary"`
 	Cases []testCase `json:"cases"`
 	Artifacts map[string][]string `json:"artifacts"`
+	Coverage map[string]any `json:"coverage,omitempty"`
+	CoverageEvidence map[string]any `json:"coverage_evidence,omitempty"`
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--struo-trace-probe" { return }
 	if len(os.Args) < 9 {
 		fmt.Fprintln(os.Stderr, "usage: struo-go-test-runner <go> <package> <binary> <results> <log> <native-results> <coverage> <target> [--struo-rundir dir] [--struo-filter name]... -- [args...]")
 		os.Exit(2)
@@ -685,6 +692,14 @@ func main() {
 	results, logPath, nativePath := os.Args[4], os.Args[5], os.Args[6]
 	coverage, target := os.Args[7], os.Args[8]
 	filters, runDir, testArgs := parseArgs(os.Args[9:])
+	isolateCoverage := coverage != "" && os.Getenv("STRUO_GO_COVERAGE_PER_TEST") == "1"
+	for _, name := range filters {
+		if strings.HasPrefix(name, "Benchmark") { isolateCoverage = false }
+	}
+	for _, arg := range testArgs {
+		flag := strings.TrimLeft(arg, "-")
+		if flag == "test.bench" || strings.HasPrefix(flag, "test.bench=") { isolateCoverage = false }
+	}
 	for _, path := range []string{results, logPath, nativePath, coverage} {
 		if path != "" {
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -694,7 +709,23 @@ func main() {
 		}
 	}
 	absBinary, _ := filepath.Abs(binary)
-	listed := listTests(absBinary, runDir)
+	listed, listingErr := listTests(absBinary, runDir)
+	if listingErr != nil && (os.Getenv("STRUO_GO_DISCOVER") == "1" || isolateCoverage) {
+		fmt.Fprintln(os.Stderr, "native test listing failed:", listingErr)
+		os.Exit(2)
+	}
+	if os.Getenv("STRUO_GO_DISCOVER") == "1" {
+		units := []string{}
+		for _, name := range listed { units = append(units, target+"::"+name) }
+		data, err := json.Marshal(map[string]any{"schema": "struo.test_inventory.v1", "target": target, "units": units})
+		if err != nil { panic(err) }
+		if err := os.WriteFile(results, data, 0o644); err != nil { panic(err) }
+		return
+	}
+	if isolateCoverage {
+		runIsolated(goTool, packagePath, absBinary, results, logPath, nativePath, coverage, target, listed, filters, runDir, testArgs)
+		return
+	}
 	available := map[string]bool{}
 	for _, name := range listed {
 		available[name] = true
@@ -716,13 +747,13 @@ func main() {
 			runArgs = append(runArgs, "-test.bench="+exactPattern(benchmarks))
 		}
 	}
-	commandArgs := []string{"tool", "test2json", "-p", packagePath, absBinary}
-	commandArgs = append(commandArgs, runArgs...)
-	command := exec.Command(goTool, commandArgs...)
-	if runDir != "" {
-		command.Dir = runDir
+	native, runErr, traced := tracedTest(goTool, packagePath, absBinary, runDir, os.Getenv("STRUO_GO_COVERAGE_TRACE"), runArgs)
+	if !traced {
+		commandArgs := append([]string{"tool", "test2json", "-p", packagePath, absBinary}, runArgs...)
+		command := exec.Command(goTool, commandArgs...)
+		if runDir != "" { command.Dir = runDir }
+		native, runErr = command.CombinedOutput()
 	}
-	native, runErr := command.CombinedOutput()
 	statuses, details, humanLog, packageFailed := parseEvents(native)
 	if len(filters) == 0 {
 		for _, name := range listed {
@@ -764,6 +795,267 @@ func main() {
 	}
 }
 
+func tracedTest(goTool, packagePath, binary, runDir, traceOutput string, runArgs []string) ([]byte, error, bool) {
+	if traceOutput == "" || runtime.GOOS != "linux" { return nil, nil, false }
+	trace, err := exec.LookPath("strace")
+	if err != nil { return nil, nil, false }
+	executable, err := os.Executable()
+	if err != nil { return nil, nil, false }
+	flags := []string{"-I", "1", "-f", "-e", "trace=process", "-e", "raw=execve,execveat", "-o"}
+	probe := exec.Command(trace, append(append([]string{}, flags...), os.DevNull, executable, "--struo-trace-probe")...)
+	probe.Dir = runDir
+	if probe.Run() != nil { return nil, nil, false }
+	file, err := os.Create(traceOutput)
+	if err != nil { return nil, nil, false }
+	defer file.Close()
+	reader, writer, err := os.Pipe()
+	if err != nil { return nil, nil, false }
+	defer reader.Close()
+	args := append(append([]string{}, flags...), "/dev/fd/3", binary)
+	command := exec.Command(trace, append(args, runArgs...)...)
+	command.Dir = runDir
+	command.ExtraFiles = []*os.File{writer}
+	var output bytes.Buffer
+	command.Stdout, command.Stderr = &output, &output
+	if err := command.Start(); err != nil { writer.Close(); return nil, nil, false }
+	writer.Close()
+	scanner := bufio.NewScanner(reader)
+	primary, exitCode, written, complete := "", -1, 0, true
+	for scanner.Scan() {
+		line := scanner.Text()
+		written += len(line) + 1
+		if written <= 16 * 1024 * 1024 {
+			if _, err := fmt.Fprintln(file, line); err != nil { complete = false }
+		} else { complete = false }
+		fields := strings.Fields(line)
+		if len(fields) < 2 { continue }
+		if primary == "" && (strings.Contains(line, "execve(") || strings.Contains(line, "execveat(")) { primary = fields[0] }
+		if fields[0] != primary { continue }
+		if len(fields) == 6 && fields[1] == "+++" && fields[2] == "exited" && fields[3] == "with" {
+			value, err := strconv.Atoi(fields[4])
+			if err != nil { complete = false } else { exitCode = value }
+		} else if strings.Contains(line, "+++ killed by ") {
+			exitCode = 1
+		} else { continue }
+		command.Process.Signal(os.Interrupt)
+		break
+	}
+	if scanner.Err() != nil { complete = false }
+	reader.Close()
+	runErr := command.Wait()
+	if !complete { os.Remove(traceOutput) }
+	if exitCode == 0 { runErr = nil } else if exitCode > 0 { runErr = fmt.Errorf("native test exited with %d", exitCode) }
+	converter := exec.Command(goTool, "tool", "test2json", "-p", packagePath)
+	converter.Stdin = bytes.NewReader(output.Bytes())
+	native, convertErr := converter.CombinedOutput()
+	if runErr == nil { runErr = convertErr }
+	return native, runErr, true
+}
+
+func runIsolated(goTool, packagePath, binary, results, logPath, nativePath, coverage, target string, listed, filters []string, runDir string, testArgs []string) {
+	names := filters
+	if len(names) == 0 {
+		names = listed
+	}
+	executable, err := os.Executable()
+	if err != nil { panic(err) }
+	combined := report{Schema: "struo.test_results.v1", Target: target,
+		Runner: map[string]any{"type": "go_test", "metadata": map[string]any{"package": packagePath}},
+		Status: "passed", Cases: []testCase{},
+		Artifacts: map[string][]string{"logs": {}, "native_results": {}, "coverage": {}}}
+	paths := []string{}
+	indices := map[string]int{}
+	scopes := []map[string]any{}
+	allFiles := map[string]map[int]int64{}
+	blocks := map[string]int64{}
+	mode := ""
+	log, err := os.Create(logPath)
+	if err != nil { panic(err) }
+	defer log.Close()
+	native, err := os.Create(nativePath)
+	if err != nil { panic(err) }
+	defer native.Close()
+	complete := len(names) > 0
+	for index, name := range names {
+		if strings.HasPrefix(name, "Benchmark") { complete = false; continue }
+		directory := filepath.Join(filepath.Dir(results), fmt.Sprintf("coverage-case-%d", index))
+		childResults, childLog := filepath.Join(directory, "results.json"), filepath.Join(directory, "test.log")
+		childNative, childCoverage := filepath.Join(directory, "native.jsonl"), filepath.Join(directory, "coverage.out")
+		if err := os.Remove(childCoverage); err != nil && !os.IsNotExist(err) {
+			complete = false
+			combined.Status = "failed"
+			continue
+		}
+		processTrace, _ := filepath.Abs(filepath.Join(directory, "processes"))
+		if err := os.Remove(processTrace); err != nil && !os.IsNotExist(err) {
+			complete = false
+			combined.Status = "failed"
+			continue
+		}
+		args := []string{goTool, packagePath, binary, childResults, childLog, childNative, childCoverage, target, "--struo-filter", name}
+		if runDir != "" { args = append(args, "--struo-rundir", runDir) }
+		args = append(append(args, "--"), testArgs...)
+		command := exec.Command(executable, args...)
+		command.Env = append(os.Environ(), "STRUO_GO_COVERAGE_PER_TEST=0", "STRUO_GO_COVERAGE_TRACE="+processTrace)
+		command.Stdout, command.Stderr = os.Stdout, os.Stderr
+		runErr := command.Run()
+		if !singleTestProcess(processTrace) { complete = false }
+		var child report
+		data, readErr := os.ReadFile(childResults)
+		if readErr != nil || json.Unmarshal(data, &child) != nil {
+			complete = false
+			combined.Status = "failed"
+			continue
+		}
+		combined.Cases = append(combined.Cases, child.Cases...)
+		for key, values := range child.Artifacts { combined.Artifacts[key] = append(combined.Artifacts[key], values...) }
+		for _, entry := range []struct{path string; output io.Writer}{{childLog, log}, {childNative, native}} {
+			file, err := os.Open(entry.path)
+			if err == nil { _, err = io.Copy(entry.output, file); file.Close() }
+			if err != nil { complete = false }
+		}
+		profile, err := os.Open(childCoverage)
+		if err == nil {
+			scanner := bufio.NewScanner(profile)
+			if scanner.Scan() { mode = scanner.Text() }
+			for scanner.Scan() {
+				fields := strings.Fields(scanner.Text())
+				if len(fields) != 3 { complete = false; continue }
+				count, err := strconv.ParseInt(fields[2], 10, 64)
+				if err != nil { complete = false; continue }
+				blocks[fields[0]+" "+fields[1]] += count
+			}
+			if scanner.Err() != nil { complete = false }
+			profile.Close()
+		} else { complete = false }
+		if runErr != nil || child.Status != "passed" { combined.Status = "failed"; complete = false; continue }
+		if len(child.Cases) != 1 || child.Cases[0].ID != target+"::"+name || child.Cases[0].Status != "passed" {
+			complete = false
+			continue
+		}
+		events, err := os.ReadFile(childNative)
+		if err != nil { complete = false; continue }
+		observed, _, _, _ := parseEvents(events)
+		if observed[name] != "passed" { complete = false; continue }
+		files, err := readCoverage(childCoverage, os.Getenv("STRUO_GO_MODULE_ROOT"))
+		if err != nil || len(files) == 0 { complete = false; continue }
+		fileIndices := []int{}
+		coveredPaths := make([]string, 0, len(files))
+		for path := range files { coveredPaths = append(coveredPaths, path) }
+		sort.Strings(coveredPaths)
+		for _, path := range coveredPaths {
+			lines := files[path]
+			if allFiles[path] == nil { allFiles[path] = map[int]int64{} }
+			covered := false
+			for line, count := range lines {
+				allFiles[path][line] += count
+				covered = covered || count > 0
+			}
+			if !covered { continue }
+			position, ok := indices[path]
+			if !ok { position = len(paths); indices[path] = position; paths = append(paths, path) }
+			fileIndices = append(fileIndices, position)
+		}
+		scopes = append(scopes, map[string]any{"kind": "test", "module": target, "suite": "", "name": target+"::"+name, "files": fileIndices})
+	}
+	for _, c := range combined.Cases {
+		combined.Summary.Total++
+		switch c.Status { case "passed": combined.Summary.Passed++; case "failed": combined.Summary.Failed++; case "skipped": combined.Summary.Skipped++ }
+	}
+	files := []map[string]any{}
+	filePaths := make([]string, 0, len(allFiles))
+	for path := range allFiles { filePaths = append(filePaths, path) }
+	sort.Strings(filePaths)
+	for _, path := range filePaths {
+		lineNumbers := []int{}
+		for line := range allFiles[path] { lineNumbers = append(lineNumbers, line) }
+		sort.Ints(lineNumbers)
+		counts, covered := []int64{}, 0
+		for _, line := range lineNumbers {
+			count := allFiles[path][line]; counts = append(counts, count)
+			if count > 0 { covered++ }
+		}
+		files = append(files, map[string]any{"path": path, "targets": []string{target}, "covered_lines": covered, "executable_lines": len(lineNumbers), "line_numbers": lineNumbers, "execution_counts": counts, "functions": []any{}})
+	}
+	combined.Coverage = map[string]any{"tool": "go-cover", "tool_version": runtime.Version(), "platform": runtime.GOOS+"/"+runtime.GOARCH, "partial": !complete || len(filters) > 0, "files": files}
+	status := "collected"
+	if !complete { status = "failed"; scopes = []map[string]any{} }
+	combined.CoverageEvidence = map[string]any{"paths": paths, "scopes": scopes, "status": status}
+	profile, err := os.Create(coverage)
+	if err != nil { panic(err) }
+	fmt.Fprintln(profile, mode)
+	blockNames := make([]string, 0, len(blocks))
+	for block := range blocks { blockNames = append(blockNames, block) }
+	sort.Strings(blockNames)
+	for _, block := range blockNames {
+		count := blocks[block]
+		if mode == "mode: set" && count > 0 { count = 1 }
+		fmt.Fprintf(profile, "%s %d\n", block, count)
+	}
+	if err := profile.Close(); err != nil { panic(err) }
+	encoded, err := json.Marshal(combined)
+	if err != nil { panic(err) }
+	if err := os.WriteFile(results, encoded, 0o644); err != nil { panic(err) }
+	if combined.Status != "passed" { os.Exit(1) }
+}
+
+func singleTestProcess(path string) bool {
+	file, err := os.Open(path)
+	if err != nil { return false }
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.Size() > 16 * 1024 * 1024 { return false }
+	scanner := bufio.NewScanner(file)
+	executions, exited := 0, false
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, "execve(") || strings.Contains(line, "execveat(") { executions++ }
+		if strings.Contains(line, "fork(") || strings.Contains(line, "vfork(") { return false }
+		if (strings.Contains(line, "clone(") || strings.Contains(line, "clone3(")) && !strings.Contains(line, "CLONE_THREAD") { return false }
+		if strings.Contains(line, "+++ exited with 0 +++") { exited = true }
+	}
+	return scanner.Err() == nil && executions == 1 && exited
+}
+
+func readCoverage(path, moduleRoot string) (map[string]map[int]int64, error) {
+	manifest, err := os.ReadFile(filepath.Join(moduleRoot, "go.mod"))
+	if err != nil { return nil, err }
+	modulePath := ""
+	for _, line := range strings.Split(string(manifest), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "module" { modulePath = strings.Trim(fields[1], string(rune(34))); break }
+	}
+	if modulePath == "" { return nil, fmt.Errorf("missing module path") }
+	file, err := os.Open(path)
+	if err != nil { return nil, err }
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	if !scanner.Scan() || !strings.HasPrefix(scanner.Text(), "mode: ") { return nil, fmt.Errorf("missing coverage mode") }
+	files := map[string]map[int]int64{}
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) != 3 { return nil, fmt.Errorf("invalid coverage block") }
+		colon := strings.LastIndex(fields[0], ":")
+		if colon < 0 { return nil, fmt.Errorf("invalid coverage location") }
+		source := fields[0][:colon]
+		if !strings.HasPrefix(source, modulePath+"/") { return nil, fmt.Errorf("coverage outside local module") }
+		relative := strings.TrimPrefix(source, modulePath+"/")
+		clean := filepath.Clean(relative)
+		if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) { return nil, fmt.Errorf("unsafe coverage path") }
+		source = filepath.ToSlash(filepath.Join(moduleRoot, clean))
+		if _, err := os.Stat(source); err != nil { return nil, err }
+		bounds := strings.Split(fields[0][colon+1:], ",")
+		if len(bounds) != 2 { return nil, fmt.Errorf("invalid coverage range") }
+		start, e1 := strconv.Atoi(strings.Split(bounds[0], ".")[0])
+		end, e2 := strconv.Atoi(strings.Split(bounds[1], ".")[0])
+		count, e3 := strconv.ParseInt(fields[2], 10, 64)
+		if e1 != nil || e2 != nil || e3 != nil || start < 1 || end < start || count < 0 { return nil, fmt.Errorf("invalid coverage counters") }
+		if files[source] == nil { files[source] = map[int]int64{} }
+		for line := start; line <= end; line++ { if count > files[source][line] { files[source][line] = count } else if _, ok := files[source][line]; !ok { files[source][line] = 0 } }
+	}
+	return files, scanner.Err()
+}
+
 func parseArgs(args []string) ([]string, string, []string) {
 	filters := []string{}
 	runDir := ""
@@ -784,12 +1076,12 @@ func parseArgs(args []string) ([]string, string, []string) {
 	return filters, runDir, nil
 }
 
-func listTests(binary, runDir string) []string {
+func listTests(binary, runDir string) ([]string, error) {
 	command := exec.Command(binary, "-test.list=.")
 	if runDir != "" {
 		command.Dir = runDir
 	}
-	output, _ := command.Output()
+	output, err := command.Output()
 	lines := strings.Split(string(output), "\n")
 	out := []string{}
 	for _, line := range lines {
@@ -798,7 +1090,7 @@ func listTests(binary, runDir string) []string {
 			out = append(out, line)
 		}
 	}
-	return out
+	return out, err
 }
 
 func splitFilters(filters []string) ([]string, []string) {
@@ -988,6 +1280,9 @@ def _go_test_env(ctx, module, scratch, test_dir):
     for key, value in _go_attr(ctx, "test_env", {}).items():
         env[key] = value
     env["HOME"] = execution_path(test_dir + "/home")
+    if _go_attr(ctx, "coverage_per_test", False):
+        env["STRUO_GO_COVERAGE_PER_TEST"] = "1"
+        env["STRUO_GO_MODULE_ROOT"] = module["root"] or "."
     return env
 
 def _go_test_info(ctx, toolchain, module, binary, runner, results, log, native, coverage, test_dir):
@@ -1019,7 +1314,7 @@ def _go_test_info(ctx, toolchain, module, binary, runner, results, log, native, 
         "sharding": {"supported": False},
         "retries": {"supported": False, "default_attempts": 1},
         "execution": {
-            "cacheable": True,
+            "cacheable": not _go_attr(ctx, "coverage_per_test", False),
             "timeout_ms": _go_attr(ctx, "timeout_ms", None),
             "run_from_workspace_root": True,
         },
@@ -1034,6 +1329,8 @@ def _go_test_impl(ctx):
     scratch = ctx["scratch_dir"] + "/go-test-build"
     args = [toolchain["go"], "test", "-c"] + _go_common_build_args(ctx, module)
     cover_packages = _go_attr(ctx, "cover_packages", [])
+    if _go_attr(ctx, "coverage_per_test", False) and not cover_packages:
+        cover_packages = ["./..."]
     if cover_packages:
         args.append("-coverpkg=" + ",".join(cover_packages))
     link_flags = _go_link_flags(ctx)
@@ -1064,12 +1361,36 @@ def _go_test_impl(ctx):
     results = test_dir + "/test_results.json"
     log = test_dir + "/go-test.log"
     native = test_dir + "/native_results.jsonl"
-    coverage_enabled = _go_attr(ctx, "coverage", False) or _go_attr(ctx, "coverage_enabled", False)
+    coverage_enabled = _go_attr(ctx, "coverage", False) or _go_attr(ctx, "coverage_enabled", False) or _go_attr(ctx, "coverage_per_test", False)
     coverage = test_dir + "/coverage.out" if coverage_enabled else ""
     runner = declare_output("struo_go_test_runner.go")
     write_path(runner, _go_test_runner_source())
-    provider["test_discovery_inputs"] = _go_source_inputs(ctx)
+    if _go_attr(ctx, "coverage_per_test", False):
+        provider["coverage_selection"] = {
+            "inputs": _unique([path for path in _go_build_inputs(ctx, module) if path.endswith("_test.go")] + _go_existing_module_inputs(module) + _go_runtime_data(ctx) + _go_embed_inputs(ctx)),
+            "tool": "go-cover",
+            "tool_version": toolchain["version"].split(" ")[2],
+            "platform": _go_target_os(ctx) + "/" + _go_target_arch(ctx),
+            "configuration": {"toolchain": toolchain["identity"], "inherited_environment": content_sha256(_json_encode(_go_host_env(_go_attr(ctx, "env_inherit", []))))},
+        }
     provider["test_info"] = _go_test_info(ctx, toolchain, module, binary, runner, results, log, native, coverage, test_dir)
+    inventory = test_dir + "/inventory.json"
+    provider["test_inventory"] = inventory
+    if ctx["capability"] == "test-discovery":
+        runner_scratch = ctx["scratch_dir"] + "/go-test-runner"
+        command = _go_test_info(ctx, toolchain, module, binary, runner, inventory, log, native, "", test_dir)["command"]
+        command["env"]["STRUO_GO_DISCOVER"] = "1"
+        run_action(
+            argv = command["argv"],
+            env = command["env"],
+            inputs = _unique([runner, binary] + _go_runtime_data(ctx) + native_info["dynamic_libraries"]),
+            outputs = [inventory],
+            clean_paths = [runner_scratch],
+            create_dirs = [test_dir, test_dir + "/home", runner_scratch + "/cache", runner_scratch + "/modules", runner_scratch + "/tmp", runner_scratch + "/home"],
+            cacheable = False,
+            toolchain_identity = toolchain["identity"] + "\x00struo.go.test-discovery.v1",
+        )
+        return provider
     if ctx["capability"] != "test":
         return provider
     if _go_target_os(ctx) != toolchain["host_os"] or _go_target_arch(ctx) != toolchain["host_arch"]:
@@ -1086,6 +1407,7 @@ def _go_test_impl(ctx):
         clean_paths = [runner_scratch],
         create_dirs = [runner_scratch + "/cache", runner_scratch + "/modules", runner_scratch + "/tmp", runner_scratch + "/home"],
         env = command["env"],
+        cacheable = not _go_attr(ctx, "coverage_per_test", False),
         toolchain_identity = toolchain["identity"] + "\x00struo.go.test-runner.v1",
         identifier = _go_action_identifier(ctx, "test"),
     )
@@ -1635,6 +1957,7 @@ go_test = target_kind(
         attr("labels", "list<string>", default = "[]", docs = "Labels exposed through generic test discovery.", configurable = True),
         attr("timeout_ms", "int", docs = "Optional test timeout in milliseconds.", configurable = False),
         attr("cover_packages", "list<string>", default = "[]", docs = "Import path patterns included in coverage instrumentation.", configurable = False),
+        attr("coverage_per_test", "bool", default = "false", docs = "Run each top-level test in an isolated process and collect attributed coverage for approximate selection. Complete evidence requires Linux strace with process tracing permission; otherwise coverage remains partial.", configurable = False),
         attr("fail_fast", "bool", default = "false", docs = "Stop after the first failing test.", configurable = False),
         attr("short", "bool", default = "false", docs = "Request short test mode.", configurable = False),
         attr("count", "int", default = "0", docs = "Run each selected test this many times when greater than zero.", configurable = False),
@@ -1643,7 +1966,7 @@ go_test = target_kind(
     ],
     deps = _GO_DEP_EDGES + [dep("target_under_test", ["go_package"], "Buck-compatible library or binary sources composed into this test package.")],
     providers = ["go_package", "struo_test_info"],
-    capabilities = [capability("build", ["binary"]), capability("test", ["default", "test_results", "logs", "coverage"])],
+    capabilities = [capability("build", ["binary"]), capability("test", ["default", "test_results", "logs", "coverage"]), capability("test-discovery", ["test_inventory"])],
     examples = _GO_EXAMPLE,
     source_references = _GO_TEST_REFERENCES,
     tools = [_GO_TOOL],
