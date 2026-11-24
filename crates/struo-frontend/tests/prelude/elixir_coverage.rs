@@ -162,6 +162,16 @@ fn exunit_coverage_isolates_duplicate_names_and_rejects_external_work() {
     let report = read();
     assert_eq!(report["cases"][0]["status"], "failed", "{report}");
     assert_eq!(report["coverage"]["partial"], true, "{report}");
+    let native: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("out/results.json.counts")).unwrap())
+            .unwrap();
+    assert!(
+        native["cases"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("timed out after 1ms"),
+        "unexpected native failure: {native}"
+    );
     std::fs::write(&config_path, original_config).unwrap();
     std::fs::write(
         dir.path().join("test/product_test.exs"),
