@@ -1,17 +1,18 @@
 # Production values for the Struo website Helm chart.
 #
-# This chart assumes the cluster has cert-manager, ingress-nginx,
-# external-dns, and external-secrets-operator with a 1Password
-# ClusterSecretStore named `onepassword`.
+# This chart assumes the cluster has cert-manager, ingress-nginx, and
+# external-secrets-operator with a 1Password ClusterSecretStore named
+# `onepassword`. The deploy workflow points the host's DNS record at the
+# ingress after each release.
 
 nameOverride: ""
 fullnameOverride: "struo"
 
 host: struo.run
 
-# Hosts the site used before the rename. They stay on the ingress so
-# cert-manager keeps their certificate and external-dns keeps their records,
-# and the app 301-redirects them to struo.run (docs.buildonce.dev to /docs).
+# Hosts the site used before the rename. Listing them here adds them to the
+# ingress and certificate, and the app 301-redirects them to struo.run
+# (docs.buildonce.dev to /docs).
 # Leave empty while another release still claims them.
 legacyHosts: []
 

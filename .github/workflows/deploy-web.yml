@@ -113,6 +113,52 @@ jobs:
             --namespace "$NAMESPACE" --create-namespace \
             --set image.tag="${{ needs.build.outputs.image_tag }}" \
             --rollback-on-failure --timeout 15m --wait
+      - name: Point DNS at the ingress
+        run: |
+          set -euo pipefail
+          HOST="$(helm get values "$HELM_RELEASE_NAME" -n "$NAMESPACE" --all -o json | jq -r .host)"
+          TOKEN="$(kubectl -n "$NAMESPACE" get secret cloudflare-struo-token -o jsonpath='{.data.api-token}' | base64 -d)"
+          echo "::add-mask::$TOKEN"
+          IP=""
+          for _ in $(seq 1 30); do
+            IP="$(kubectl -n "$NAMESPACE" get ingress struo -o jsonpath='{.status.loadBalancer.ingress[0].ip}')"
+            [ -n "$IP" ] && break
+            sleep 10
+          done
+          [ -n "$IP" ] || { echo "Ingress has no load balancer address"; exit 1; }
+
+          cf() { curl -fsS -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" "$@"; }
+          api=https://api.cloudflare.com/client/v4
+
+          upsert() {
+            local name="$1" zone records id body
+            zone="$(cf "$api/zones?name=$name" | jq -r '.result[0].id')"
+            records="$(cf "$api/zones/$zone/dns_records?name=$name")"
+            for id in $(echo "$records" | jq -r '.result[] | select(.type == "CNAME" or .type == "AAAA") | .id'); do
+              cf -X DELETE "$api/zones/$zone/dns_records/$id" >/dev/null
+            done
+            body="$(jq -nc --arg n "$name" --arg ip "$IP" '{type: "A", name: $n, content: $ip, ttl: 300, proxied: false}')"
+            id="$(echo "$records" | jq -r '[.result[] | select(.type == "A")][0].id // empty')"
+            if [ -n "$id" ]; then
+              cf -X PUT "$api/zones/$zone/dns_records/$id" --data "$body" >/dev/null
+            else
+              cf -X POST "$api/zones/$zone/dns_records" --data "$body" >/dev/null
+            fi
+            echo "$name -> $IP"
+          }
+
+          remove() {
+            local name="$1" zone id
+            zone="$(cf "$api/zones?name=$name" | jq -r '.result[0].id // empty')"
+            [ -n "$zone" ] || return 0
+            for id in $(cf "$api/zones/$zone/dns_records?name=$name&type=A" | jq -r '.result[].id'); do
+              cf -X DELETE "$api/zones/$zone/dns_records/$id" >/dev/null
+              echo "removed A record for $name"
+            done
+          }
+
+          upsert "$HOST"
+          remove buildonce.dev
       - name: Diagnostics on failure
         if: failure()
         run: |
