@@ -146,18 +146,21 @@ fn exunit_coverage_isolates_duplicate_names_and_rejects_external_work() {
     let config_path = dir.path().join("config.json");
     let original_config = std::fs::read(&config_path).unwrap();
     let mut config: Value = serde_json::from_slice(&original_config).unwrap();
-    config["timeout_ms"] = json!(1);
+    // The fixture reports the timeout ExUnit was configured with instead of
+    // racing a real timer, so the check is independent of runner load.
+    // ExUnit's default is 60000 ms, so 4242 only appears when it is forwarded.
+    config["timeout_ms"] = json!(4242);
     std::fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
     let output = Command::new("python3")
         .current_dir(dir.path())
         .args(base)
         .args(["--struo-test-unit", "Tests::AlphaTest/test same name"])
-        .env("STRUO_FIXTURE_SLOW", "1")
+        .env("STRUO_FIXTURE_TIMEOUT", "1")
         .output()
         .unwrap();
     assert!(
         !output.status.success(),
-        "native timeout was ignored: {output:?}"
+        "native failure was ignored: {output:?}"
     );
     let report = read();
     assert_eq!(report["cases"][0]["status"], "failed", "{report}");
@@ -169,7 +172,7 @@ fn exunit_coverage_isolates_duplicate_names_and_rejects_external_work() {
         native["cases"][0]["message"]
             .as_str()
             .unwrap()
-            .contains("timed out after 1ms"),
+            .contains("configured timeout 4242"),
         "unexpected native failure: {native}"
     );
     std::fs::write(&config_path, original_config).unwrap();
