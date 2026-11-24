@@ -3,42 +3,58 @@
 @import "./shared/theme.css";
 @import "./shared/prose.css";
 @import "./shared/code-window.css";
+@import "./shared/code-theme.css";
 @import "./shared/code-group.css";
 @import "./css/layouts/root.css";
 @import "./css/components/nav.css";
 @import "./css/components/toc.css";
+@import "./css/components/search.css";
 @import "./css/components/documentation.css";
 @import "./css/components/overview.css";
 @import "./css/components/page-footer.css";
 
 :root {
-  --docs-nav-height: 73px;
+  --docs-nav-height: 62px;
+  --docs-gutter: 32px;
   --docs-sidebar-width: 220px;
   --docs-content-width: 800px;
-  --docs-toc-width: 250px;
+  --docs-toc-width: 220px;
+
+  /* Navigation text that is not the current page. Noora's secondary label is
+     too close to its primary one, on this ground, to tell the two apart. */
+  --docs-label-muted: var(--noora-neutral-dark-300);
+  --docs-label-faint: var(--noora-neutral-dark-400);
 }
 
 @media (max-width: 1024px) {
   :root {
     --docs-nav-height: 56px;
+    --docs-gutter: 16px;
   }
 }
 
 html {
+  background: var(--noora-surface-background-primary);
   overflow-x: hidden;
   scroll-padding-top: var(--docs-nav-height);
-  scrollbar-color: light-dark(var(--noora-neutral-light-600), var(--noora-neutral-dark-600)) transparent;
+  /* thumb, then track */
+  scrollbar-color: var(--noora-neutral-dark-600) var(--noora-neutral-dark-1100);
   scrollbar-width: thin;
 }
 
+/* The same ground as the marketing pages: the faint scan lines of the tube
+   over its unlit black. */
 body {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
   margin: 0;
-  background: var(--noora-surface-background-primary);
+  background: repeating-linear-gradient(to bottom, transparent 0 2px, oklch(100% 0 0 / 0.022) 2px 3px);
   padding: 0;
-  font-family: var(--noora-font-body);
+  min-height: 100vh;
+  color: var(--noora-surface-label-primary);
+  font: var(--noora-font-weight-regular) var(--noora-font-body-medium);
+  -webkit-font-smoothing: antialiased;
 }
 
 h1,
@@ -49,233 +65,83 @@ p {
   margin-block-end: 0;
 }
 
-/* Screen-reader only: visually hidden but accessible to assistive technologies */
-.sr-only {
-  position: absolute;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  margin: -1px;
-  border: 0;
-  padding: 0;
-  width: 1px;
-  height: 1px;
-  white-space: nowrap;
+:focus-visible {
+  outline: 2px solid var(--struo-primary);
+  outline-offset: 2px;
 }
 
-/* Skip-to-content link */
-.docs-skip-link {
-  position: fixed;
-  top: -100%;
-  left: var(--noora-spacing-4);
-  z-index: 100;
-  border-radius: var(--noora-radius-3);
-  background: var(--noora-surface-background-primary);
-  padding: var(--noora-spacing-3) var(--noora-spacing-5);
-  color: var(--noora-surface-label-primary);
-  font: var(--noora-font-weight-medium) var(--noora-font-body-medium);
-  text-decoration: none;
-
-  &:focus {
-    top: var(--noora-spacing-4);
-    outline: 2px solid var(--noora-surface-label-primary);
-    outline-offset: 2px;
-  }
+/* Focus rings are for the keyboard. Safari doesn't focus a button on click,
+   so when a script then moves focus (a menu opening, or handing focus back
+   as it closes) it draws the ring after a click too. The page marks pointer
+   use, and the ring waits for the next key. */
+html[data-pointer] :focus-visible:not(input, textarea, select, [contenteditable]) {
+  outline: none;
 }
 
-/* Navbar brand + socials. */
-#docs-nav [data-part="logo-mark"] {
-  display: grid;
-  place-items: center;
-  border-radius: var(--noora-radius-2);
-  background: var(--noora-surface-label-primary);
-  width: 30px;
-  height: 30px;
-  color: var(--noora-surface-background-primary);
-  font: var(--noora-font-weight-medium) var(--noora-font-heading-large);
-}
-
-#docs-nav [data-part="social-link"] {
-  display: grid;
-  place-items: center;
-  border-radius: var(--noora-radius-2);
-  width: 36px;
-  height: 36px;
-  color: var(--noora-surface-label-secondary);
+html[data-pointer] .noora-menu[data-trigger="split"]:has(:focus-visible) {
+  box-shadow: var(--noora-button-border-secondary);
 
   &:hover {
-    background: var(--noora-surface-background-secondary);
-    color: var(--noora-surface-label-primary);
-  }
-
-  & svg {
-    width: 20px;
-    height: 20px;
+    box-shadow: var(--noora-button-border-secondary-hover);
   }
 }
 
-/* Sidebar item icons: monochrome vectors tinted with a mask,
-   full-color assets drawn as a background instead. */
+/* Small capitals that title a list: a sidebar group, the table of contents. */
+#docs-sidebar [data-part="group-label"],
+#docs-toc > [data-part="toc-header"] {
+  color: var(--docs-label-faint);
+  font: var(--noora-font-weight-medium) var(--noora-font-body-small);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Sidebar item icons are 16px and take the color of their link. Most are
+   Noora icons, placed inline. The marks Noora lacks are drawn through a mask. */
 #docs-sidebar [data-part="nav-item-icon"] {
-  display: inline-block;
+  display: inline-flex;
   flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  background-color: var(--nav-icon-color, var(--noora-surface-label-primary));
+  width: var(--noora-icon-size-medium);
+  height: var(--noora-icon-size-medium);
+
+  & > svg {
+    width: 100%;
+    height: 100%;
+  }
+}
+
+#docs-sidebar [data-part="nav-item-icon"][data-icon] {
+  background-color: currentColor;
   -webkit-mask: var(--nav-icon-mask) center / contain no-repeat;
   mask: var(--nav-icon-mask) center / contain no-repeat;
 }
 
-#docs-sidebar [data-part="nav-item-icon"][data-icon="rust"] {
-  --nav-icon-mask: url("/docs/icons/rust.svg");
-  --nav-icon-color: var(--noora-surface-label-primary);
+#docs-sidebar [data-part="nav-item-icon"][data-icon="cplusplus"] {
+  --nav-icon-mask: url("/images/languages/cplusplus.svg");
 }
-#docs-sidebar [data-part="nav-item-icon"][data-icon="apple"] {
-  --nav-icon-mask: url("/docs/icons/apple.svg");
-  --nav-icon-color: var(--noora-surface-label-primary);
+#docs-sidebar [data-part="nav-item-icon"][data-icon="go"] {
+  --nav-icon-mask: url("/images/languages/go.svg");
 }
-#docs-sidebar [data-part="nav-item-icon"][data-icon="swift"] {
-  --nav-icon-mask: url("/docs/icons/swift.svg");
-  --nav-icon-color: oklch(62% 0.1659 48.81);
+#docs-sidebar [data-part="nav-item-icon"][data-icon="javascript"] {
+  --nav-icon-mask: url("/images/languages/javascript.svg");
 }
-#docs-sidebar [data-part="nav-item-icon"][data-icon="android"] {
-  --nav-icon-mask: url("/docs/icons/android.svg");
-  --nav-icon-color: oklch(53.7% 0.1613 146.6);
+#docs-sidebar [data-part="nav-item-icon"][data-icon="kotlin"] {
+  --nav-icon-mask: url("/images/languages/kotlin.svg");
 }
-#docs-sidebar [data-part="nav-item-icon"][data-icon="bazel"] {
-  --nav-icon-mask: url("/docs/icons/bazel.svg");
-  --nav-icon-color: oklch(62% 0.16 145);
+#docs-sidebar [data-part="nav-item-icon"][data-icon="react-native"] {
+  --nav-icon-mask: url("/images/languages/react-native.svg");
+}
+#docs-sidebar [data-part="nav-item-icon"][data-icon="ruby"] {
+  --nav-icon-mask: url("/images/languages/ruby.svg");
+}
+#docs-sidebar [data-part="nav-item-icon"][data-icon="zig"] {
+  --nav-icon-mask: url("/images/languages/zig.svg");
 }
 #docs-sidebar [data-part="nav-item-icon"][data-icon="c"] {
   --nav-icon-mask: url("/docs/icons/c.svg");
-  --nav-icon-color: oklch(63% 0.182 259.5);
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="cplusplus"] {
-  --nav-icon-mask: url("/docs/icons/cplusplus.svg");
-  --nav-icon-color: oklch(57% 0.127 238.5);
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="go"] {
-  --nav-icon-mask: url("/docs/icons/go.svg");
-  --nav-icon-color: oklch(57% 0.127 238.5);
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="elixir"] {
-  --nav-icon-mask: url("/docs/icons/elixir.svg");
-  --nav-icon-color: oklch(53.2% 0.276 286.9);
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="kotlin"] {
-  --nav-icon-mask: url("/docs/icons/kotlin.svg");
-  --nav-icon-color: oklch(53.2% 0.276 286.9);
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="zig"] {
-  --nav-icon-mask: url("/docs/icons/zig.svg");
-  --nav-icon-color: oklch(62% 0.1659 48.81);
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="react-native"] {
-  --nav-icon-mask: url("/docs/icons/react-native.svg");
-  --nav-icon-color: #149eca;
 }
 #docs-sidebar [data-part="nav-item-icon"][data-icon="nx"] {
   --nav-icon-mask: url("/docs/icons/nx.svg");
-  --nav-icon-color: oklch(63% 0.182 259.5);
 }
 #docs-sidebar [data-part="nav-item-icon"][data-icon="turborepo"] {
   --nav-icon-mask: url("/docs/icons/turborepo.svg");
-  --nav-icon-color: oklch(63.7% 0.237 25.3);
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="build-graph"] {
-  --nav-icon-mask: url("/docs/icons/build-graph.svg");
-  --nav-icon-color: oklch(53.7% 0.1613 146.6);
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="containers"] {
-  --nav-icon-mask: url("/docs/icons/containers.svg");
-  --nav-icon-color: oklch(63% 0.14 238.5);
-}
-
-#docs-sidebar [data-part="nav-item-icon"][data-icon="cloudflare"] {
-  --nav-icon-mask: url("/docs/icons/cloudflare.svg");
-  --nav-icon-color: #f38020;
-}
-
-#docs-sidebar [data-part="nav-item-icon"][data-icon="boat"] {
-  --nav-icon-mask: url("/docs/icons/boat.svg");
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="http-cache"] {
-  --nav-icon-mask: url("/docs/icons/http-cache.svg");
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="object-storage"] {
-  --nav-icon-mask: url("/docs/icons/object-storage.svg");
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="vercel"] {
-  --nav-icon-mask: url("/docs/icons/vercel.svg");
-}
-
-#docs-sidebar [data-part="nav-item-icon"][data-icon="ruby"],
-#docs-sidebar [data-part="nav-item-icon"][data-icon="javascript"],
-#docs-sidebar [data-part="nav-item-icon"][data-icon="buildkite"],
-#docs-sidebar [data-part="nav-item-icon"][data-icon="docker"],
-#docs-sidebar [data-part="nav-item-icon"][data-icon="opensandbox"],
-#docs-sidebar [data-part="nav-item-icon"][data-icon="sprites"],
-#docs-sidebar [data-part="nav-item-icon"][data-icon="microsandbox"],
-#docs-sidebar [data-part="nav-item-icon"][data-icon="e2b"],
-#docs-sidebar [data-part="nav-item-icon"][data-icon="daytona"],
-#docs-sidebar [data-part="nav-item-icon"][data-icon="together"],
-#docs-sidebar [data-part="nav-item-icon"][data-icon="northflank"],
-#docs-sidebar [data-part="nav-item-icon"][data-icon="blaxel"],
-#docs-sidebar [data-part="nav-item-icon"][data-icon="runloop"],
-#docs-sidebar [data-part="nav-item-icon"][data-icon="langsmith"],
-#docs-sidebar [data-part="nav-item-icon"][data-icon="tensorlake"],
-#docs-sidebar [data-part="nav-item-icon"][data-icon="tuist"] {
-  background-color: transparent;
-  -webkit-mask: none;
-  mask: none;
-  background-position: center;
-  background-size: contain;
-  background-repeat: no-repeat;
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="ruby"] {
-  background-image: url("/docs/icons/ruby.svg");
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="javascript"] {
-  background-image: url("/docs/icons/javascript.svg");
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="buildkite"] {
-  background-image: url("/docs/icons/buildkite.png");
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="docker"] {
-  background-image: url("/docs/icons/docker.png");
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="opensandbox"] {
-  background-image: url("/docs/icons/opensandbox.svg");
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="sprites"] {
-  background-image: url("/docs/icons/sprites.png");
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="microsandbox"] {
-  background-image: url("/docs/icons/microsandbox.png");
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="e2b"] {
-  background-image: url("/docs/icons/e2b.png");
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="daytona"] {
-  background-image: url("/docs/icons/daytona.png");
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="together"] {
-  background-image: url("/docs/icons/together.png");
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="northflank"] {
-  background-image: url("/docs/icons/northflank.svg");
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="langsmith"] {
-  background-image: url("/docs/icons/langsmith.svg");
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="blaxel"] {
-  background-image: url("/docs/icons/blaxel.svg");
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="runloop"] {
-  background-image: url("/docs/icons/runloop.png");
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="tensorlake"] {
-  background-image: url("/docs/icons/tensorlake.svg");
-}
-#docs-sidebar [data-part="nav-item-icon"][data-icon="tuist"] {
-  background-image: url("/docs/icons/tuist.svg");
 }

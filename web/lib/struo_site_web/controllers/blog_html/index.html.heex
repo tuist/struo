@@ -1,8 +1,7 @@
 <Layouts.app flash={@flash}>
   <section data-part="blog">
     <header data-part="blog-header">
-      <p data-part="eyebrow">From the Struo team</p>
-      <h1>Ideas for building once</h1>
+      <h1>Blog</h1>
       <p data-part="page-copy">
         Notes on build graphs, reusable automation, and tools that help people and coding
         agents work from the same understanding.
@@ -19,8 +18,6 @@
           <div data-part="blog-entry-copy">
             <div data-part="blog-entry-meta">
               <time datetime={Date.to_iso8601(post.date)}>{format_date(post.date)}</time>
-              <span aria-hidden="true">·</span>
-              <span>{reading_time(post.reading_minutes)}</span>
             </div>
             <h2>{post.title}</h2>
             <p>{post.description}</p>

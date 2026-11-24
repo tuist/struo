@@ -1,14 +1,55 @@
-/* Marketing site styling, built on the Noora design tokens (imported below) so
-   it matches the documentation surface: the Struo type pairing, warm
-   neutrals, and the indigo accent. */
+/* Marketing site styling, built on the Noora design tokens and the Struo
+   brand layer (both imported below). ":root" adds what only the marketing
+   pages use: Geist Pixel Line for display type, and the phosphor glow of the
+   tube. The documentation ships its own bundle on the same brand layer. */
 
 @import "noora/noora.css";
 @import "../docs/shared/theme.css";
 @import "../docs/fonts.css";
 @import "../docs/shared/code-window.css";
+@import "../docs/shared/code-theme.css";
+
+@font-face {
+  font-style: normal;
+  font-weight: 500;
+  src: url("/fonts/GeistPixel-Line.woff2") format("woff2");
+  font-family: "Geist Pixel Line";
+  /* Titles wait for this face instead of showing in the text face first. The
+     root layout preloads it, so the wait is short. */
+  font-display: block;
+}
 
 :root {
-  color-scheme: light;
+  /* thumb, then track */
+  scrollbar-color: light-dark(var(--noora-neutral-light-600), var(--noora-neutral-dark-600))
+    light-dark(var(--noora-neutral-light-200), var(--noora-neutral-dark-1100));
+  scrollbar-width: thin;
+
+  --site-gutter: max(16px, calc((100vw - 1120px) / 2));
+  --site-header-height: 62px;
+
+  --struo-font-display: "Geist Pixel Line", var(--struo-font-mono);
+
+  /* The lightest the phosphor gets: bright readouts in the cache diagram, and
+     the hottest parts of the picture on the tube. */
+  --struo-phosphor-bright: var(--noora-orange-200);
+  --struo-phosphor-glow: 0 0 1px oklch(from var(--struo-primary) l c h / 0.9), 0 0 14px oklch(from var(--struo-primary) l c h / 0.55);
+
+  /* Noora's display tokens bundle size, line height, and family, so swapping
+     the family means restating its sizes here and in the wide-screen block. */
+  --noora-font-display-xlarge: 2.5rem/3rem var(--struo-font-display);
+  --noora-font-display-large: 2.375rem/2.875rem var(--struo-font-display);
+  --noora-font-display-medium: 2.25rem/2.625rem var(--struo-font-display);
+  --noora-font-display-small: 2.125rem/2.5rem var(--struo-font-display);
+}
+
+@media screen and (min-width: 768px) {
+  :root {
+    --noora-font-display-xlarge: 4.5rem/4.875rem var(--struo-font-display);
+    --noora-font-display-large: 4rem/4.375rem var(--struo-font-display);
+    --noora-font-display-medium: 3.5rem/4rem var(--struo-font-display);
+    --noora-font-display-small: 3rem/3.5rem var(--struo-font-display);
+  }
 }
 
 * {
@@ -25,9 +66,7 @@ body {
   margin: 0;
   color: var(--noora-surface-label-primary);
   font-family: var(--noora-font-body);
-  background:
-    radial-gradient(60% 50% at 50% -10%, oklch(from var(--noora-purple-500) l c h / 0.14), transparent 70%),
-    linear-gradient(180deg, var(--noora-purple-50) 0%, var(--noora-surface-background-primary) 640px);
+  background: repeating-linear-gradient(to bottom, transparent 0 2px, oklch(100% 0 0 / 0.022) 2px 3px);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -35,22 +74,38 @@ a {
   color: inherit;
 }
 
+:focus-visible {
+  outline: 2px solid var(--struo-primary);
+  outline-offset: 2px;
+}
+
 [data-part="site-shell"] {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  overflow-x: clip;
 }
 
 /* Header ------------------------------------------------------------------ */
 
 [data-part="site-header"] {
+  /* The height of the bar, measured by the menu script when the phone menu
+     opens. The open menu hangs from it. */
+  --site-bar-height: var(--site-header-height);
+
   position: sticky;
   top: 0;
   z-index: 30;
+}
+
+[data-part="site-bar"] {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
   gap: 24px;
-  padding: 14px max(16px, calc((100vw - 1120px) / 2));
+  min-height: var(--site-header-height);
+  padding: 12px var(--site-gutter);
   background: color-mix(in oklch, var(--noora-surface-background-primary) 82%, transparent);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--noora-surface-border-primary);
@@ -59,23 +114,25 @@ a {
 [data-part="brand"] {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  font-weight: 600;
-  font-size: 18px;
-  letter-spacing: -0.2px;
+  gap: 8px;
+  font-size: 21px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  text-transform: lowercase;
   text-decoration: none;
 }
 
 [data-part="brand-logo"] {
-  width: 30px;
-  height: 30px;
+  width: auto;
+  height: 26px;
 }
 
 [data-part="site-nav"] {
   display: flex;
-  gap: 22px;
+  gap: 18px;
   margin-left: 12px;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 500;
 }
 
@@ -85,7 +142,7 @@ a {
 }
 
 [data-part="site-nav"] a:hover {
-  color: var(--noora-surface-label-primary);
+  color: var(--struo-primary);
 }
 
 [data-part="site-actions"] {
@@ -108,7 +165,7 @@ a {
 
 [data-part="site-social-link"]:hover {
   background: var(--noora-surface-background-secondary);
-  color: var(--noora-surface-label-primary);
+  color: var(--struo-primary);
 }
 
 [data-part="site-social-link"] svg {
@@ -116,18 +173,122 @@ a {
   height: 20px;
 }
 
-[data-part="site-cta"] {
-  border-radius: var(--noora-radius-3);
-  background: var(--noora-purple-500);
-  padding: 9px 18px;
-  color: #fff;
-  font-weight: 600;
-  font-size: 15px;
-  text-decoration: none;
+/* The menu button of the phone bar, which has no hover or press fill. Its two
+   bars each spin about their own center while sliding to the middle of the
+   icon, so the burger becomes a cross. */
+[data-part="mobile-menu-button"] {
+  display: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
-[data-part="site-cta"]:hover {
-  background: var(--noora-purple-600);
+[data-part="site-actions"] > [data-part="mobile-menu-button"]:not(:disabled):is(:hover, :active) {
+  box-shadow: none;
+  background: unset;
+}
+
+/* The size of the icons beside it, and of the search icon in the docs bar:
+   a 20px icon in a 36px button. */
+[data-part="site-actions"] > [data-part="mobile-menu-button"] > svg {
+  width: var(--noora-icon-size-large);
+  height: var(--noora-icon-size-large);
+}
+
+[data-part="mobile-menu-button"] > svg > path {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 0.2s ease;
+}
+
+[data-part="mobile-menu-button"][data-state="open"] > svg > [data-part="bar-top"] {
+  transform: translateY(4px) rotate(45deg);
+}
+
+[data-part="mobile-menu-button"][data-state="open"] > svg > [data-part="bar-bottom"] {
+  transform: translateY(-4px) rotate(-45deg);
+}
+
+[data-part="mobile-menu"] {
+  display: none;
+}
+
+/* The phone menu is a panel hung from the bottom edge of the bar and sized to
+   the rest of the window. The bar stays in the flow, so opening the menu does
+   not lay the page out again. Closed, the panel stays in the tree, hidden, so
+   closing can fade it out the way opening fades it in. */
+@media (max-width: 680px) {
+  [data-part="site-nav"],
+  [data-part="site-social-link"] {
+    display: none;
+  }
+
+  [data-part="mobile-menu-button"] {
+    display: inline-flex;
+  }
+
+  [data-part="mobile-menu"] {
+    display: flex;
+    position: fixed;
+    top: var(--site-bar-height);
+    inset-inline: 0;
+    z-index: 1;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--noora-spacing-8);
+    transform: translateY(-6px);
+    visibility: hidden;
+    opacity: 0;
+    transition:
+      opacity 0.18s ease,
+      transform 0.18s var(--ease-out-cubic),
+      visibility 0s linear 0.18s;
+    background: var(--noora-surface-background-primary);
+    padding: var(--noora-spacing-7) var(--site-gutter);
+    /* The dynamic height follows the browser's toolbar, where 100vh would
+       leave the last rows out of reach while the toolbar is up. */
+    height: calc(100vh - var(--site-bar-height));
+    height: calc(100dvh - var(--site-bar-height));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    pointer-events: none;
+  }
+
+  [data-part="mobile-menu"] > [data-part="item"] {
+    color: var(--noora-surface-label-secondary);
+    font: var(--noora-font-weight-regular) var(--noora-font-heading-large);
+    text-decoration: none;
+  }
+
+  [data-part="site-header"][data-mobile-menu-open="true"] > [data-part="mobile-menu"] {
+    transform: none;
+    visibility: visible;
+    opacity: 1;
+    transition:
+      opacity 0.2s ease,
+      transform 0.2s var(--ease-out-cubic),
+      visibility 0s;
+    pointer-events: auto;
+  }
+}
+
+/* Set by the menu script while it closes the menu for a link that was just
+   followed, so the menu is gone before the page starts to change. */
+[data-part="site-header"][data-instant],
+[data-part="site-header"][data-instant] * {
+  animation: none !important;
+  transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-part="mobile-menu-button"] > svg > path,
+  [data-part="mobile-menu"] {
+    transition: none;
+  }
+}
+
+/* A dark label on the bright button reads thinner than a light label on a
+   dark one, so it takes the next weight up. */
+.noora-button[data-variant="primary"] {
+  font-weight: var(--noora-font-weight-semibold);
 }
 
 /* Main -------------------------------------------------------------------- */
@@ -140,65 +301,469 @@ a {
 
 /* Hero -------------------------------------------------------------------- */
 
+/* The hero fills the window under the header, up to a limit on very tall
+   ones, and the tube takes whatever height the controls and the pitch leave. */
+
 [data-part="hero"] {
-  position: relative;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  gap: 36px;
   min-width: 0;
-  text-align: center;
-  padding: 88px 0 48px;
+  min-height: min(calc(100vh - var(--site-header-height)), 1100px);
+  min-height: min(calc(100svh - var(--site-header-height)), 1100px);
+  padding: 0 0 48px;
 }
 
-[data-part="hero-glow"] {
+/* The tube. A WebGL canvas draws the screen when it can; when it cannot, the
+   same copy shows as styled text behind a plain glass panel. Until the script
+   has decided, the screen keeps its place but stays clear, so the page does
+   not flash a dark panel before the tube switches on. A script that never
+   arrives leaves the panel to fade in on its own. The screen runs the full
+   width of the page, up to "--crt-max-width" on wide windows, and dissolves
+   into the page over the last "--crt-fade" of its height. */
+
+[data-part="crt"] {
+  --crt-min-height: clamp(340px, 48vw + 200px, 460px);
+  --crt-fade: 96px;
+  --crt-max-width: 1536px;
+
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+[data-part="crt-screen"] {
+  position: relative;
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  justify-content: center;
+  width: min(100vw, var(--crt-max-width));
+  min-height: var(--crt-min-height);
+  margin-left: calc(50% - min(50vw, var(--crt-max-width) / 2));
+  overflow: hidden;
+  background: var(--noora-surface-background-primary);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--crt-fade)), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--crt-fade)), transparent);
+  animation: crt-fallback-in 0.3s 3s both;
+}
+
+/* Without the shader the glass is a plain panel, rounded like the tube. */
+[data-part="crt"]:not([data-crt="on"]) [data-part="crt-screen"] {
+  border-radius: 36px 36px 0 0;
+  box-shadow: inset 0 0 0 1px oklch(100% 0 0 / 0.06);
+}
+
+[data-part="crt-screen"]::after {
+  content: "";
   position: absolute;
-  top: -80px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: -1;
-  width: 720px;
-  max-width: 100%;
-  height: 420px;
-  background: radial-gradient(50% 50% at 50% 50%, oklch(from var(--noora-purple-300) l c h / 0.28), transparent 70%);
-  filter: blur(20px);
+  inset: 0;
+  background:
+    radial-gradient(ellipse at center, transparent 55%, oklch(0% 0 0 / 0.6) 100%),
+    repeating-linear-gradient(to bottom, transparent 0 2px, oklch(0% 0 0 / 0.28) 2px 3px);
   pointer-events: none;
 }
 
-[data-part="eyebrow"] {
-  margin: 0 0 18px;
-  border: 1px solid var(--noora-surface-border-primary);
-  border-radius: 999px;
-  background: var(--noora-surface-background-primary);
-  padding: 6px 14px;
-  color: var(--noora-purple-600);
-  font-weight: 600;
-  font-size: 13px;
+[data-part="crt-canvas"] {
+  position: absolute;
+  inset: 0;
+  display: none;
+  width: 100%;
+  height: 100%;
 }
+
+[data-part="crt-content"] {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: 44px max(16px, calc(50% - 560px)) calc(var(--crt-fade) + 24px);
+  color: var(--struo-primary);
+  text-shadow: var(--struo-phosphor-glow);
+}
+
+@keyframes crt-fallback-in {
+  from {
+    opacity: 0;
+  }
+}
+
+[data-part="crt-content"] h1 {
+  margin: 0;
+  font: var(--noora-font-display-large);
+  font-size: clamp(1.75rem, 7.2vw, 4.5rem);
+  line-height: 1.04;
+  text-transform: uppercase;
+}
+
+[data-part="crt"][data-crt="off"] [data-part="crt-screen"] {
+  animation: none;
+}
+
+@media (scripting: none) {
+  [data-part="crt-screen"] {
+    animation: none;
+  }
+}
+
+[data-part="crt"][data-crt="on"] [data-part="crt-canvas"] {
+  display: block;
+}
+
+[data-part="crt"][data-crt="on"] [data-part="crt-screen"] {
+  background: none;
+  animation: none;
+}
+
+[data-part="crt"][data-crt="on"] [data-part="crt-screen"]::after {
+  content: none;
+}
+
+[data-part="crt"][data-crt="on"] [data-part="crt-content"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+[data-part="crt-channel"] {
+  display: none;
+  font-family: var(--noora-font-code);
+}
+
+[data-part="crt-channel"][data-active="true"] {
+  display: block;
+}
+
+[data-part="works-with"] {
+  margin: 0 0 10px;
+  font-size: clamp(16px, 2.2vw, 24px);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+[data-part="works-with-lead"] {
+  opacity: 0.7;
+}
+
+[data-part="platform"] {
+  background: var(--struo-primary);
+  padding: 0 8px;
+  color: var(--struo-on-primary);
+  text-shadow: none;
+}
+
+[data-part="crt-command"] {
+  margin: 0;
+  overflow-x: auto;
+  font-family: inherit;
+  font-size: clamp(12px, 1.5vw, 16px);
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+/* The channel keys are a bank of latching push buttons in the manner of
+   Dieter Rams: one housing with rounded ends, a key for each platform with
+   its mark in a shallow dish, and the chosen key sitting low in the row. */
+
+[data-part="crt-controls"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px 24px;
+}
+
+[data-part="channel-keys"] {
+  --key-shade: var(--noora-alpha-black-80);
+  --key-light: var(--noora-neutral-dark-50);
+  --key-height: 52px;
+  --key-travel: 6px;
+  --key-end: calc(var(--key-height) / 2);
+
+  display: flex;
+  gap: 1px;
+  margin-left: auto;
+  border-radius: var(--key-end);
+  background: oklch(from var(--key-shade) l c h);
+  box-shadow: 0 12px 14px -4px oklch(from var(--key-shade) l c h / 0.8);
+  padding-bottom: 2px;
+}
+
+[data-part="channel-key"] {
+  flex: none;
+  width: 56px;
+  height: var(--key-height);
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--noora-surface-label-secondary);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+[data-part="channel-key"]:focus-visible {
+  outline: none;
+}
+
+/* The top of a key. It stands a key's travel above the housing, and the
+   shadow under it is the side of the key running down to the housing. */
+[data-part="key-cap"] {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(to bottom, var(--noora-neutral-dark-800), var(--noora-neutral-dark-900));
+  box-shadow:
+    inset 0 1px 0 oklch(from var(--key-light) l c h / 0.14),
+    0 var(--key-travel) 0 var(--noora-neutral-dark-1000);
+  translate: 0 calc(-1 * var(--key-travel));
+  transition:
+    translate 0.08s ease,
+    box-shadow 0.08s ease,
+    background 0.08s ease;
+}
+
+[data-part="channel-key"]:first-child [data-part="key-cap"] {
+  border-top-left-radius: var(--key-end);
+  border-bottom-left-radius: var(--key-end);
+}
+
+[data-part="channel-key"]:last-child [data-part="key-cap"] {
+  border-top-right-radius: var(--key-end);
+  border-bottom-right-radius: var(--key-end);
+}
+
+[data-part="key-dish"] {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--noora-neutral-dark-1100), var(--noora-neutral-dark-800));
+  box-shadow: inset 0 1px 2px oklch(from var(--key-shade) l c h / 0.5);
+}
+
+[data-part="key-icon"] {
+  width: 18px;
+  height: 18px;
+  background-color: currentColor;
+  -webkit-mask: var(--key-mask) center / contain no-repeat;
+  mask: var(--key-mask) center / contain no-repeat;
+  transition: background-color 0.12s ease;
+}
+
+[data-part="key-icon"][data-icon="apple"] { --key-mask: url("/images/languages/apple.svg"); }
+[data-part="key-icon"][data-icon="android"] { --key-mask: url("/images/languages/android.svg"); }
+[data-part="key-icon"][data-icon="rust"] { --key-mask: url("/images/languages/rust.svg"); }
+[data-part="key-icon"][data-icon="zig"] { --key-mask: url("/images/languages/zig.svg"); }
+
+[data-part="channel-key"]:hover {
+  color: var(--noora-surface-label-primary);
+}
+
+[data-part="channel-key"]:focus-visible [data-part="key-cap"] {
+  outline: 2px solid var(--struo-primary);
+  outline-offset: -4px;
+}
+
+/* A key that is down has no travel left, so almost none of its side shows. */
+[data-part="channel-key"]:active [data-part="key-cap"],
+[data-part="channel-key"][aria-pressed="true"] [data-part="key-cap"] {
+  background: linear-gradient(to bottom, var(--noora-neutral-dark-900), var(--noora-neutral-dark-1000));
+  box-shadow:
+    inset 0 1px 0 oklch(from var(--key-light) l c h / 0.07),
+    0 1px 0 var(--noora-neutral-dark-1000);
+  translate: 0 -1px;
+}
+
+[data-part="channel-key"][aria-pressed="true"] {
+  color: var(--struo-primary);
+}
+
+/* A tube that has cut out takes the lit mark on the keys down with it. */
+[data-part="crt"][data-power="off"] [data-part="channel-key"][aria-pressed="true"] {
+  color: var(--noora-surface-label-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-part="key-cap"] {
+    transition: none;
+  }
+}
+
+/* Too narrow for the badge and the keys side by side: a smaller bank takes
+   the row under the screen, and the badge follows on its own row, both
+   centered. */
+@media (max-width: 520px) {
+  [data-part="crt-controls"] {
+    justify-content: center;
+  }
+
+  [data-part="channel-keys"] {
+    --key-height: 44px;
+    --key-travel: 5px;
+
+    order: -1;
+    margin-left: 0;
+  }
+
+  [data-part="channel-key"] {
+    width: 52px;
+  }
+
+  [data-part="key-dish"] {
+    width: 30px;
+    height: 30px;
+  }
+
+  [data-part="key-icon"] {
+    width: 16px;
+    height: 16px;
+  }
+
+  [data-part="oss-badge"] {
+    flex-basis: 100%;
+    justify-content: center;
+  }
+}
+
+/* The rotary channel dial, switched off for now: a plain round knob with one
+   orange mark, and a tick for each stop.
+
+[data-part="channel-dial"] {
+  --dial-knob: 58px;
+  --dial-collar: 7px;
+  --dial-tick-radius: 43px;
+
+  position: relative;
+  flex: none;
+  width: 96px;
+  min-width: 0;
+  height: 96px;
+  margin: 0 0 0 auto;
+  border: none;
+  padding: 0;
+}
+
+[data-part="channel-dial"] legend,
+[data-part="dial-stop"] input,
+[data-part="dial-stop-name"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+[data-part="dial-knob"] {
+  position: absolute;
+  top: calc(50% - var(--dial-knob) / 2);
+  left: calc(50% - var(--dial-knob) / 2);
+  width: var(--dial-knob);
+  height: var(--dial-knob);
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 24%, var(--noora-neutral-dark-800), var(--noora-neutral-dark-1000) 74%);
+  box-shadow:
+    inset 0 1px 0 oklch(100% 0 0 / 0.16),
+    inset 0 -3px 5px oklch(0% 0 0 / 0.45),
+    0 0 0 1px oklch(0% 0 0),
+    0 0 0 var(--dial-collar) var(--noora-neutral-dark-1100),
+    0 0 0 calc(var(--dial-collar) + 1px) oklch(100% 0 0 / 0.05),
+    0 10px 14px 3px oklch(0% 0 0 / 0.7);
+  cursor: pointer;
+}
+
+[data-part="channel-dial"]:has(input:focus-visible) [data-part="dial-knob"] {
+  outline: 2px solid var(--struo-primary);
+  outline-offset: calc(var(--dial-collar) + 1px);
+}
+
+[data-part="dial-pointer"] {
+  position: absolute;
+  inset: 0;
+  transform: rotate(var(--dial-angle));
+  transition: transform 0.24s cubic-bezier(0.3, 1.5, 0.55, 1);
+}
+
+[data-part="dial-pointer"]::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  left: calc(50% - 2.5px);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--struo-primary);
+  box-shadow: 0 0 6px oklch(from var(--struo-primary) l c h / 0.7);
+}
+
+Each stop is a tick pushed out from the center of the dial along its angle,
+   so the list needs no per-stop coordinates.
+[data-part="dial-stop"] {
+  position: absolute;
+  top: calc(50% - 4px);
+  left: calc(50% - 1px);
+  width: 2px;
+  height: 8px;
+  border-radius: 1px;
+  background: var(--noora-neutral-dark-700);
+  transform: rotate(var(--stop-angle)) translateY(calc(-1 * var(--dial-tick-radius)));
+  cursor: pointer;
+}
+
+[data-part="dial-stop"]::after {
+  content: "";
+  position: absolute;
+  inset: -6px -8px;
+}
+
+[data-part="dial-stop"]:has(input:checked) {
+  background: var(--struo-primary);
+  box-shadow: 0 0 6px oklch(from var(--struo-primary) l c h / 0.8);
+}
+
+A tube that has cut out takes the lamps on the dial down with it.
+[data-part="crt"][data-power="off"] [data-part="dial-pointer"]::before,
+[data-part="crt"][data-power="off"] [data-part="dial-stop"]:has(input:checked) {
+  background: var(--noora-neutral-dark-700);
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-part="dial-pointer"] {
+    transition: none;
+  }
+}
+*/
 
 [data-part="oss-badge"] {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin: 0 0 22px;
-  border: 1px solid var(--noora-surface-border-primary);
-  border-radius: 999px;
-  background: var(--noora-surface-background-primary);
-  padding: 6px 8px 6px 12px;
-  color: var(--noora-surface-label-primary);
-  font-weight: 600;
-  font-size: 13px;
+  padding-bottom: 4px;
+  color: var(--noora-surface-label-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   text-decoration: none;
-  box-shadow: 0 1px 2px oklch(21.5% 0.006 236.9 / 0.06);
-  transition: box-shadow 0.15s ease;
 }
 
 [data-part="oss-badge"]:hover {
-  box-shadow: 0 0 0 3px oklch(from var(--noora-purple-500) l c h / 0.14);
+  color: var(--struo-primary);
 }
 
 [data-part="oss-icon"] {
   display: inline-flex;
-  color: var(--noora-surface-label-primary);
 }
 
 [data-part="oss-icon"] svg {
@@ -208,282 +773,718 @@ a {
 
 [data-part="oss-sep"] {
   width: 1px;
-  height: 14px;
+  height: 12px;
   background: var(--noora-surface-border-primary);
 }
 
 [data-part="oss-muted"] {
-  color: var(--noora-surface-label-secondary);
-  font-weight: 500;
+  color: var(--noora-surface-label-tertiary);
 }
 
-[data-part="hero"] h1 {
-  max-width: 18ch;
-  margin: 0 0 20px;
-  font-size: clamp(38px, 6vw, 62px);
-  font-weight: 600;
-  line-height: 1.05;
-  letter-spacing: -1.5px;
-  color: var(--noora-surface-label-primary);
+[data-part="hero-pitch"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px 48px;
 }
 
 [data-part="lede"] {
-  max-width: 62ch;
-  margin: 0 0 28px;
+  flex: 1 1 420px;
+  max-width: 64ch;
+  margin: 0;
   color: var(--noora-surface-label-secondary);
-  font-size: clamp(17px, 2.2vw, 20px);
-  line-height: 1.6;
+  font: var(--noora-font-body-large);
 }
 
 [data-part="hero-actions"] {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
-  gap: 12px;
-  width: 100%;
-  margin-bottom: 56px;
+  gap: var(--noora-spacing-4);
 }
 
-[data-part="button"] {
-  display: inline-flex;
-  align-items: center;
-  border-radius: var(--noora-radius-3);
-  padding: 12px 22px;
-  font-weight: 600;
-  font-size: 16px;
-  text-decoration: none;
+/* Cache demo -------------------------------------------------------------- */
+
+/* The demo is one framed instrument, drawn with the same hairlines and type
+   as the rest of the page: an action, the key it hashes to, and what came of
+   it, over a chart of the time the cache saved. It is a flat cousin of the
+   tube in the hero: amber phosphor in a few levels of brightness behind
+   scanlines, color stripes, and grain. It refreshes the way a radar scope
+   does: a fresh readout flickers in bright and settles, and the chart pings
+   where a build lands. */
+
+[data-part="cache-demo"] {
+  padding: 56px 0 16px;
 }
 
-[data-part="button"][data-variant="primary"] {
-  background: var(--noora-purple-500);
-  color: #fff;
-}
+[data-part="demo-frame"] {
+  --demo-phosphor: var(--noora-orange-50);
+  --demo-bright: var(--struo-phosphor-bright);
+  --demo-mid: var(--noora-orange-300);
+  --demo-dim: var(--struo-primary);
+  --demo-faint: oklch(from var(--struo-primary) l c h / 0.6);
+  --demo-line: oklch(from var(--struo-primary) l c h / 0.42);
+  --demo-well: oklch(from var(--struo-primary) l c h / 0.16);
+  --demo-pad: 32px;
 
-[data-part="button"][data-variant="primary"]:hover {
-  background: var(--noora-purple-600);
-}
-
-[data-part="button"][data-variant="secondary"] {
-  border: 1px solid var(--noora-surface-border-primary);
-  background: var(--noora-surface-background-primary);
-  color: var(--noora-surface-label-primary);
-}
-
-[data-part="button"][data-variant="secondary"]:hover {
-  background: var(--noora-surface-background-secondary);
-}
-
-/* Terminal / code panel --------------------------------------------------- */
-
-[data-part="terminal"] {
-  width: 100%;
-  max-width: 760px;
-  min-width: 0;
-  border-radius: var(--noora-radius-4);
-  overflow: hidden;
-  background: oklch(21.5% 0.006 236.9);
-  box-shadow:
-    0 1px 2px oklch(21.5% 0.006 236.9 / 0.2),
-    0 24px 60px oklch(from var(--noora-purple-500) l c h / 0.22);
-  text-align: left;
-}
-
-[data-part="terminal-bar"] {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border-bottom: 1px solid oklch(97.2% 0 0 / 0.08);
-  padding: 12px 16px;
-}
-
-[data-part="terminal-dot"] {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: oklch(97.2% 0 0 / 0.22);
-}
-
-[data-part="terminal-tabs"] {
-  display: flex;
-  gap: 4px;
-  margin-left: 10px;
-}
-
-[data-part="terminal-tab"] {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border: none;
-  border-radius: var(--noora-radius-2);
-  background: transparent;
-  padding: 5px 12px;
-  color: oklch(72.1% 0.017 248.1);
-  font-family: var(--noora-font-body);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-[data-part="tab-icon"] {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  background-color: currentColor;
-  -webkit-mask: var(--tab-mask) center / contain no-repeat;
-  mask: var(--tab-mask) center / contain no-repeat;
-}
-
-[data-part="tab-icon"][data-lang="apple"] { --tab-mask: url("/docs/icons/apple.svg"); }
-[data-part="tab-icon"][data-lang="android"] { --tab-mask: url("/docs/icons/android.svg"); }
-[data-part="tab-icon"][data-lang="rust"] { --tab-mask: url("/docs/icons/rust.svg"); }
-[data-part="tab-icon"][data-lang="zig"] { --tab-mask: url("/docs/icons/zig.svg"); }
-
-[data-part="terminal-tab"]:hover {
-  color: oklch(93% 0.003 247.9);
-}
-
-[data-part="terminal-tab"][data-active="true"] {
-  background: oklch(97.2% 0 0 / 0.1);
-  color: #fff;
-}
-
-[data-part="terminal-panel"] {
-  display: none;
-  margin: 0;
-  padding: 20px;
-  overflow-x: auto;
-  color: oklch(93% 0.003 247.9);
-  font-family: var(--noora-font-code);
-  font-size: 14px;
-  line-height: 1.7;
-}
-
-[data-part="terminal-panel"][data-active="true"] {
-  display: block;
-}
-
-[data-part="terminal"] [data-part="prompt"] {
-  color: var(--noora-purple-300);
-}
-
-[data-part="terminal"] [data-part="hit"] {
-  color: oklch(64% 0.175 146.7);
-}
-
-[data-part="terminal"] [data-part="miss"] {
-  color: oklch(71.9% 0.185 48.7);
-}
-
-/* Feature cards ----------------------------------------------------------- */
-
-[data-part="features"] {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 20px;
-  padding: 40px 0 96px;
-}
-
-[data-part="feature-card"] {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  border-radius: var(--noora-radius-6);
-  background: var(--noora-surface-background-primary);
-  box-shadow:
-    0 1px 1px 0 oklch(16.2% 0 0 / 0.05),
-    0 0 0 1px oklch(32% 0.005 247.968 / 0.08),
-    0 1px 1px 0 oklch(32% 0.005 247.968 / 0.1);
-  overflow: hidden;
-  color: inherit;
-  text-decoration: none;
-  transition: box-shadow 0.15s ease;
-}
-
-[data-part="feature-cta"] {
-  display: inline-block;
-  margin-top: 14px;
-  color: var(--noora-purple-600);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-[data-part="feature-card"]:hover [data-part="feature-cta"] {
-  text-decoration: underline;
-}
-
-[data-part="feature-card"]:hover {
-  box-shadow:
-    0 1px 1px 0 oklch(16.2% 0 0 / 0.05),
-    0 0 0 1px oklch(32% 0.005 247.968 / 0.08),
-    0 1px 3px 0 oklch(32% 0.005 247.968 / 0.1),
-    0 0 0 3px oklch(32% 0.005 247.968 / 0.12);
-}
-
-[data-part="feature-card"] [data-part="image"] {
   position: relative;
-  display: flex;
-  align-items: flex-end;
-  padding: 22px;
-  height: 150px;
+  isolation: isolate;
+  box-shadow: var(--noora-border-small-default);
+  border-radius: var(--noora-radius-4);
+  background:
+    radial-gradient(ellipse at center, transparent 55%, oklch(0% 0 0 / 0.4) 100%),
+    var(--noora-surface-background-primary);
   overflow: hidden;
-  background: var(--struo-card-gradient);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  /* The guns land slightly apart, so a letter has a red edge and a green one,
+     inside the glow of the phosphor around it. */
+  text-shadow:
+    0.5px 0 0 oklch(62% 0.24 28 / 0.4),
+    -0.5px 0 0 oklch(74% 0.17 135 / 0.22),
+    0 0 10px oklch(from var(--struo-primary) l c h / 0.7);
 }
 
-[data-part="feature-card"] [data-part="icon"] {
+/* The face of the tube, over everything: scanlines and the stripes of red,
+   green, and blue phosphor, which darken the picture between them. Its
+   strength wavers a little, as the picture's brightness does.
+
+   Both overlays round their own corners. They animate, and Safari on iOS
+   doesn't clip an animating layer to its parent's rounded corners, which
+   left the bare stripes showing in each corner. */
+[data-part="demo-frame"]::after {
+  content: "";
   position: absolute;
-  right: -14px;
-  bottom: -14px;
-  width: 128px;
-  height: 128px;
-  color: var(--noora-purple-500);
-  opacity: 0.22;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    repeating-linear-gradient(to bottom, transparent 0 2px, oklch(0% 0 0 / 0.3) 2px 3px),
+    repeating-linear-gradient(to right, rgb(255 200 200) 0 1px, rgb(200 255 200) 1px 2px, rgb(200 200 255) 2px 3px);
+  mix-blend-mode: multiply;
   pointer-events: none;
 }
 
-[data-part="feature-card"] [data-part="icon"] svg {
-  width: 100%;
-  height: 100%;
-  stroke-width: 1.5;
+/* Grain, redrawn a few times a second. */
+[data-part="demo-frame"]::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  border-radius: inherit;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0.9 0 0 0 0 0 0.6 0 0 0 0 0 0.3 0 0 0 0 0 1 0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.09;
+  mix-blend-mode: screen;
+  pointer-events: none;
 }
 
-[data-part="feature-card"] [data-part="title"] {
-  color: var(--noora-neutral-light-1200, var(--noora-surface-label-primary));
+[data-part="demo-frame"][data-running="true"]::before {
+  animation: demo-grain 0.5s steps(1) infinite;
+}
+
+[data-part="demo-frame"][data-running="true"]::after {
+  animation: demo-flicker 0.9s steps(1) infinite;
+}
+
+@keyframes demo-grain {
+  25% {
+    background-position: 67px 113px;
+  }
+
+  50% {
+    background-position: 131px 41px;
+  }
+
+  75% {
+    background-position: 23px 89px;
+  }
+}
+
+@keyframes demo-flicker {
+  15% {
+    opacity: 0.93;
+  }
+
+  30% {
+    opacity: 1;
+  }
+
+  55% {
+    opacity: 0.9;
+  }
+
+  70% {
+    opacity: 0.97;
+  }
+}
+
+[data-part="demo-label"] {
+  margin: 0;
+  color: var(--demo-dim);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+[data-part="demo-label"] span {
+  margin-left: 6px;
+  color: var(--demo-faint);
+}
+
+/* A readout that was just rewritten flickers in at phosphor brightness and
+   decays to its resting color. The script replays this on every change. */
+[data-part="demo-frame"] [data-readout] {
+  animation: demo-refresh 0.45s linear;
+}
+
+@keyframes demo-refresh {
+  0% {
+    opacity: 0.15;
+  }
+
+  12%,
+  36% {
+    opacity: 1;
+    color: var(--demo-phosphor);
+    text-shadow:
+      0 0 2px var(--demo-phosphor),
+      0 0 16px var(--struo-primary);
+  }
+
+  24% {
+    opacity: 0.5;
+  }
+}
+
+/* Labels sit in the first row and everything else in the second, so the grid
+   fills column by column in the order the markup is written. */
+[data-part="demo-flow"] {
+  display: grid;
+  grid-template-rows: auto auto;
+  grid-template-columns: minmax(0, 1.25fr) 40px minmax(0, 0.75fr) 40px minmax(0, 1fr);
+  grid-auto-flow: column;
+  row-gap: 14px;
+  padding: var(--demo-pad);
+}
+
+[data-part="demo-flow"] > :not([data-part="demo-label"]) {
+  grid-row: 2;
+}
+
+[data-part="demo-panel"] {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+  border: 1px solid var(--demo-line);
+  border-radius: var(--noora-radius-3);
+  padding: 16px;
+  line-height: 1.3;
+  white-space: nowrap;
+  transition: border-color 0.15s ease;
+}
+
+[data-part="demo-panel"][data-active="true"] {
+  border-color: var(--struo-primary);
+  box-shadow:
+    0 0 12px oklch(from var(--struo-primary) l c h / 0.22),
+    inset 0 0 12px oklch(from var(--struo-primary) l c h / 0.1);
+}
+
+[data-part="demo-command"] {
+  margin: 0;
+  color: var(--demo-bright);
+}
+
+[data-part="demo-command"]::before {
+  content: "$ ";
+  color: var(--demo-dim);
+}
+
+[data-part="demo-facts"] {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+[data-part="demo-facts"] div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+[data-part="demo-facts"] dt,
+[data-part="demo-caption"] {
+  color: var(--demo-dim);
+  font-size: 12px;
+}
+
+[data-part="demo-facts"] dd {
+  margin: 0;
+  color: var(--demo-mid);
+}
+
+[data-part="demo-value"] {
+  color: var(--demo-bright);
+  font-size: 16px;
+  font-weight: 500;
+}
+
+[data-part="demo-panel"]:not([data-active="true"]) [data-part="demo-value"] {
+  color: var(--demo-dim);
+}
+
+/* Whether the key was already in the cache. */
+[data-part="demo-result"] {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  height: 20px;
+  border-radius: var(--noora-radius-1);
+  padding: 0 6px;
+  font-size: 11px;
   font-weight: 600;
-  font-size: 22px;
-  letter-spacing: -0.4px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
-[data-part="feature-card"] [data-part="body"] {
-  padding: 0 22px 24px;
+[data-part="demo-result"]:empty {
+  visibility: hidden;
 }
 
-[data-part="feature-card"] [data-part="body"] p {
+[data-part="demo-result"][data-result="hit"] {
+  background: var(--demo-bright);
+  color: var(--struo-on-primary);
+  text-shadow: none;
+}
+
+[data-part="demo-result"][data-result="miss"] {
+  box-shadow: inset 0 0 0 1px var(--demo-dim);
+  color: var(--demo-mid);
+}
+
+[data-part="demo-panel"]:not([data-active="true"]) [data-part="demo-result"] {
+  opacity: 0.45;
+}
+
+/* A row of segments, filled a step at a time. Its margin makes it as tall as
+   the badge that ends the key panel, so the values above the two share a
+   line. */
+[data-part="demo-progress"] {
+  display: block;
+  margin-top: 15px;
+  height: 5px;
+  background: var(--demo-well);
+  -webkit-mask-image: repeating-linear-gradient(to right, #000 0 6px, transparent 6px 8px);
+  mask-image: repeating-linear-gradient(to right, #000 0 6px, transparent 6px 8px);
+}
+
+[data-part="demo-progress"] span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--struo-primary);
+}
+
+/* A wire lights from the end the build arrives at. It goes dark at once. */
+[data-part="demo-wire"] {
+  --wire-dark: scaleX(0);
+  --wire-origin: left;
+
+  position: relative;
+  align-self: center;
+  width: 100%;
+  height: 1px;
+  background: var(--demo-line);
+}
+
+[data-part="demo-wire"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--struo-primary);
+  transform: var(--wire-dark);
+  transform-origin: var(--wire-origin);
+}
+
+[data-part="demo-wire"][data-active="true"]::after {
+  transform: none;
+  transition: transform var(--wire-ms, 400ms) ease-in-out;
+}
+
+[data-part="demo-chart"] {
+  border-top: 1px solid var(--demo-line);
+  padding: 24px var(--demo-pad) 28px;
+}
+
+[data-part="demo-chart-head"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin-bottom: 26px;
+}
+
+[data-part="demo-legend"] {
+  display: flex;
+  gap: 16px;
+  margin: 0;
+  color: var(--demo-dim);
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+[data-part="demo-legend"] span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Each swatch is a short piece of its line in the plot: same color, weight,
+   glow, and dashes. */
+[data-part="demo-legend"] span::before {
+  content: "";
+  width: 20px;
+}
+
+[data-part="demo-legend"] [data-swatch="once"]::before {
+  height: 2px;
+  background: var(--demo-bright);
+  box-shadow: 0 0 4px oklch(from var(--struo-primary) l c h / 0.8);
+}
+
+[data-part="demo-legend"] [data-swatch="none"]::before {
+  height: 1.5px;
+  background: repeating-linear-gradient(to right, var(--demo-dim) 0 4px, transparent 4px 8px);
+}
+
+[data-part="demo-plot"] {
+  --plot-gutter: 30px;
+
+  position: relative;
+  height: 140px;
+}
+
+[data-part="demo-ticks"] {
+  position: absolute;
+  inset: 0;
+}
+
+[data-part="demo-tick"] {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 0;
+  color: var(--demo-dim);
+  font-size: 11px;
+  line-height: 0;
+}
+
+[data-part="demo-tick"]::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: var(--plot-gutter);
+  height: 1px;
+  background: var(--demo-well);
+}
+
+[data-part="demo-tick"]:first-child::after {
+  background: var(--demo-line);
+}
+
+[data-part="demo-lines"],
+[data-part="demo-contacts"] {
+  position: absolute;
+  top: 0;
+  left: var(--plot-gutter);
+  width: calc(100% - var(--plot-gutter));
+  height: 100%;
+}
+
+/* The plot is ruled into eight divisions, like the face of a scope. */
+[data-part="demo-lines"] {
+  background: repeating-linear-gradient(to right, transparent 0 calc(12.5% - 1px), var(--demo-well) calc(12.5% - 1px) 12.5%);
+  overflow: visible;
+}
+
+/* Each action leaves a mark where it left the total. A restored one is a
+   blip that fades; a built one pings and stays. */
+[data-part="demo-contact"] {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  margin: 0 0 -2.5px -2.5px;
+  border-radius: 50%;
+  background: var(--demo-phosphor);
+}
+
+[data-part="demo-contact"][data-result="hit"] {
+  animation: demo-blip 1.4s ease-out forwards;
+}
+
+[data-part="demo-contact"][data-result="miss"] {
+  background: var(--struo-primary);
+}
+
+[data-part="demo-contact"][data-result="miss"]::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border: 1px solid var(--demo-phosphor);
+  border-radius: 50%;
+  animation: demo-ping 1.6s ease-out forwards;
+}
+
+@keyframes demo-blip {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes demo-ping {
+  to {
+    transform: scale(8);
+    opacity: 0;
+  }
+}
+
+[data-part="demo-lines"] path {
+  fill: none;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+[data-part="demo-lines"] [data-series="once"] {
+  stroke: var(--demo-bright);
+  stroke-width: 2;
+  filter: drop-shadow(0 0 4px oklch(from var(--struo-primary) l c h / 0.8));
+}
+
+[data-part="demo-lines"] [data-series="none"] {
+  stroke: var(--demo-dim);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+}
+
+[data-part="demo-stats"] {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  border-top: 1px solid var(--demo-line);
+}
+
+[data-part="demo-stats"] div {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 22px var(--demo-pad) 20px;
+}
+
+[data-part="demo-stats"] div + div {
+  border-left: 1px solid var(--demo-line);
+}
+
+[data-part="demo-stats"] dd {
+  margin: 0;
+  color: var(--demo-phosphor);
+  text-shadow:
+    0 0 1px var(--demo-bright),
+    0 0 12px var(--struo-primary);
+  font-family: var(--struo-font-display);
+  font-size: 34px;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* The display face has no tabular figures, so each digit of a total sits in
+   a cell as wide as the widest of them. */
+[data-part="demo-digit"] {
+  display: inline-block;
+  width: 0.69em;
+  text-align: center;
+}
+
+@media (max-width: 960px) {
+  [data-part="demo-frame"] {
+    --demo-pad: 20px;
+  }
+
+  [data-part="demo-flow"] {
+    grid-template-columns: minmax(0, 1.2fr) 24px minmax(0, 0.7fr) 24px minmax(0, 1fr);
+  }
+}
+
+/* On a narrow screen the path runs downward. */
+@media (max-width: 840px) {
+  [data-part="demo-flow"] {
+    grid-template-rows: none;
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-flow: row;
+    row-gap: 0;
+    max-width: 420px;
+    margin: 0 auto;
+  }
+
+  [data-part="demo-flow"] > :not([data-part="demo-label"]) {
+    grid-row: auto;
+  }
+
+  [data-part="demo-flow"] > [data-part="demo-label"] {
+    margin-bottom: 10px;
+  }
+
+  [data-part="demo-progress"] {
+    margin-top: 0;
+  }
+
+  [data-part="demo-wire"] {
+    --wire-dark: scaleY(0);
+    --wire-origin: top;
+
+    justify-self: center;
+    width: 1px;
+    height: 22px;
+    margin: 8px 0 14px;
+  }
+}
+
+/* On a phone each total is a row: its name, then its value. */
+@media (max-width: 640px) {
+  [data-part="demo-stats"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  [data-part="demo-stats"] div {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px var(--demo-pad);
+  }
+
+  [data-part="demo-stats"] div + div {
+    border-top: 1px solid var(--demo-line);
+    border-left: none;
+  }
+
+  [data-part="demo-stats"] dd {
+    font-size: 26px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-part="demo-panel"],
+  [data-part="demo-wire"][data-active="true"]::after {
+    transition: none;
+  }
+
+  [data-part="demo-frame"]::before,
+  [data-part="demo-frame"]::after,
+  [data-part="demo-frame"] [data-readout] {
+    animation: none;
+  }
+
+  [data-part="demo-contact"][data-result="hit"] {
+    display: none;
+  }
+
+  [data-part="demo-contact"][data-result="miss"]::after {
+    content: none;
+  }
+}
+
+/* Features ---------------------------------------------------------------- */
+
+[data-part="features"] {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 40px 56px;
+  padding: 56px 0 104px;
+}
+
+[data-part="feature"] {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  color: inherit;
+  text-decoration: none;
+}
+
+[data-part="feature-title"] {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  color: var(--noora-surface-label-primary);
+  font: var(--noora-font-weight-medium) var(--noora-font-body-large);
+  transition: color 0.15s ease;
+}
+
+[data-part="feature-icon"],
+[data-part="feature-chevron"] {
+  display: inline-flex;
+}
+
+[data-part="feature-icon"] svg {
+  width: 18px;
+  height: 18px;
+}
+
+[data-part="feature-chevron"] {
+  margin-left: -4px;
+  color: var(--noora-surface-label-tertiary);
+  transition:
+    color 0.15s ease,
+    transform 0.15s ease;
+}
+
+[data-part="feature-chevron"] svg {
+  width: 16px;
+  height: 16px;
+}
+
+[data-part="feature-details"] {
+  max-width: 44ch;
   margin: 0;
   color: var(--noora-surface-label-secondary);
-  font-size: 15px;
-  line-height: 1.6;
+  font: var(--noora-font-body-large);
+}
+
+[data-part="feature"]:hover [data-part="feature-title"],
+[data-part="feature"]:hover [data-part="feature-chevron"] {
+  color: var(--struo-primary);
+}
+
+[data-part="feature"]:hover [data-part="feature-chevron"] {
+  transform: translateX(2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-part="feature-chevron"] {
+    transition: none;
+  }
 }
 
 /* Supported languages ----------------------------------------------------- */
 
 [data-part="languages"] {
   text-align: center;
-  padding: 24px 0 96px;
+  padding: clamp(48px, 7vw, 96px) 0 96px;
 }
 
-[data-part="section-eyebrow"] {
-  margin: 0 0 10px;
-  color: var(--noora-purple-600);
-  font-weight: 600;
-  font-size: 14px;
-}
-
-[data-part="languages"] h2 {
-  margin: 0 auto 14px;
-  max-width: 20ch;
-  font-size: clamp(26px, 3.4vw, 36px);
-  font-weight: 600;
-  letter-spacing: -0.8px;
+:is([data-part="languages"], [data-part="gaps"]) h2 {
+  margin: 0 0 14px;
+  font: var(--noora-font-display-small);
+  text-wrap: balance;
+  text-transform: uppercase;
   color: var(--noora-surface-label-primary);
 }
 
@@ -491,70 +1492,284 @@ a {
   max-width: 52ch;
   margin: 0 auto 36px;
   color: var(--noora-surface-label-secondary);
-  font-size: 17px;
-  line-height: 1.6;
+  font: var(--noora-font-body-large);
 }
 
+/* The languages are a board of keys in the manner of a Teenage Engineering
+   instrument, with the lights off: flat tiles divided by grooves, each
+   carrying a round cap with its mark drawn in line. Every color is one of
+   Noora's: the grooves are the page surface, the tiles and caps are steps of
+   its dark neutral scale, and the shadows are its black. Color is kept for
+   the signal: a cap's mark lights when it is pointed at, and the cap sinks
+   when it is pressed. */
 [data-part="language-grid"] {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 12px;
-  max-width: 860px;
-  margin: 0 auto;
+  --key-shade: var(--noora-alpha-black-80);
+  --key-light: var(--noora-neutral-dark-50);
+
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 2px;
+  box-shadow: var(--noora-border-small-default);
+  border-radius: var(--noora-radius-6);
+  background: var(--noora-surface-background-primary);
+  padding: 2px;
 }
 
 [data-part="language-chip"] {
-  display: inline-flex;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 9px;
-  border: 1px solid var(--noora-surface-border-primary);
-  border-radius: 999px;
-  background: var(--noora-surface-background-primary);
-  padding: 9px 16px 9px 12px;
-  font-size: 15px;
+  gap: 16px;
+  min-width: 0;
+  border-radius: var(--noora-radius-3);
+  background: var(--noora-neutral-dark-1100);
+  box-shadow: inset 0 1px 0 oklch(from var(--key-light) l c h / 0.05);
+  padding: 24px 8px 16px;
+  color: var(--noora-surface-label-secondary);
   font-weight: 500;
-  color: var(--noora-surface-label-primary);
+  font-size: 11px;
+  line-height: 1.3;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   text-decoration: none;
-  transition: box-shadow 0.15s ease;
+  transition: color 0.12s ease;
 }
 
-[data-part="language-chip"]:hover {
-  box-shadow: 0 0 0 3px oklch(from var(--noora-purple-500) l c h / 0.12);
+[data-part="language-chip"]:hover,
+[data-part="language-chip"]:focus-visible {
+  color: var(--noora-surface-label-primary);
 }
 
-[data-part="language-chip"] [data-part="lang-icon"] {
-  display: inline-block;
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  background-color: var(--lang-color, var(--noora-surface-label-primary));
+[data-part="language-chip"]:focus-visible {
+  outline-offset: -3px;
+}
+
+/* The cap stands proud of its tile in a shallow well: light catches its top
+   edge and it throws a shadow below. */
+[data-part="lang-cap"] {
+  display: grid;
+  place-items: center;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: linear-gradient(to bottom, var(--noora-neutral-dark-900), var(--noora-neutral-dark-1000));
+  box-shadow:
+    inset 0 1px 0 oklch(from var(--key-light) l c h / 0.14),
+    0 0 0 1px oklch(from var(--key-shade) l c h / 0.55),
+    0 0 0 5px oklch(from var(--key-shade) l c h / 0.16),
+    0 8px 10px -3px oklch(from var(--key-shade) l c h / 0.75);
+  color: var(--noora-neutral-dark-100);
+  transition:
+    color 0.12s ease,
+    translate 0.08s ease,
+    box-shadow 0.08s ease;
+}
+
+[data-part="language-chip"]:hover [data-part="lang-cap"],
+[data-part="language-chip"]:focus-visible [data-part="lang-cap"] {
+  color: var(--struo-primary);
+}
+
+[data-part="language-chip"]:active [data-part="lang-cap"] {
+  translate: 0 2px;
+  box-shadow:
+    inset 0 1px 0 oklch(from var(--key-light) l c h / 0.06),
+    0 0 0 1px oklch(from var(--key-shade) l c h / 0.55),
+    0 -2px 0 5px oklch(from var(--key-shade) l c h / 0.16),
+    0 2px 3px -1px oklch(from var(--key-shade) l c h / 0.75);
+}
+
+[data-part="lang-icon"] {
+  width: var(--lang-size, 24px);
+  height: var(--lang-size, 24px);
+  background-color: currentColor;
   -webkit-mask: var(--lang-mask) center / contain no-repeat;
   mask: var(--lang-mask) center / contain no-repeat;
 }
 
-[data-part="lang-icon"][data-lang="rust"] { --lang-mask: url("/docs/icons/rust.svg"); --lang-color: var(--noora-surface-label-primary); }
-[data-part="lang-icon"][data-lang="apple"] { --lang-mask: url("/docs/icons/apple.svg"); --lang-color: var(--noora-surface-label-primary); }
-[data-part="lang-icon"][data-lang="swift"] { --lang-mask: url("/docs/icons/swift.svg"); --lang-color: oklch(62% 0.1659 48.81); }
-[data-part="lang-icon"][data-lang="android"] { --lang-mask: url("/docs/icons/android.svg"); --lang-color: oklch(53.7% 0.1613 146.6); }
-[data-part="lang-icon"][data-lang="cplusplus"] { --lang-mask: url("/docs/icons/cplusplus.svg"); --lang-color: oklch(57% 0.127 238.5); }
-[data-part="lang-icon"][data-lang="go"] { --lang-mask: url("/docs/icons/go.svg"); --lang-color: oklch(57% 0.127 238.5); }
-[data-part="lang-icon"][data-lang="elixir"] { --lang-mask: url("/docs/icons/elixir.svg"); --lang-color: oklch(53.2% 0.276 286.9); }
-[data-part="lang-icon"][data-lang="kotlin"] { --lang-mask: url("/docs/icons/kotlin.svg"); --lang-color: oklch(53.2% 0.276 286.9); }
-[data-part="lang-icon"][data-lang="zig"] { --lang-mask: url("/docs/icons/zig.svg"); --lang-color: oklch(62% 0.1659 48.81); }
-[data-part="lang-icon"][data-lang="react-native"] { --lang-mask: url("/docs/icons/react-native.svg"); --lang-color: #149eca; }
+/* Tabler's outline icons, with a Zig mark drawn to match. Tabler has no mark
+   for Elixir or Ruby, so those keys carry its drop and its gem. */
+[data-part="lang-icon"][data-lang="swift"] { --lang-mask: url("/images/languages/swift.svg"); }
+[data-part="lang-icon"][data-lang="apple"] { --lang-mask: url("/images/languages/apple.svg"); }
+[data-part="lang-icon"][data-lang="kotlin"] { --lang-mask: url("/images/languages/kotlin.svg"); }
+[data-part="lang-icon"][data-lang="android"] { --lang-mask: url("/images/languages/android.svg"); }
+[data-part="lang-icon"][data-lang="rust"] { --lang-mask: url("/images/languages/rust.svg"); }
+/* Go's mark is a wordmark that fills a third of its box, so it is drawn a little larger. */
+[data-part="lang-icon"][data-lang="go"] { --lang-mask: url("/images/languages/go.svg"); --lang-size: 30px; }
+[data-part="lang-icon"][data-lang="cplusplus"] { --lang-mask: url("/images/languages/cplusplus.svg"); }
+[data-part="lang-icon"][data-lang="elixir"] { --lang-mask: url("/images/languages/elixir.svg"); }
+[data-part="lang-icon"][data-lang="ruby"] { --lang-mask: url("/images/languages/ruby.svg"); }
+[data-part="lang-icon"][data-lang="javascript"] { --lang-mask: url("/images/languages/javascript.svg"); }
+[data-part="lang-icon"][data-lang="react-native"] { --lang-mask: url("/images/languages/react-native.svg"); }
+[data-part="lang-icon"][data-lang="zig"] { --lang-mask: url("/images/languages/zig.svg"); }
 
-[data-part="lang-icon"][data-lang="ruby"],
-[data-part="lang-icon"][data-lang="javascript"] {
-  background-color: transparent;
-  -webkit-mask: none;
-  mask: none;
-  background-position: center;
-  background-size: contain;
-  background-repeat: no-repeat;
+@media (max-width: 960px) {
+  [data-part="language-grid"] {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
-[data-part="lang-icon"][data-lang="ruby"] { background-image: url("/docs/icons/ruby.svg"); }
-[data-part="lang-icon"][data-lang="javascript"] { background-image: url("/docs/icons/javascript.svg"); }
+
+@media (max-width: 640px) {
+  [data-part="language-grid"] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  [data-part="language-chip"] {
+    gap: 14px;
+    padding: 20px 4px 14px;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+  }
+
+  [data-part="lang-cap"] {
+    width: 52px;
+    height: 52px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-part="language-chip"],
+  [data-part="lang-cap"] {
+    transition: none;
+  }
+}
+
+/* Find the gaps ----------------------------------------------------------- */
+
+/* A prompt to hand to a coding agent, framed like the language board above
+   it: the same border and tile color, with the copy button in its top bar. */
+
+[data-part="gaps"] {
+  padding: clamp(48px, 7vw, 96px) 0 96px;
+  text-align: center;
+}
+
+[data-part="gaps"] [data-part="section-copy"] {
+  max-width: 62ch;
+}
+
+[data-part="prompt-card"] {
+  max-width: 820px;
+  margin: 0 auto;
+  box-shadow: var(--noora-border-small-default);
+  border-radius: var(--noora-radius-4);
+  background: var(--noora-neutral-dark-1100);
+  text-align: left;
+}
+
+[data-part="prompt-bar"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--noora-spacing-5);
+  border-bottom: 1px solid var(--noora-surface-border-primary);
+  padding: var(--noora-spacing-3) var(--noora-spacing-4) var(--noora-spacing-3) var(--noora-spacing-8);
+}
+
+[data-part="prompt-label"] {
+  color: var(--noora-surface-label-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+[data-part="prompt-text"] {
+  padding: var(--noora-spacing-8) var(--noora-spacing-8) 0;
+  color: var(--noora-surface-label-secondary);
+  font: var(--noora-font-body-medium);
+  line-height: 1.6;
+}
+
+[data-part="prompt-text"] pre {
+  margin: 0;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+[data-part="prompt-text"] [data-part="prompt-rest"] {
+  margin-top: 1lh;
+}
+
+/* Folded, the steps show their first lines fading out, so it is plain that
+   the prompt goes on. */
+[data-part="prompt-card"]:not([data-expanded]) [data-part="prompt-rest"] {
+  max-height: 3lh;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, #000, transparent 90%);
+}
+
+/* The toggle sits on the card's bottom edge, half in and half out, so it
+   takes the card's fill to cover the border behind it. `translate` leaves
+   `transform` to the button's own press effect. */
+[data-part="prompt-more"] {
+  display: flex;
+  justify-content: center;
+  padding-top: var(--noora-spacing-4);
+}
+
+[data-part="prompt-card"] [data-part="prompt-toggle"] {
+  translate: 0 50%;
+  background: var(--noora-neutral-dark-1100);
+}
+
+[data-part="prompt-toggle-icon"] {
+  display: inline-flex;
+  transition: transform 150ms var(--ease-out-cubic);
+}
+
+[data-part="prompt-card"][data-expanded] [data-part="prompt-toggle-icon"] {
+  transform: rotate(180deg);
+}
+
+/* Without scripts nothing can unfold the prompt, so it is shown whole. */
+@media (scripting: none) {
+  [data-part="prompt-card"] [data-part="prompt-rest"] {
+    max-height: none;
+    mask-image: none;
+  }
+
+  [data-part="prompt-card"] [data-part="prompt-text"] {
+    padding-bottom: var(--noora-spacing-8);
+  }
+
+  [data-part="prompt-more"] {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-part="prompt-toggle-icon"] {
+    transition: none;
+  }
+}
+
+@media (max-width: 640px) {
+  [data-part="prompt-text"] {
+    padding: var(--noora-spacing-6) var(--noora-spacing-6) 0;
+  }
+
+  [data-part="prompt-bar"] {
+    padding-left: var(--noora-spacing-6);
+  }
+}
+
+/* The toggle hangs below the card, so the note starts further down. */
+[data-part="gaps-note"] {
+  margin: var(--noora-spacing-10) 0 0;
+  color: var(--noora-surface-label-tertiary);
+  font: var(--noora-font-body-medium);
+}
+
+[data-part="gaps-note"] a {
+  color: var(--noora-surface-label-primary);
+  text-underline-offset: 0.2em;
+}
+
+[data-part="gaps-note"] a:hover {
+  color: var(--struo-primary);
+}
 
 /* Footer ------------------------------------------------------------------ */
 
@@ -574,14 +1789,17 @@ a {
 [data-part="footer-brand"] {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-weight: 600;
+  gap: 6px;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  text-transform: lowercase;
   color: var(--noora-surface-label-primary);
 }
 
 [data-part="footer-brand"] [data-part="brand-logo"] {
-  width: 24px;
-  height: 24px;
+  height: 20px;
 }
 
 [data-part="site-footer"] p {
@@ -592,7 +1810,8 @@ a {
 
 [data-part="footer-nav"] {
   display: flex;
-  gap: 18px;
+  flex-wrap: wrap;
+  gap: 8px 18px;
 }
 
 [data-part="footer-nav"] a {
@@ -605,7 +1824,7 @@ a {
 }
 
 [data-part="site-footer"] p a {
-  color: var(--noora-purple-600);
+  color: var(--struo-primary);
   font-weight: 500;
   text-decoration: none;
 }
@@ -615,7 +1834,7 @@ a {
 }
 
 [data-part="heart"] {
-  color: oklch(58.7% 0.23 30.7);
+  color: var(--noora-red-500);
 }
 
 /* Registry page ----------------------------------------------------------- */
@@ -636,10 +1855,6 @@ a {
   letter-spacing: -1px;
 }
 
-[data-part="registry-page"] [data-part="eyebrow"] {
-  display: inline-block;
-}
-
 [data-part="page-copy"] {
   color: var(--noora-surface-label-secondary);
   font-size: 18px;
@@ -657,7 +1872,7 @@ a {
   flex-direction: column;
   gap: 12px;
   border-radius: var(--noora-radius-4);
-  border: 1px solid var(--noora-surface-border-primary);
+  box-shadow: var(--noora-border-small-default);
   background: var(--noora-surface-background-primary);
   padding: 22px;
 }
@@ -675,10 +1890,10 @@ a {
 }
 
 [data-part^="entry-kind-"] {
-  border-radius: 999px;
-  background: var(--noora-purple-soft, oklch(from var(--noora-purple-500) l c h / 0.12));
+  border-radius: var(--noora-radius-2);
+  background: var(--struo-primary-soft);
   padding: 3px 10px;
-  color: var(--noora-purple-600);
+  color: var(--struo-primary);
   font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
@@ -708,7 +1923,7 @@ a {
 }
 
 [data-part="entry-tag"] {
-  border-radius: 999px;
+  border-radius: var(--noora-radius-2);
   border: 1px solid var(--noora-surface-border-primary);
   padding: 3px 10px;
   color: var(--noora-surface-label-secondary);
@@ -728,10 +1943,9 @@ a {
 }
 
 [data-part="changelog-header"] h1 {
-  margin: 12px 0 14px;
-  font-size: clamp(30px, 4vw, 44px);
-  font-weight: 600;
-  letter-spacing: -1px;
+  margin: 0 0 14px;
+  font: var(--noora-font-display-large);
+  text-transform: uppercase;
 }
 
 [data-part="changelog-header"] [data-part="page-copy"] {
@@ -747,7 +1961,7 @@ a {
 
 [data-part="subscribe"] a {
   border: 1px solid var(--noora-surface-border-primary);
-  border-radius: 999px;
+  border-radius: var(--noora-radius-2);
   padding: 5px 14px;
   color: var(--noora-surface-label-secondary);
   font-size: 13px;
@@ -756,8 +1970,8 @@ a {
 }
 
 [data-part="subscribe"] a:hover {
-  color: var(--noora-purple-600);
-  border-color: var(--noora-purple-500);
+  color: var(--struo-primary);
+  border-color: var(--struo-primary);
 }
 
 [data-part="changelog-list"] {
@@ -784,10 +1998,8 @@ a {
 }
 
 [data-part="entry-content"] h2 {
-  margin: 0 0 12px;
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.4px;
+  margin: 0 0 8px;
+  font: var(--noora-font-weight-semibold) var(--noora-font-heading-medium);
 }
 
 [data-part="entry-content"] h2 a {
@@ -796,13 +2008,14 @@ a {
 }
 
 [data-part="entry-content"] h2 a:hover {
-  color: var(--noora-purple-600);
+  color: var(--struo-primary);
 }
 
+/* The size and line height of a blog post's text. */
 [data-part="entry-prose"] {
   color: var(--noora-surface-label-secondary);
-  font-size: 16px;
-  line-height: 1.7;
+  font: var(--noora-font-weight-regular) var(--noora-font-body-medium);
+  line-height: 1.65;
 }
 
 [data-part="entry-prose"] p {
@@ -810,7 +2023,7 @@ a {
 }
 
 [data-part="entry-prose"] a {
-  color: var(--noora-purple-600);
+  color: var(--struo-primary);
   text-decoration: none;
 }
 
@@ -831,19 +2044,6 @@ a {
   padding-left: 20px;
 }
 
-[data-part="entry-permalink"] {
-  display: inline-block;
-  margin-top: 14px;
-  color: var(--noora-purple-600);
-  font-size: 13px;
-  font-weight: 600;
-  text-decoration: none;
-}
-
-[data-part="entry-permalink"]:hover {
-  text-decoration: underline;
-}
-
 /* Changelog entry detail page */
 [data-part="changelog-detail"] {
   max-width: none;
@@ -859,7 +2059,7 @@ a {
 }
 
 [data-part="back-link"]:hover {
-  color: var(--noora-purple-600);
+  color: var(--struo-primary);
 }
 
 [data-part="detail-date"] {
@@ -871,10 +2071,8 @@ a {
 }
 
 [data-part="changelog-detail"] h1 {
-  margin: 0 0 26px;
-  font-size: clamp(28px, 4vw, 40px);
-  font-weight: 600;
-  letter-spacing: -0.8px;
+  margin: 0 0 8px;
+  font: var(--noora-font-weight-semibold) var(--noora-font-heading-medium);
 }
 
 @media (max-width: 640px) {
@@ -899,15 +2097,10 @@ a {
   margin-bottom: 48px;
 }
 
-[data-part="blog-header"] [data-part="eyebrow"] {
-  display: inline-block;
-}
-
 [data-part="blog-header"] h1 {
-  margin: 12px 0 14px;
-  font-size: clamp(34px, 5vw, 52px);
-  font-weight: 600;
-  letter-spacing: -1.2px;
+  margin: 0 0 14px;
+  font: var(--noora-font-display-large);
+  text-transform: uppercase;
 }
 
 [data-part="blog-header"] [data-part="page-copy"] {
@@ -925,7 +2118,7 @@ a {
 
 [data-part="blog-empty"] {
   border: 1px dashed var(--noora-surface-border-primary);
-  border-radius: 8px;
+  border-radius: var(--noora-radius-4);
   padding: 40px;
   text-align: center;
 }
@@ -943,21 +2136,15 @@ a {
 }
 
 [data-part="blog-entry"] {
-  border: 1px solid var(--noora-surface-border-primary);
-  border-radius: 8px;
+  box-shadow: var(--noora-border-small-default);
+  border-radius: var(--noora-radius-4);
   background: var(--noora-surface-background-primary);
   overflow: hidden;
-  box-shadow: 0 1px 2px oklch(21.5% 0.006 236.9 / 0.04);
-  transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease,
-    transform 0.15s ease;
+  transition: box-shadow 0.15s ease;
 }
 
 [data-part="blog-entry"]:hover {
-  transform: translateY(-2px);
-  border-color: color-mix(in oklch, var(--noora-purple-500) 42%, transparent);
-  box-shadow: 0 12px 30px oklch(from var(--noora-purple-500) l c h / 0.1);
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--struo-primary) 42%, transparent);
 }
 
 [data-part="blog-entry-link"] {
@@ -981,19 +2168,16 @@ a {
 }
 
 [data-part="blog-entry-copy"] h2 {
-  margin: 10px 0;
+  margin: 12px 0 8px;
   color: var(--noora-surface-label-primary);
-  font-size: clamp(22px, 3vw, 28px);
-  font-weight: 600;
-  letter-spacing: -0.6px;
+  font: var(--noora-font-weight-semibold) var(--noora-font-heading-medium);
 }
 
 [data-part="blog-entry-copy"] > p {
   max-width: 62ch;
   margin: 0;
   color: var(--noora-surface-label-secondary);
-  font-size: 16px;
-  line-height: 1.65;
+  font: var(--noora-font-weight-regular) var(--noora-font-body-large);
 }
 
 [data-part="post-authors"] {
@@ -1049,7 +2233,7 @@ a {
 [data-part="pagination-link"] {
   width: fit-content;
   border: 1px solid var(--noora-surface-border-primary);
-  border-radius: 8px;
+  border-radius: var(--noora-radius-4);
   background: var(--noora-surface-background-primary);
   padding: 9px 14px;
   color: var(--noora-surface-label-primary);
@@ -1074,8 +2258,8 @@ a {
 }
 
 [data-part="pagination-link"]:hover {
-  border-color: var(--noora-purple-500);
-  color: var(--noora-purple-600);
+  border-color: var(--struo-primary);
+  color: var(--struo-primary);
 }
 
 [data-part="pagination-status"] {
@@ -1098,19 +2282,15 @@ a {
 }
 
 [data-part="post-header"] h1 {
-  margin: 14px 0 16px;
+  margin: 12px 0 8px;
   color: var(--noora-surface-label-primary);
-  font-size: clamp(34px, 5vw, 52px);
-  font-weight: 600;
-  line-height: 1.1;
-  letter-spacing: -1.2px;
+  font: var(--noora-font-weight-semibold) var(--noora-font-heading-medium);
 }
 
 [data-part="post-description"] {
-  margin: 0 0 26px;
+  margin: 0 0 24px;
   color: var(--noora-surface-label-secondary);
-  font-size: 20px;
-  line-height: 1.6;
+  font: var(--noora-font-weight-regular) var(--noora-font-body-large);
 }
 
 [data-part="post-header"] [data-part="author-avatar"] {
@@ -1118,10 +2298,11 @@ a {
   height: 56px;
 }
 
+/* Noora's body size with the line height of the docs pages. */
 [data-part="blog-prose"] {
   color: var(--noora-surface-label-primary);
-  font-size: 17px;
-  line-height: 1.78;
+  font: var(--noora-font-weight-regular) var(--noora-font-body-medium);
+  line-height: 1.65;
 }
 
 [data-part="blog-prose"] h2,
@@ -1154,7 +2335,7 @@ a {
 }
 
 [data-part="blog-prose"] a {
-  color: var(--noora-purple-600);
+  color: var(--struo-primary);
   font-weight: 500;
   text-underline-offset: 3px;
 }
@@ -1174,11 +2355,11 @@ a {
 }
 
 [data-part="blog-prose"] > pre {
-  border-radius: 8px;
-  background: oklch(21.5% 0.006 236.9);
+  border-radius: var(--noora-radius-4);
+  background: var(--noora-neutral-dark-1100);
   padding: 20px;
   overflow-x: auto;
-  color: oklch(93% 0.003 247.9);
+  color: var(--noora-surface-label-primary);
 }
 
 [data-part="blog-prose"] > pre code {
@@ -1189,13 +2370,12 @@ a {
 [data-part="blog-prose"] img {
   max-width: 100%;
   height: auto;
-  border-radius: 8px;
+  border-radius: var(--noora-radius-4);
 }
 
 [data-part="blog-prose"] table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 15px;
 }
 
 [data-part="blog-prose"] th,
@@ -1273,42 +2453,29 @@ a {
 }
 
 [data-part="flash-error"] {
-  background: oklch(58.7% 0.23 30.7);
+  background: var(--noora-red-500);
   color: #fff;
 }
 
-@media (max-width: 680px) {
-  [data-part="site-nav"] {
-    display: none;
+/* Below this width the footer links drop to their own row, and the brand and
+   the credit take the two ends of the first. */
+@media (max-width: 820px) {
+  [data-part="site-footer"] {
+    justify-content: space-between;
+  }
+
+  [data-part="site-footer"] p {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  [data-part="footer-nav"] {
+    flex-basis: 100%;
   }
 }
 
 @media (max-width: 520px) {
-  [data-part="site-header"] {
-    gap: 12px;
-  }
-
-  [data-part="site-actions"] {
-    gap: 4px;
-  }
-
-  [data-part="site-social-link"] {
-    width: 32px;
-    height: 32px;
-  }
-
-  [data-part="site-cta"] {
-    padding: 8px 10px;
-    white-space: nowrap;
-  }
-
-  [data-part="hero-actions"] {
-    max-width: 320px;
-  }
-
-  [data-part="hero-actions"] [data-part="button"] {
-    flex: 1 1 140px;
-    justify-content: center;
-    white-space: nowrap;
+  [data-part="crt"] {
+    --crt-fade: 64px;
   }
 }

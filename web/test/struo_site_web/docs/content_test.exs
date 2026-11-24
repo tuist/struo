@@ -8,7 +8,8 @@ defmodule StruoSiteWeb.Docs.ContentTest do
   test "sidebar pages resolve and all guides and target kinds are discoverable" do
     slugs =
       (Sidebar.guide_tree() ++ Sidebar.reference_tree())
-      |> Enum.flat_map(&page_slugs(&1.items))
+      |> Enum.flat_map(&Sidebar.pages/1)
+      |> Enum.map(& &1.slug)
 
     assert length(slugs) == length(Enum.uniq(slugs)), "duplicate sidebar pages"
 
@@ -78,11 +79,4 @@ defmodule StruoSiteWeb.Docs.ContentTest do
   end
 
   defp segments("/docs/" <> path), do: String.split(path, "/", trim: true)
-
-  defp page_slugs(items) do
-    Enum.flat_map(items, fn item ->
-      own = if is_binary(item.slug), do: [item.slug], else: []
-      own ++ page_slugs(item.items)
-    end)
-  end
 end

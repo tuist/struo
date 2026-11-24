@@ -11,7 +11,7 @@ defmodule StruoSiteWeb.Docs.HTML do
 
   @icons_path Path.join([File.cwd!(), "deps", "noora", "lib", "noora", "icons"])
   @copy_icon @icons_path |> Path.join("copy.svg") |> File.read!() |> String.trim()
-  @copy_check_icon @icons_path |> Path.join("copy-check.svg") |> File.read!() |> String.trim()
+  @copy_check_icon @icons_path |> Path.join("check.svg") |> File.read!() |> String.trim()
   @status_icons %{
     "success" => @icons_path |> Path.join("circle-check.svg") |> File.read!() |> String.trim(),
     "information" =>
@@ -42,7 +42,8 @@ defmodule StruoSiteWeb.Docs.HTML do
     Regex.replace(@code_block_regex, html, fn _full, language, code ->
       ~s(<div data-part="code-window"><div data-part="bar">) <>
         ~s(<div data-part="language">#{language}</div>) <>
-        ~s(<div data-part="copy"><span data-part="copy-icon">#{@copy_icon}</span>) <>
+        ~s(<div data-part="copy" class="noora-ghost-button" data-variant="secondary" data-size="large">) <>
+        ~s(<span data-part="copy-icon">#{@copy_icon}</span>) <>
         ~s(<span data-part="copy-check-icon">#{@copy_check_icon}</span></div></div>) <>
         ~s(<template data-part="copy-source">#{copy_source(code)}</template>) <>
         ~s(<div data-part="code"><code>#{code}</code></div></div>)

@@ -1,7 +1,8 @@
 defmodule StruoSiteWeb.Docs.Markdown do
   @moduledoc """
   Renders documentation markdown into the HTML the Noora docs styles expect,
-  plus a title, an on-this-page outline, and the raw source (for "copy page").
+  plus a title, a one-paragraph description, an on-this-page outline, and the
+  raw source (for "copy page").
 
   Pipeline: strip frontmatter, expand VitePress containers
   (`StruoSiteWeb.Docs.Containers`), render with MDEx, then post-process the HTML
@@ -15,26 +16,18 @@ defmodule StruoSiteWeb.Docs.Markdown do
   @type heading :: %{level: pos_integer(), id: String.t(), text: String.t()}
   @type t :: %{
           title: String.t() | nil,
+          description: String.t() | nil,
           html: String.t(),
           headings: [heading()],
           markdown: String.t()
         }
 
+  # Tokens are marked with classes, and the site's stylesheet colors them.
   # Syntax highlighting is disabled in tests for speed and determinism.
   @syntax_highlight (if Mix.env() == :test do
                        [syntax_highlight: nil]
                      else
-                       [
-                         syntax_highlight: [
-                           engine: :lumis,
-                           opts: [
-                             formatter:
-                               {:html_multi_themes,
-                                themes: [light: "github_light", dark: "github_dark"],
-                                default_theme: "light-dark()"}
-                           ]
-                         ]
-                       ]
+                       [syntax_highlight: [engine: :lumis, opts: [formatter: :html_linked]]]
                      end)
 
   @mdex_options [
@@ -49,7 +42,7 @@ defmodule StruoSiteWeb.Docs.Markdown do
                   render: [unsafe: true]
                 ] ++ @syntax_highlight
 
-  @doc "Render a markdown document into `%{title:, html:, headings:, markdown:}`."
+  @doc "Render a markdown document into `%{title:, description:, html:, headings:, markdown:}`."
   @spec render(String.t()) :: t()
   def render(markdown) do
     source = strip_frontmatter(markdown)
@@ -73,7 +66,41 @@ defmodule StruoSiteWeb.Docs.Markdown do
       |> HTML.rewrite_links()
       |> HTML.wrap_tables()
 
-    %{title: title, html: html, headings: headings, markdown: source}
+    %{
+      title: title,
+      description: summary(source),
+      html: html,
+      headings: headings,
+      markdown: source
+    }
+  end
+
+  @doc """
+  The first prose paragraph after the title, as plain text, or `nil` when a
+  page opens with something else. It describes the page in its head and on its
+  Open Graph card.
+  """
+  @spec summary(String.t()) :: String.t() | nil
+  def summary(markdown) do
+    markdown
+    |> strip_frontmatter()
+    |> String.replace(~r/^#.*$/m, "")
+    |> String.split("\n\n", trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.find(fn block ->
+      block != "" and not String.starts_with?(block, ["```", "|", ":::", "<", "- ", "* "])
+    end)
+    |> case do
+      nil ->
+        nil
+
+      block ->
+        block
+        |> String.replace(~r/\[([^\]]*)\]\([^)]*\)/, "\\1")
+        |> String.replace(~r/[`*>#\[\]()]|(?<!\w)_|_(?!\w)/, "")
+        |> String.replace(~r/\s+/, " ")
+        |> String.trim()
+    end
   end
 
   defp strip_frontmatter("---\n" <> rest) do

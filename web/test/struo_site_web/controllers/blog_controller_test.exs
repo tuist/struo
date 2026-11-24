@@ -7,7 +7,7 @@ defmodule StruoSiteWeb.BlogControllerTest do
       |> get(~p"/blog")
       |> html_response(200)
 
-    assert response =~ "Ideas for building once"
+    assert response =~ "<h1>Blog</h1>"
     assert response =~ ~s(data-part="blog-entry")
     assert response =~ "Builds are the new bottleneck"
     refute response =~ "Writing in progress"
@@ -40,6 +40,14 @@ defmodule StruoSiteWeb.BlogControllerTest do
     assert response =~ ~s(name="twitter:image:width" content="1920")
     assert response =~ ~s(name="twitter:image:height" content="1080")
     assert response =~ ~s(name="twitter:image:alt" content="Builds are the new bottleneck")
+
+    [_, json] = Regex.run(~r{<script type="application/ld\+json">(.*?)</script>}s, response)
+    posting = Enum.find(Jason.decode!(json)["@graph"], &(&1["@type"] == "BlogPosting"))
+
+    assert posting["headline"] == "Builds are the new bottleneck"
+    assert posting["datePublished"] == "2026-11-19T00:00:00Z"
+    assert posting["author"] == [%{"@type" => "Person", "name" => "Pedro Piñera"}]
+    assert posting["publisher"] == %{"@id" => "https://tuist.dev/#organization"}
   end
 
   test "GET /blog/feed.xml returns the Really Simple Syndication feed", %{conn: conn} do

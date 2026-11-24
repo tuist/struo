@@ -11,6 +11,7 @@ defmodule Mix.Tasks.Docs.Gen.OgImages do
   """
   use Mix.Task
 
+  alias StruoSiteWeb.Docs.Markdown
   alias StruoSiteWeb.Docs.OgImage
   alias StruoSiteWeb.Docs.OgImageRenderer
   alias StruoSiteWeb.Docs.Sidebar
@@ -18,7 +19,7 @@ defmodule Mix.Tasks.Docs.Gen.OgImages do
   @source "priv/docs"
   @output "priv/static/docs/og"
   @fonts_dir "priv/static/fonts"
-  @logo "priv/static/docs/nav-logo.png"
+  @logo "priv/static/images/struo-mark.webp"
 
   @impl true
   def run(_args) do
@@ -51,7 +52,7 @@ defmodule Mix.Tasks.Docs.Gen.OgImages do
         OgImage.render_html(
           title: page.title,
           description: page.description,
-          category: Map.get(categories, page.slug, "Docs"),
+          category: Map.get(categories, page.slug),
           fonts_dir: @fonts_dir,
           logo_path: @logo
         )
@@ -86,7 +87,7 @@ defmodule Mix.Tasks.Docs.Gen.OgImages do
       %{
         slug: "/docs/" <> Enum.join(segments, "/"),
         title: title(markdown),
-        description: description(markdown),
+        description: Markdown.summary(markdown),
         filename: OgImage.slug_to_filename(segments)
       }
     end)
@@ -107,38 +108,12 @@ defmodule Mix.Tasks.Docs.Gen.OgImages do
     end
   end
 
-  # First prose paragraph after the title, used as the card subtitle.
-  defp description(markdown) do
-    markdown
-    |> String.replace(~r/^#.*$/m, "")
-    |> String.split("\n\n", trim: true)
-    |> Enum.map(&String.trim/1)
-    |> Enum.find(fn block ->
-      block != "" and not String.starts_with?(block, ["```", "|", ":::", "<", "- ", "* "])
-    end)
-    |> case do
-      nil ->
-        nil
-
-      block ->
-        block
-        |> String.replace(~r/[`*_>#\[\]()]/, "")
-        |> String.replace(~r/\s+/, " ")
-        |> String.trim()
-    end
-  end
-
   defp category_map do
     (Sidebar.guide_tree() ++ Sidebar.reference_tree())
-    |> Enum.flat_map(fn group -> collect(group.label || "Docs", group.items) end)
-    |> Map.new()
-  end
-
-  defp collect(category, items) do
-    Enum.flat_map(items, fn item ->
-      own = if item.slug, do: [{item.slug, category}], else: []
-      own ++ collect(category, item.items)
+    |> Enum.flat_map(fn group ->
+      Enum.map(Sidebar.pages(group), &{&1.slug, group.label})
     end)
+    |> Map.new()
   end
 
   defp strip_frontmatter("---\n" <> rest) do

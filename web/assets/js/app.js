@@ -25,6 +25,11 @@ import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/struo_site"
 import topbar from "../vendor/topbar"
 import {setupCodeCopy} from "../docs/shared/hooks/code-copy.js"
+import {setupCacheDemo} from "./cache_demo/index.js"
+import {setupHeroCrt} from "./hero_crt/index.js"
+import {setupLanguageKeys} from "./language_keys.js"
+import {setupMobileMenu} from "./mobile_menu.js"
+import {setupPromptCard} from "./prompt_card.js"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
@@ -33,24 +38,19 @@ const liveSocket = new LiveSocket("/live", Socket, {
   hooks: {...colocatedHooks},
 })
 
-// Home page terminal tabs: activate the tab and matching panel by index.
-document.addEventListener("click", (event) => {
-  const tab = event.target.closest("[data-part='terminal-tab']")
-  if (!tab) return
-  const terminal = tab.closest("[data-part='terminal']")
-  const index = tab.dataset.index
-  terminal.querySelectorAll("[data-part='terminal-tab']").forEach((el) => {
-    el.setAttribute("data-active", String(el === tab))
-  })
-  terminal.querySelectorAll("[data-part='terminal-panel']").forEach((el) => {
-    el.setAttribute("data-active", String(el.dataset.index === index))
-  })
-})
-
 // Show progress bar on live navigation and form submits
 topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
 window.addEventListener("phx:page-loading-start", _info => topbar.show(300))
 window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
+
+// LiveView reloads a page that the back button restores from the browser's
+// cache, so that no LiveView resumes with stale state. These pages hold no
+// LiveView, and a reloading page ignores clicks until its script has run
+// again, so a restored page is kept as it is. This listener is added before
+// LiveView's, which is how it gets to stop it.
+window.addEventListener("pageshow", event => {
+  if(event.persisted){ event.stopImmediatePropagation() }
+}, true)
 
 // connect if there are any LiveViews on the page
 liveSocket.connect()
@@ -62,6 +62,11 @@ liveSocket.connect()
 window.liveSocket = liveSocket
 
 setupCodeCopy(document)
+setupHeroCrt(document)
+setupCacheDemo(document)
+setupLanguageKeys(document)
+setupMobileMenu(document)
+setupPromptCard(document)
 
 // The lines below enable quality of life phoenix_live_reload
 // development features:

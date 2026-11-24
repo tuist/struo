@@ -21,7 +21,7 @@ defmodule StruoSiteWeb.Docs.OgImageTest do
         description: "Install Struo.",
         category: "Guide",
         fonts_dir: Application.app_dir(:struo_site, "priv/static/fonts"),
-        logo_path: Application.app_dir(:struo_site, "priv/static/docs/nav-logo.png")
+        logo_path: Application.app_dir(:struo_site, "priv/static/images/struo-mark.webp")
       )
 
     assert html =~ "<!DOCTYPE html>"
@@ -29,7 +29,7 @@ defmodule StruoSiteWeb.Docs.OgImageTest do
     assert html =~ "Install Struo."
     assert html =~ "Guide"
     assert html =~ "data:font/woff2;base64,"
-    assert html =~ "data:image/png;base64,"
+    assert html =~ "data:image/webp;base64,"
     assert html =~ "width: 1920px"
     assert html =~ "height: 1080px"
   end
@@ -39,6 +39,52 @@ defmodule StruoSiteWeb.Docs.OgImageTest do
     html = OgImage.render_html(title: long, fonts_dir: fonts(), logo_path: logo())
 
     assert html =~ "..."
+  end
+
+  test "render_html cuts a long description at a word" do
+    description = String.duplicate("cacheable automation ", 10)
+
+    html =
+      OgImage.render_html(
+        title: "Rust",
+        description: description,
+        fonts_dir: fonts(),
+        logo_path: logo()
+      )
+
+    assert html =~ "automation cacheable..."
+    refute html =~ "autom..."
+  end
+
+  test "render_html keeps whole sentences of a long description when they fit" do
+    description =
+      "Struo schedules concurrent local actions against a memory budget. " <>
+        "The default is two thirds of the memory visible to the host or container."
+
+    html =
+      OgImage.render_html(
+        title: "Rust",
+        description: description,
+        fonts_dir: fonts(),
+        logo_path: logo()
+      )
+
+    assert html =~ "against a memory budget.\n"
+    refute html =~ "The default"
+  end
+
+  test "render_html steps the title down for long titles and long words" do
+    size = fn title ->
+      html = OgImage.render_html(title: title, fonts_dir: fonts(), logo_path: logo())
+      [_, size] = Regex.run(~r/data-part="title" data-size="(\w+)"/, html)
+      size
+    end
+
+    assert size.("Rust") == "large"
+    assert size.("Build once. Reuse everywhere.") == "medium"
+    assert size.("Remote cache & execution, for the rest of us") == "small"
+    assert size.("react_native_android_application") == "small"
+    assert size.("Run native Xcode script phases with reconciled settings") == "small"
   end
 
   test "render_html embeds multiple author avatars" do
@@ -59,5 +105,5 @@ defmodule StruoSiteWeb.Docs.OgImageTest do
   end
 
   defp fonts, do: Application.app_dir(:struo_site, "priv/static/fonts")
-  defp logo, do: Application.app_dir(:struo_site, "priv/static/docs/nav-logo.png")
+  defp logo, do: Application.app_dir(:struo_site, "priv/static/images/struo-mark.webp")
 end

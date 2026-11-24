@@ -1,98 +1,140 @@
+/* A block of code: one flat box whose bar names the language and holds the
+   copy button. Shared by the documentation and the blog. */
 [data-part="code-window"] {
-  --docs-terminal-shell-shadow: var(--noora-light-border-default);
-  --docs-terminal-body-shadow: var(--noora-light-border-default);
-  --docs-terminal-body-highlight: inset 0 1px 0 0 light-dark(oklch(100% 0 0 / 0.9), oklch(100% 0 0 / 0.06));
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 6px;
-  box-shadow: var(--docs-terminal-shell-shadow);
-  border-radius: 12px;
-  background: var(--noora-surface-background-primary);
-  padding: 4px;
+  box-shadow: var(--noora-border-small-default);
+  border-radius: var(--noora-radius-4);
+  background: var(--noora-neutral-dark-1100);
   min-width: 0;
   max-width: 100%;
 }
 
-html[data-theme="dark"] [data-part="code-window"] {
-  --docs-terminal-shell-shadow: 0px 1px 1px 0px rgb(14 14 14 / 0.3), 0px 0px 0px 1px rgb(113 113 113 / 0.45),
-    0px 2px 3px 0px rgb(0 0 0 / 0.3);
-  --docs-terminal-body-shadow: 0px 1px 1px 0px rgb(14 14 14 / 0.8), 0px 0px 0px 1px rgb(58 58 58 / 0.7),
-    0px 2px 2px 0px rgb(0 0 0 / 0.24);
-  --docs-terminal-body-highlight: inset 0px 1px 0px 0px rgb(255 255 255 / 0.2);
-}
-
 [data-part="code-window"] > [data-part="bar"] {
   display: flex;
-  flex-direction: row;
   justify-content: space-between;
   align-items: center;
-  padding: 4px 8px;
+  border-bottom: 1px solid var(--noora-surface-border-primary);
+  padding: var(--noora-spacing-2) var(--noora-spacing-2) var(--noora-spacing-2) var(--noora-spacing-6);
 }
 
 [data-part="code-window"] > [data-part="bar"] > [data-part="language"] {
-  color: var(--noora-surface-label-primary);
-  font: var(--noora-font-weight-medium) var(--noora-font-body-medium);
+  color: var(--noora-neutral-dark-400);
+  font: var(--noora-font-weight-medium) var(--noora-font-body-small);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
-[data-part="code-window"] > [data-part="bar"] > [data-part="copy"] {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  transition: opacity 0.2s ease;
-  cursor: pointer;
-  border-radius: 6px;
-  padding: 6px;
-  color: var(--noora-button-neutral-label);
+/* A copy button is Noora's ghost button, icon only, which brings the fill on
+   hover and press, the corner, and the icon size. Added here: the fixed box,
+   the icon that turns into a check, and the "Copied" bubble, while the
+   script holds data-copied. */
+.noora-ghost-button[data-part="copy"] {
+  display: inline-grid;
+  position: relative;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  user-select: none;
 }
 
-[data-part="code-window"] > [data-part="bar"] > [data-part="copy"] svg {
-  width: 12px;
-  height: 12px;
+.noora-ghost-button[data-part="copy"][data-copied]::after {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--noora-z-index-12);
+  box-shadow: var(--noora-border-small-default);
+  border-radius: var(--noora-radius-3);
+  background: var(--noora-tooltip-background);
+  padding: var(--noora-spacing-2) var(--noora-spacing-3);
+  width: max-content;
+  pointer-events: none;
+  content: "Copied";
+  color: var(--noora-tooltip-label-primary);
+  font: var(--noora-font-body-small);
 }
 
-[data-part="code-window"] > [data-part="bar"] > [data-part="copy"] [data-part="copy-icon"],
-[data-part="code-window"] > [data-part="bar"] > [data-part="copy"] [data-part="copy-check-icon"] {
-  display: flex;
+/* The two icons share one cell; the hidden one waits at half size, so the
+   swap fades and grows instead of flipping. */
+.noora-ghost-button[data-part="copy"] [data-part="copy-icon"],
+.noora-ghost-button[data-part="copy"] [data-part="copy-check-icon"] {
+  display: inline-flex;
+  grid-area: 1 / 1;
+  transition:
+    opacity 200ms ease-in-out,
+    transform 200ms ease-in-out;
 }
 
-[data-part="code-window"] > [data-part="bar"] > [data-part="copy"] [data-part="copy-check-icon"] {
-  display: none;
+.noora-ghost-button[data-part="copy"]:not([data-copied]) [data-part="copy-check-icon"],
+.noora-ghost-button[data-part="copy"][data-copied] [data-part="copy-icon"] {
+  transform: scale(0.5);
+  opacity: 0;
 }
 
-[data-part="code-window"] > [data-part="bar"] > [data-part="copy"][data-copied] [data-part="copy-icon"] {
-  display: none;
+@media (prefers-reduced-motion: reduce) {
+  .noora-ghost-button[data-part="copy"] [data-part="copy-icon"],
+  .noora-ghost-button[data-part="copy"] [data-part="copy-check-icon"] {
+    transition: none;
+  }
 }
 
-[data-part="code-window"] > [data-part="bar"] > [data-part="copy"][data-copied] [data-part="copy-check-icon"] {
-  display: flex;
+/* Copying redraws the code: one scanline sweeps it from top to bottom, with a
+   short afterglow behind the line. The script sets data-copy-scan on the box
+   that holds the copied code, here, in a code group, or on a prompt card, and
+   the height of the box's bar as --scan-top, so the sweep starts below it. */
+[data-copy-scan] {
+  position: relative;
 }
 
-[data-part="code-window"] > [data-part="bar"] > [data-part="copy"]:hover {
-  opacity: 0.7;
+[data-copy-scan]::after {
+  --scan-band: 72px;
+
+  position: absolute;
+  z-index: 1;
+  inset: var(--scan-top, 0) 0 0;
+  animation: copy-scan 700ms cubic-bezier(0.4, 0, 0.6, 1) both;
+  border-bottom-right-radius: inherit;
+  border-bottom-left-radius: inherit;
+  background: linear-gradient(
+      to bottom,
+      transparent,
+      oklch(from var(--struo-primary) l c h / 0.14) calc(100% - 8px),
+      var(--struo-primary) calc(100% - 8px) calc(100% - 6px),
+      oklch(from var(--struo-primary) l c h / 0.22) calc(100% - 6px),
+      transparent
+    )
+    0 0 / 100% var(--scan-band) no-repeat;
+  pointer-events: none;
+  content: "";
 }
 
-[data-part="code-window"] > [data-part="bar"] > [data-part="copy"]:active {
-  opacity: 0.5;
+@keyframes copy-scan {
+  from {
+    background-position-y: calc(-1 * var(--scan-band));
+  }
+
+  to {
+    background-position-y: calc(100% + var(--scan-band));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-copy-scan]::after {
+    content: none;
+  }
 }
 
 [data-part="code-window"] > [data-part="code"] {
-  position: relative;
-  box-shadow: var(--docs-terminal-body-shadow);
-  border-radius: 8px;
-  background: var(--noora-surface-background-tertiary);
-  padding: 16px 12px;
+  padding: var(--noora-spacing-6);
   overflow-x: auto;
+  scrollbar-color: var(--noora-neutral-dark-600) transparent;
+  scrollbar-width: thin;
+  color: var(--noora-surface-label-primary);
   font: var(--noora-font-weight-regular) var(--noora-font-code-large);
-
-  &::after {
-    position: absolute;
-    inset: 0;
-    box-shadow: var(--docs-terminal-body-highlight);
-    border-radius: inherit;
-    pointer-events: none;
-    content: "";
-  }
+  line-height: 1.6;
 }
 
 /* MDEx's html_inline formatter adds an inline background-color on <pre>,

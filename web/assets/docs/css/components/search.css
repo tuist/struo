@@ -1,147 +1,150 @@
-body[data-search-open] {
-  overflow: hidden;
+/* The search trigger is a Noora search input that opens the dialog instead
+   of taking text. */
+#docs-sidebar > [data-part="search-trigger"] {
+  flex-shrink: 0;
+  padding: var(--noora-spacing-11) 0 var(--noora-spacing-7);
+
+  & [data-part="wrapper"],
+  & input {
+    cursor: pointer;
+  }
+
+  /* An input is as wide as twenty characters unless told otherwise, which
+     is more than the sidebar has. */
+  & input {
+    width: 100%;
+    min-width: 0;
+    caret-color: transparent;
+  }
+
+  & [data-part="suffix"] {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  /* A text input shows its focus ring on every focus. This one is a button
+     in use, so after a click the ring waits for the keyboard. */
+  html[data-pointer] & [data-part="wrapper"]:has(> input:focus) {
+    box-shadow: var(--noora-border-small-default);
+  }
+}
+
+/* The shortcut as the keyboard in use writes it. */
+[data-part="search-shortcut"]::after {
+  content: "⌘K";
+}
+
+html[data-control-key] [data-part="search-shortcut"]::after {
+  content: "Ctrl K";
+}
+
+@media (hover: none) {
+  #docs-sidebar > [data-part="search-trigger"] [data-part="suffix"] {
+    display: none;
+  }
 }
 
 #docs-search {
-  & [data-part="backdrop"] {
-    display: none;
-    position: fixed;
-    top: 0;
-    left: 0;
-    z-index: var(--noora-z-index-11);
-    backdrop-filter: blur(2.5px);
-    background: var(--noora-surface-overlay);
-    width: 100dvw;
-    height: 100dvh;
-
-    &[data-state="open"] {
-      display: block;
-    }
-  }
-
-  & [data-part="modal"] {
-    display: none;
-    position: fixed;
-    top: 20%;
-    left: 50%;
-    flex-direction: column;
-    transform: translateX(-50%);
-    z-index: var(--noora-z-index-12);
-    box-shadow: var(--noora-border-heavy);
+  & dialog {
+    box-sizing: border-box;
+    margin-inline: auto;
+    margin-block: 0;
+    inset-block-start: min(12vh, 100px);
+    box-shadow: var(--noora-border-large);
+    border: 0;
     border-radius: var(--noora-radius-6);
     background: var(--noora-surface-background-primary);
-    width: 550px;
-    max-width: calc(100vw - var(--noora-spacing-9));
-    max-height: 70vh;
+    padding: 0;
+    width: min(640px, calc(100vw - 2 * var(--noora-spacing-6)));
+    max-height: calc(100dvh - min(12vh, 100px) - var(--noora-spacing-8));
     overflow: hidden;
-
-    &[data-state="open"] {
-      display: flex;
-    }
-  }
-
-  & [data-part="search-wrapper"] {
-    flex-shrink: 0;
-    padding: var(--noora-spacing-8) var(--noora-spacing-8) var(--noora-spacing-6);
-  }
-
-  & [data-part="input-container"] {
-    display: flex;
-    align-items: center;
-    gap: var(--noora-spacing-4);
-    box-shadow: var(--noora-border-light-default);
-    border-radius: var(--noora-radius-3);
-    background: var(--noora-surface-background-primary);
-    padding: var(--noora-spacing-3) var(--noora-spacing-4);
-  }
-
-  & [data-part="search-icon"] {
-    flex-shrink: 0;
-    width: var(--noora-icon-size-large);
-    height: var(--noora-icon-size-large);
-    color: var(--noora-surface-label-tertiary);
-  }
-
-  & [data-part="search-input"] {
-    flex: 1;
-    outline: none;
-    border: none;
-    background: transparent;
     color: var(--noora-surface-label-primary);
     font: var(--noora-font-body-medium);
-
-    &::placeholder {
-      color: var(--noora-surface-label-tertiary);
-    }
   }
 
-  & [data-part="body"] {
-    flex: 1;
-    padding: 0 var(--noora-spacing-8);
+  & dialog[open] {
+    display: flex;
+    flex-direction: column;
+  }
+
+  & dialog::backdrop {
+    backdrop-filter: blur(2.5px);
+    background: oklch(0% 0 0 / 0.5);
+  }
+
+  & [data-part="search-row"] {
+    flex-shrink: 0;
+    margin: 0;
+    padding: var(--noora-spacing-5);
+  }
+
+  & [role="listbox"] {
+    display: flex;
+    flex-direction: column;
+    gap: var(--noora-spacing-4);
+    padding: 0 var(--noora-spacing-4) var(--noora-spacing-4);
+    min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
-  }
+    scrollbar-color: var(--noora-neutral-dark-600) transparent;
+    scrollbar-width: thin;
 
-  & [data-part="empty-state"] {
-    padding: var(--noora-spacing-10) 0;
-    color: var(--noora-surface-label-secondary);
-    font: var(--noora-font-body-medium);
-    text-align: center;
-
-    &[data-state="hidden"] {
+    &:empty {
       display: none;
     }
   }
 
-  & [data-part="results"] {
+  & [data-part="group"] {
     display: flex;
     flex-direction: column;
-    gap: var(--noora-spacing-7);
-    padding-bottom: var(--noora-spacing-6);
-  }
-
-  & [data-part="result-group"] {
-    display: flex;
-    flex-direction: column;
-    gap: var(--noora-spacing-4);
   }
 
   & [data-part="group-label"] {
-    display: flex;
-    align-items: center;
-    gap: var(--noora-spacing-2);
-    color: var(--noora-surface-label-primary);
-    font: var(--noora-font-weight-medium) var(--noora-font-body-medium);
-
-    & svg {
-      flex-shrink: 0;
-      width: var(--noora-icon-size-medium);
-      height: var(--noora-icon-size-medium);
-      color: var(--noora-surface-label-secondary);
-    }
+    margin: 0;
+    padding: var(--noora-spacing-3) var(--noora-spacing-4);
+    color: var(--docs-label-faint);
+    font: var(--noora-font-weight-medium) var(--noora-font-body-small);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
 
-  & [data-part="result-item"] {
+  & [data-part="result"] {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
     gap: var(--noora-spacing-4);
-    transition: background 0.1s;
-    cursor: pointer;
-    box-shadow: var(--noora-border-light-default);
+    outline: none;
     border-radius: var(--noora-radius-4);
-    background: var(--noora-surface-background-tertiary);
-    padding: var(--noora-spacing-4);
+    padding: var(--noora-spacing-3) var(--noora-spacing-4);
     color: inherit;
     text-decoration: none;
 
-    &[data-selected] {
+    &[aria-selected="true"] {
       background: var(--noora-surface-background-secondary);
     }
+  }
 
-    &[data-selected] [data-part="result-enter"] {
-      opacity: 1;
+  /* The icon and the return mark sit on the first line of the text. */
+  & [data-part="result-icon"],
+  & [data-part="result-enter"] {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    height: 1lh;
+    color: var(--docs-label-faint);
+
+    & svg {
+      width: var(--noora-icon-size-medium);
+      height: var(--noora-icon-size-medium);
     }
+  }
+
+  /* The slot is kept on every row, so selecting one doesn't move its text. */
+  & [data-part="result-enter"] {
+    visibility: hidden;
+  }
+
+  & [data-part="result"][aria-selected="true"] [data-part="result-enter"] {
+    visibility: visible;
   }
 
   & [data-part="result-text"] {
@@ -152,89 +155,90 @@ body[data-search-open] {
     min-width: 0;
   }
 
+  & [data-part="result-heading"] {
+    display: flex;
+    align-items: baseline;
+    gap: var(--noora-spacing-4);
+    min-width: 0;
+  }
+
+  & [data-part="result-title"],
+  & [data-part="result-trail"] {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   & [data-part="result-title"] {
-    overflow: hidden;
-    color: var(--noora-surface-label-primary);
-    font: var(--noora-font-weight-medium) var(--noora-font-body-medium);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    flex-shrink: 0;
+    max-width: 100%;
   }
 
-  & [data-part="result-subtitle"] {
-    overflow: hidden;
-    color: var(--noora-surface-label-secondary);
+  & [data-part="result-trail"] {
+    flex: 1;
+    min-width: 0;
+    color: var(--docs-label-faint);
     font: var(--noora-font-body-small);
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
-  & [data-part="result-url"] {
+  & [data-part="result-snippet"] {
+    display: -webkit-box;
     overflow: hidden;
-    color: var(--noora-surface-label-tertiary);
-    font: var(--noora-font-body-xsmall);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    color: var(--docs-label-muted);
+    font: var(--noora-font-body-small);
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
   }
 
-  & [data-part="highlight"] {
+  & mark {
     background: none;
-    color: var(--noora-purple-500);
+    color: var(--struo-primary);
   }
 
-  & [data-part="result-enter"] {
-    flex-shrink: 0;
-    opacity: 0;
-    transition: opacity 0.1s;
-    width: var(--noora-icon-size-large);
-    height: var(--noora-icon-size-large);
-    color: var(--noora-surface-label-tertiary);
-  }
+  & [data-part="empty"] {
+    padding: 0 var(--noora-spacing-6) var(--noora-spacing-6);
 
-  & [data-part="footer"] {
-    display: flex;
-    flex-shrink: 0;
-    align-items: center;
-    box-shadow: var(--noora-border-light-default);
-    background: var(--noora-surface-background-tertiary);
-    padding: var(--noora-spacing-5);
-  }
-
-  & [data-part="footer-hints"] {
-    display: flex;
-    align-items: center;
-    gap: var(--noora-spacing-6);
-  }
-
-  & [data-part="footer-hint"] {
-    display: flex;
-    align-items: center;
-    gap: var(--noora-spacing-2);
-    color: var(--noora-surface-label-tertiary);
-    font: var(--noora-font-body-small);
-
-    & svg {
-      flex-shrink: 0;
+    & [data-part="title"] {
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
   }
 
-  & [data-part="esc-key"] {
-    display: inline-flex;
-    justify-content: center;
+  & footer {
+    display: flex;
+    flex-shrink: 0;
+    flex-wrap: wrap;
     align-items: center;
-    box-shadow: var(--noora-border-light-default);
-    border-radius: var(--noora-radius-1);
-    padding: 0 var(--noora-spacing-2);
-    height: var(--noora-icon-size-medium);
-    color: var(--noora-surface-label-tertiary);
-    font: var(--noora-font-weight-semibold) var(--noora-font-body-xsmall);
-    letter-spacing: 0.5px;
-  }
-}
+    gap: var(--noora-spacing-6);
+    box-shadow: 0 -1px 0 var(--noora-surface-border-primary);
+    background: var(--noora-surface-background-tertiary);
+    padding: var(--noora-spacing-4) var(--noora-spacing-6);
+    color: var(--docs-label-faint);
+    font: var(--noora-font-body-small);
 
-@media (max-width: 600px) {
-  #docs-search [data-part="modal"] {
-    top: var(--noora-spacing-6);
-    width: calc(100vw - var(--noora-spacing-9));
-    max-height: calc(100dvh - var(--noora-spacing-9));
+    & > span {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--noora-spacing-2);
+      white-space: nowrap;
+    }
+  }
+
+  @media (max-width: 600px) {
+    & dialog {
+      inset-block-start: var(--noora-spacing-6);
+      max-height: calc(100dvh - 2 * var(--noora-spacing-6));
+    }
+  }
+
+  /* Without a keyboard there is nothing for the key hints to describe. */
+  @media (hover: none) {
+    & footer,
+    & [data-part="search-row"] [data-part="suffix"] {
+      display: none;
+    }
   }
 }

@@ -1,19 +1,36 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
     <meta name="csrf-token" content={get_csrf_token()} />
-    <link rel="icon" type="image/png" href="/docs/favicon.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/docs/favicon.png" />
+    <link rel="icon" type="image/svg+xml" href="/images/favicon.svg" />
     <link rel="apple-touch-icon" href="/docs/favicon.png" />
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="/fonts/GeistMono-latin.woff2"
+      crossorigin
+    />
     <.live_title default="Documentation" suffix=" · Struo">
       {assigns[:page_title]}
     </.live_title>
     <% social_image_alt = assigns[:page_title] || "Struo Documentation" %>
-    <meta name="description" content="Struo documentation." />
+    <% description = assigns[:meta_description] || "Struo documentation." %>
+    <meta name="description" content={description} />
+    <link :if={assigns[:canonical_url]} rel="canonical" href={@canonical_url} />
+    <meta :if={assigns[:not_found]} name="robots" content="noindex" />
+    <meta name="author" content="Tuist" />
+    <script type="application/ld+json">
+      <%= Phoenix.HTML.raw(StruoSiteWeb.StructuredData.json_ld(assigns)) %>
+    </script>
     <meta property="og:type" content="website" />
     <meta property="og:title" content={assigns[:page_title] || "Struo Documentation"} />
-    <meta property="og:description" content="Struo documentation." />
+    <meta property="og:description" content={description} />
+    <meta :if={assigns[:canonical_url]} property="og:url" content={@canonical_url} />
     <meta :if={assigns[:head_image]} property="og:image" content={@head_image} />
     <meta :if={assigns[:head_image]} property="og:image:type" content="image/jpeg" />
     <meta
@@ -29,6 +46,7 @@
     <meta :if={assigns[:head_image]} property="og:image:alt" content={social_image_alt} />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={assigns[:page_title] || "Struo Documentation"} />
+    <meta name="twitter:description" content={description} />
     <meta :if={assigns[:head_image]} name="twitter:image" content={@head_image} />
     <meta
       :if={assigns[:head_image]}

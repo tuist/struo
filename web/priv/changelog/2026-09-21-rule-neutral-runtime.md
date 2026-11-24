@@ -1,5 +1,6 @@
 ---
 title: Rule-neutral build and test reporting
+date: 2026-09-21
 category: Added
 ---
 

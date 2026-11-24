@@ -1,53 +1,50 @@
 <nav id="docs-nav" aria-label="Main navigation">
   <div data-part="header">
-    <.link navigate="/" data-part="logo-link">
-      <img data-part="logo" src="/docs/nav-logo.png" alt="Struo" />
-      <span data-part="logo-divider"></span>
-      <span data-part="logo-text">Docs</span>
+    <.link navigate="/" data-part="logo-link" aria-label="Struo home">
+      <img data-part="logo" src="/images/struo-mark.webp" width="213" height="208" alt="" />
+      <span data-part="logo-text">Struo</span>
     </.link>
-    <.button_group size="large" id="docs-nav-tabs">
-      <.button_group_item
-        label="Guide"
+    <div data-part="tabs" id="docs-nav-tabs">
+      <a
         href="/docs/guide/getting-started"
         data-tab="guides"
-        data-selected={@tab == :guides}
-      />
-      <.button_group_item
-        label="Reference"
-        href="/docs/reference"
-        data-tab="reference"
-        data-selected={@tab == :reference}
-      />
-    </.button_group>
-  </div>
-  <div data-part="cta">
-    <div data-part="socials">
-      <a
-        href="https://x.com/runstruo"
-        target="_blank"
-        rel="noopener noreferrer"
-        aria-label="X"
-        data-part="social-link"
+        aria-current={@tab == :guides && "true"}
       >
-        <svg
-          viewBox="0 0 24 24"
-          fill="currentColor"
-          xmlns="http://www.w3.org/2000/svg"
-          aria-hidden="true"
-        >
-          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-        </svg>
+        Guide
       </a>
-      <a
-        href="https://github.com/tuist/struo"
-        target="_blank"
-        rel="noopener noreferrer"
-        aria-label="GitHub"
-        data-part="social-link"
-      >
-        <.icon name="brand_github" />
+      <a href="/docs/reference" data-tab="reference" aria-current={@tab == :reference && "true"}>
+        Reference
       </a>
     </div>
+  </div>
+  <div data-part="socials">
+    <button
+      type="button"
+      data-part="search-button"
+      aria-label="Search the documentation"
+      aria-haspopup="dialog"
+      aria-controls="docs-search-dialog"
+    >
+      <.search />
+    </button>
+    <a
+      href="https://github.com/tuist/struo"
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label="GitHub"
+      data-part="social-link"
+    >
+      {Phoenix.HTML.raw(Layouts.social_icon(:github))}
+    </a>
+    <a
+      href="https://discord.gg/fTpB5e3rRp"
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label="Discord"
+      data-part="social-link"
+    >
+      {Phoenix.HTML.raw(Layouts.social_icon(:discord))}
+    </a>
   </div>
 </nav>
 <div id="docs-mobile-menu-bar" role="toolbar" aria-label="Page navigation">
@@ -118,41 +115,48 @@
   </div>
   <div id="docs-layout">
     <nav id="docs-sidebar" aria-label="Documentation navigation">
+      <div data-part="search-trigger">
+        <.text_input
+          id="docs-search-trigger"
+          type="search"
+          name="docs-search-trigger"
+          placeholder="Search"
+          readonly
+          aria-label="Search the documentation"
+          aria-haspopup="dialog"
+          aria-controls="docs-search-dialog"
+        >
+          <:suffix>
+            <.shortcut_key size="small"><span data-part="search-shortcut"></span></.shortcut_key>
+          </:suffix>
+        </.text_input>
+      </div>
       <div data-part="sidebar-scroll">
-        <.link
-          :if={@tab == :guides}
-          patch="/docs"
-          data-part="nav-link"
-          phx-click={close_mobile_navigation()}
-        >
-          <.tab_menu_vertical label="Overview" data-selected={@current_slug == "/docs"}>
-            <:icon_left>
-              <.icon name="smart_home" />
-            </:icon_left>
-          </.tab_menu_vertical>
-        </.link>
-        <.link
-          :if={@tab == :reference}
-          patch="/docs/reference"
-          data-part="nav-link"
-          phx-click={close_mobile_navigation()}
-        >
-          <.tab_menu_vertical
-            label="Overview"
-            data-selected={@current_slug == "/docs/reference"}
+        <div :if={@tab == :guides} data-part="nav-section">
+          <.link
+            patch="/docs"
+            data-part="nav-link"
+            data-selected={@current_slug == "/docs"}
+            phx-click={close_mobile_navigation()}
           >
-            <:icon_left>
-              <.icon name="devices_browser" />
-            </:icon_left>
-          </.tab_menu_vertical>
-        </.link>
+            <span data-part="label">Overview</span>
+          </.link>
+        </div>
         <div :for={group <- @tree} data-part="nav-section">
-          <.line_divider />
-          <div :if={group.label} data-part="content-divider">
-            <.icon name={group_icon(group.label)} />
+          <.link
+            :if={group.slug}
+            patch={group.slug}
+            data-part="group-label"
+            data-selected={group.slug == @current_slug}
+            phx-click={close_mobile_navigation()}
+          >
+            <span>{group.label}</span>
+            <.chevron_right />
+          </.link>
+          <div :if={!group.slug} data-part="group-label">
             <span>{group.label}</span>
           </div>
-          <div data-part="nav-items">
+          <div :if={group.items != []} data-part="nav-items">
             <.nav_items items={group.items} current_slug={@current_slug} />
           </div>
         </div>
@@ -160,37 +164,11 @@
     </nav>
     <div id="docs-content">
       <div :if={@markdown != ""} id="docs-mobile-copy" data-part="mobile-copy">
-        <.button_dropdown
-          id="docs-mobile-copy-dropdown"
-          label="Copy page"
-          size="medium"
-          phx-hook="DocsCopyPageButton"
-          data-default-label="Copy page"
-          data-copied-label="Copied"
-          data-markdown-source-id="docs-page-markdown"
-          align="end"
-        >
-          <:icon_left><.copy /></:icon_left>
-          <.dropdown_item
-            label="Copy page"
-            description="Copy page as markdown for LLMs"
-            value="copy-markdown"
-            size="large"
-            on_click="copy-page-markdown"
-          >
-            <:left_icon><.copy /></:left_icon>
-          </.dropdown_item>
-          <.dropdown_item
-            label="View as Markdown"
-            description="View this page as plain text"
-            value="view-markdown"
-            href={docs_markdown_path(@current_slug)}
-            size="large"
-          >
-            <:left_icon><.icon name="markdown" /></:left_icon>
-            <:right_icon><.external_link /></:right_icon>
-          </.dropdown_item>
-        </.button_dropdown>
+        <.copy_page_menu
+          id="docs-mobile-copy-menu"
+          current_slug={@current_slug}
+          placement="bottom-end"
+        />
       </div>
       {render_slot(@inner_block)}
     </div>
@@ -202,3 +180,4 @@
     />
   </div>
 </main>
+<.live_component module={StruoSiteWeb.Docs.SearchPalette} id="docs-search" />

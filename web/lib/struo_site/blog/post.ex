@@ -3,8 +3,8 @@ defmodule StruoSite.Blog.Post do
 
   alias StruoSite.Blog.Authors
 
-  @enforce_keys [:slug, :title, :description, :authors, :date, :body, :reading_minutes]
-  defstruct [:slug, :title, :description, :authors, :date, :body, :reading_minutes]
+  @enforce_keys [:slug, :title, :description, :authors, :date, :body]
+  defstruct [:slug, :title, :description, :authors, :date, :body]
 
   @authors_by_id Authors.all() |> Map.new(&{&1.id, &1})
 
@@ -14,8 +14,7 @@ defmodule StruoSite.Blog.Post do
           description: String.t(),
           authors: [StruoSite.Blog.Author.t()],
           date: Date.t(),
-          body: String.t(),
-          reading_minutes: pos_integer()
+          body: String.t()
         }
 
   @doc false
@@ -37,19 +36,8 @@ defmodule StruoSite.Blog.Post do
       description: Map.fetch!(attributes, :description),
       authors: authors,
       date: date,
-      body: body,
-      reading_minutes: reading_minutes(body)
+      body: body
     })
-  end
-
-  defp reading_minutes(body) do
-    body
-    |> String.replace(~r/<[^>]+>/, " ")
-    |> String.split(~r/\s+/, trim: true)
-    |> length()
-    |> Kernel./(220)
-    |> ceil()
-    |> max(1)
   end
 
   defp build_authors([_ | _] = author_ids) do

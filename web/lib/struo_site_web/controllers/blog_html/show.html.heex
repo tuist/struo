@@ -5,8 +5,6 @@
     <header data-part="post-header">
       <div data-part="blog-entry-meta">
         <time datetime={Date.to_iso8601(@post.date)}>{format_date(@post.date)}</time>
-        <span aria-hidden="true">·</span>
-        <span>{reading_time(@post.reading_minutes)}</span>
       </div>
       <h1>{@post.title}</h1>
       <p data-part="post-description">{@post.description}</p>

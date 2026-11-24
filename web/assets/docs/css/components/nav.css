@@ -1,147 +1,110 @@
+/* The bar of the marketing pages, with the documentation's two parts in
+   place of the site links. */
 #docs-nav {
   display: flex;
   position: sticky;
   top: 0;
-  flex-direction: row;
   justify-content: space-between;
   align-items: center;
+  gap: var(--noora-spacing-8);
   z-index: var(--noora-z-index-3);
-  border-bottom: 1px solid var(--noora-content-divider-line);
-  background: var(--noora-surface-background-primary);
-  padding: var(--noora-spacing-6) var(--noora-spacing-7);
+  box-sizing: border-box;
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--noora-surface-border-primary);
+  background: color-mix(in oklch, var(--noora-surface-background-primary) 82%, transparent);
+  padding: 12px var(--docs-gutter);
+  min-height: var(--docs-nav-height);
 
   & > [data-part="header"] {
     display: flex;
-    flex-direction: row;
     align-items: center;
-    gap: var(--noora-spacing-8);
+    gap: 36px;
+    min-width: 0;
 
     & > [data-part="logo-link"] {
-      display: flex;
+      display: inline-flex;
       align-items: center;
-      gap: var(--noora-spacing-3);
+      gap: 8px;
+      color: var(--noora-surface-label-primary);
+      font-weight: 500;
+      font-size: 21px;
+      line-height: 1;
+      letter-spacing: -0.03em;
       text-decoration: none;
+      text-transform: lowercase;
 
       & > [data-part="logo"] {
-        width: 40px;
-        height: 40px;
-      }
-
-      & > [data-part="logo-divider"] {
-        align-self: stretch;
-        background: var(--noora-content-divider-line);
-        width: 1px;
-      }
-
-      & > [data-part="logo-text"] {
-        color: var(--noora-surface-label-primary);
-        font: var(--noora-font-weight-medium) var(--noora-font-heading-large);
-        letter-spacing: -0.2px;
+        width: auto;
+        height: 26px;
       }
     }
-  }
 
-  & > [data-part="cta"] {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: var(--noora-spacing-6);
-
-    & > .noora-text-input {
-      align-self: auto;
-    }
-
-    & [data-part="theme-toggle-light-icon"],
-    & [data-part="theme-toggle-dark-icon"] {
+    & > [data-part="tabs"] {
       display: flex;
-      justify-content: center;
-      align-items: center;
-    }
-
-    & [data-part="theme-toggle-dark-icon"] {
-      display: none;
-    }
-
-    & #docs-language-selector > [data-part="trigger"] {
-      gap: var(--noora-spacing-3);
-      box-shadow: var(--noora-button-border-secondary);
-      border-radius: var(--noora-radius-3);
-      background: var(--noora-button-background-secondary);
-      padding: var(--noora-spacing-3);
+      gap: 18px;
       font: var(--noora-font-weight-medium) var(--noora-font-body-medium);
 
-      & > [data-part="label"] {
-        color: var(--noora-button-secondary-label);
-      }
+      & > a {
+        transition: color 0.15s;
+        color: var(--docs-label-muted);
+        text-decoration: none;
 
-      & [data-part="indicator"] {
-        color: var(--noora-surface-label-secondary);
+        &:hover {
+          color: var(--struo-primary);
+        }
 
-        & > div {
-          width: var(--noora-icon-size-large);
-          height: var(--noora-icon-size-large);
+        &[aria-current] {
+          color: var(--noora-surface-label-primary);
         }
       }
-
-      &:hover {
-        box-shadow: var(--noora-button-border-secondary);
-        background: var(--noora-button-background-secondary-hover);
-      }
-
-      &:focus-visible {
-        box-shadow: var(--noora-button-border-secondary-focus);
-        background: var(--noora-button-background-secondary-hover);
-      }
-    }
-
-    & > [data-part="socials"] {
-      display: flex;
-      flex-direction: row;
-      align-items: center;
-      gap: var(--noora-spacing-4);
     }
   }
 
-  & > [data-part="mobile-actions"] {
-    display: none;
-    flex-direction: row;
+  & > [data-part="socials"] {
+    display: flex;
     align-items: center;
-    gap: var(--noora-spacing-3);
+    gap: var(--noora-spacing-4);
 
-    & [data-part="theme-toggle-light-icon"],
-    & [data-part="theme-toggle-dark-icon"] {
-      display: flex;
+    & > [data-part="social-link"],
+    & > [data-part="search-button"] {
+      display: inline-flex;
       justify-content: center;
       align-items: center;
+      border-radius: var(--noora-radius-3);
+      width: 36px;
+      height: 36px;
+      color: var(--noora-surface-label-secondary);
+
+      &:hover {
+        background: var(--noora-surface-background-secondary);
+        color: var(--struo-primary);
+      }
+
+      & svg {
+        width: 20px;
+        height: 20px;
+      }
     }
 
-    & [data-part="theme-toggle-dark-icon"] {
+    /* The sidebar holds the search input; this button stands in for it once
+       the sidebar is folded away. */
+    & > [data-part="search-button"] {
       display: none;
+      cursor: pointer;
+      border: 0;
+      background: none;
+      padding: 0;
     }
   }
 }
 
-html[data-theme="dark"] {
-  & #docs-nav > [data-part="cta"] #docs-language-selector > [data-part="trigger"]:hover {
-    box-shadow: var(--noora-button-border-secondary-hover);
-  }
-
-  & #docs-nav [data-part="theme-toggle-light-icon"] {
-    display: none;
-  }
-
-  & #docs-nav [data-part="theme-toggle-dark-icon"] {
-    display: flex;
-  }
-}
-
+/* The bar's padding belongs to its two buttons, so each is a 48px tall
+   target that reaches the edges of the bar. */
 #docs-mobile-menu-bar {
   display: none;
   justify-content: space-between;
-  align-items: center;
-  border-bottom: 1px solid var(--noora-content-divider-line);
-  background: var(--noora-surface-background-primary);
-  padding: var(--noora-spacing-4) var(--noora-spacing-6);
+  align-items: stretch;
+  border-bottom: 1px solid var(--noora-surface-border-primary);
 
   & [data-part="mobile-toc-btn"] {
     flex: 1;
@@ -152,25 +115,30 @@ html[data-theme="dark"] {
   & [data-part="mobile-toc-btn"] {
     display: flex;
     align-items: center;
-    gap: var(--noora-spacing-1);
+    gap: var(--noora-spacing-3);
     cursor: pointer;
     border: none;
     background: none;
-    padding: 0;
+    padding: var(--noora-spacing-6) var(--docs-gutter);
     color: var(--noora-surface-label-primary);
     font: var(--noora-font-weight-medium) var(--noora-font-body-small);
+    -webkit-tap-highlight-color: transparent;
+
+    /* The buttons touch the edges of the window, where a ring drawn
+       outside them would be cut off. */
+    &:focus-visible {
+      outline-offset: -2px;
+    }
+
+    &:active {
+      background: var(--noora-surface-background-secondary);
+    }
 
     & svg {
       width: var(--noora-icon-size-medium);
       height: var(--noora-icon-size-medium);
     }
   }
-}
-
-#docs-mobile-toc-trigger {
-  display: flex;
-  align-items: center;
-  cursor: pointer;
 }
 
 [data-part="mobile-toc"] {
@@ -182,26 +150,12 @@ html[data-theme="dark"] {
     display: flex;
   }
 
-  #docs-nav {
-    padding: var(--noora-spacing-4) var(--noora-spacing-5);
+  #docs-nav > [data-part="header"] {
+    gap: var(--noora-spacing-8);
+  }
 
-    & > [data-part="header"] {
-      & > .noora-button-group {
-        display: none;
-      }
-
-      & > [data-part="logo-link"] > [data-part="logo-divider"] {
-        display: none;
-      }
-    }
-
-    & > [data-part="cta"] {
-      display: none;
-    }
-
-    & > [data-part="mobile-actions"] {
-      display: flex;
-    }
+  #docs-nav > [data-part="socials"] > [data-part="search-button"] {
+    display: inline-flex;
   }
 
   [data-part="page"] {
@@ -209,18 +163,17 @@ html[data-theme="dark"] {
   }
 
   [data-part="mobile-toc"] {
-    display: none;
     position: absolute;
     top: var(--noora-spacing-4);
-    right: var(--noora-spacing-5);
-    left: var(--noora-spacing-5);
+    right: var(--docs-gutter);
+    left: var(--docs-gutter);
     flex-direction: column;
     gap: var(--noora-spacing-5);
     z-index: var(--noora-z-index-2);
-    box-shadow: var(--noora-light-border-default);
-    border-radius: var(--noora-radius-3);
-    background: var(--noora-surface-background-primary);
-    padding: var(--noora-spacing-5);
+    box-shadow: var(--noora-border-small-default);
+    border-radius: var(--noora-radius-4);
+    background: var(--noora-neutral-dark-1100);
+    padding: var(--noora-spacing-6);
   }
 
   [data-part="mobile-toc"][data-state="open"] {
@@ -228,13 +181,19 @@ html[data-theme="dark"] {
   }
 
   [data-part="mobile-toc-item"] {
-    color: var(--noora-surface-label-primary);
-    font: var(--noora-font-weight-medium) var(--noora-font-body-small);
-    line-height: 16px;
+    color: var(--docs-label-muted);
+    font: var(--noora-font-body-medium);
     text-decoration: none;
   }
 
   [data-part="mobile-toc-item"]:hover {
-    text-decoration: underline;
+    color: var(--noora-surface-label-primary);
+  }
+}
+
+/* The bar has no room for the social links beside the brand and the tabs. */
+@media (max-width: 480px) {
+  #docs-nav > [data-part="socials"] > [data-part="social-link"] {
+    display: none;
   }
 }

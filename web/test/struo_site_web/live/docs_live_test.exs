@@ -25,6 +25,33 @@ defmodule StruoSiteWeb.DocsLiveTest do
     assert html =~ "data-prose"
   end
 
+  test "searches the documentation from the search menu", %{conn: conn} do
+    {:ok, view, html} = live(conn, ~p"/docs/guide/why")
+
+    assert html =~ ~s(id="docs-search-trigger")
+    assert has_element?(view, ~s(#docs-search-dialog [role="option"]), "Getting Started")
+
+    results =
+      view
+      |> element("#docs-search-form")
+      |> render_change(%{"q" => "getting started"})
+
+    assert results =~ ~s(href="/docs/guide/getting-started")
+
+    assert has_element?(
+             view,
+             ~s(#docs-search-result-0[href="/docs/guide/getting-started"] mark),
+             "Getting"
+           )
+
+    view
+    |> element("#docs-search-form")
+    |> render_change(%{"q" => "zzzqq"})
+
+    refute has_element?(view, ~s(#docs-search-dialog [role="option"]))
+    assert has_element?(view, ~s(#docs-search-dialog [data-part="empty"]), "zzzqq")
+  end
+
   test "renders the native Cargo adoption path", %{conn: conn} do
     {:ok, _view, html} = live(conn, ~p"/docs/guide/graph/rust")
 
@@ -54,17 +81,7 @@ defmodule StruoSiteWeb.DocsLiveTest do
         assert has_element?(view, "article h2", heading)
       end
 
-      assert has_element?(
-               view,
-               "#docs-sidebar a[href='#{provider.slug}'] [data-selected]"
-             )
-
-      assert is_binary(provider.icon)
-
-      assert has_element?(
-               view,
-               "#docs-sidebar a[href='#{provider.slug}'] [data-selected] [data-icon='#{provider.icon}']"
-             )
+      assert has_element?(view, "#docs-sidebar a[href='#{provider.slug}'][data-selected]")
     end
 
     for {path, title} <- [
@@ -116,10 +133,31 @@ defmodule StruoSiteWeb.DocsLiveTest do
     assert has_element?(view, "a[data-part='next-page'][href='/docs/guide/why']")
   end
 
-  test "renders a not-found message for unknown pages", %{conn: conn} do
-    {:ok, _view, html} = live(conn, ~p"/docs/nope/missing")
+  test "answers unknown pages with a 404 and a not-found message", %{conn: conn} do
+    html = conn |> get(~p"/docs/nope/missing") |> html_response(404)
 
     assert html =~ "Page not found"
+    assert html =~ ~s(<meta name="robots" content="noindex">)
+    refute html =~ ~s(rel="canonical")
+  end
+
+  test "a page's head describes that page and names its canonical address", %{conn: conn} do
+    why = conn |> get(~p"/docs/guide/why") |> html_response(200)
+    start = conn |> get(~p"/docs/guide/getting-started") |> html_response(200)
+
+    description = fn html ->
+      [_, content] = Regex.run(~r/<meta name="description" content="([^"]*)"/, html)
+      content
+    end
+
+    assert String.length(description.(why)) in 40..163
+    assert description.(why) != description.(start)
+    refute description.(why) == "Struo documentation."
+
+    assert why =~
+             ~s(<link rel="canonical" href="#{StruoSiteWeb.Endpoint.url()}/docs/guide/why">)
+
+    refute why =~ ~s(name="robots")
   end
 
   test "serves raw markdown", %{conn: conn} do

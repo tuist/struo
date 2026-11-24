@@ -39,7 +39,6 @@ defmodule StruoSite.BlogTest do
     assert post.slug == "an-example"
     assert post.date == ~D[2026-07-27]
     assert Enum.map(post.authors, & &1.id) == ["pedro"]
-    assert post.reading_minutes == 1
   end
 
   test "builds a Gravatar URL without exposing the email address" do

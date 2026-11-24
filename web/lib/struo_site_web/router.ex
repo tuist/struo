@@ -21,6 +21,10 @@ defmodule StruoSiteWeb.Router do
     plug StruoSiteWeb.Plugs.RateLimit
   end
 
+  pipeline :docs do
+    plug StruoSiteWeb.Plugs.DocsNotFound
+  end
+
   scope "/", StruoSiteWeb do
     get "/ready", HealthController, :ready
   end
@@ -32,6 +36,7 @@ defmodule StruoSiteWeb.Router do
     get "/changelog/feed.atom", ChangelogController, :atom
     get "/blog/feed.xml", BlogController, :rss
     get "/blog/feed.atom", BlogController, :atom
+    get "/sitemap.xml", SitemapController, :index
   end
 
   scope "/", StruoSiteWeb do
@@ -45,6 +50,10 @@ defmodule StruoSiteWeb.Router do
     get "/blog/:slug", BlogController, :show
 
     get "/docs-markdown/*path", DocsMarkdownController, :show
+  end
+
+  scope "/", StruoSiteWeb do
+    pipe_through [:browser, :docs]
 
     live_session :docs, root_layout: {StruoSiteWeb.Docs.Layouts, :root} do
       live "/docs", DocsLive, :index

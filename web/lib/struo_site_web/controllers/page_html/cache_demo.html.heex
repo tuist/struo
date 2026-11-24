@@ -1,0 +1,77 @@
+<section data-part="cache-demo" aria-label="How Struo caches a build">
+  <div
+    data-part="demo-frame"
+    role="img"
+    aria-label="A looping animation: each action is hashed into a cache key, then restored from the cache or built and stored, over a chart of total build time with and without the cache."
+  >
+    <div data-part="demo-flow">
+      <h3 data-part="demo-label">Action <span data-node="machine" data-readout></span></h3>
+      <div data-part="demo-panel" data-node="box-action">
+        <p data-part="demo-command" data-node="command" data-readout></p>
+        <dl data-part="demo-facts">
+          <div>
+            <dt>inputs</dt>
+            <dd data-node="inputs" data-readout></dd>
+          </div>
+          <div>
+            <dt>environment</dt>
+            <dd data-node="environment" data-readout></dd>
+          </div>
+        </dl>
+      </div>
+      <span data-part="demo-wire" data-node="wire-key"></span>
+
+      <h3 data-part="demo-label">Cache key</h3>
+      <div data-part="demo-panel" data-node="box-key">
+        <span data-part="demo-caption">hash of the action</span>
+        <span data-part="demo-value" data-node="key" data-readout>--------</span>
+        <span data-part="demo-result" data-node="key-state" data-readout></span>
+      </div>
+      <span data-part="demo-wire" data-node="wire-result"></span>
+
+      <h3 data-part="demo-label">Result</h3>
+      <div data-part="demo-panel" data-node="box-result">
+        <span data-part="demo-caption" data-node="result-note" data-readout>waiting</span>
+        <span data-part="demo-value" data-node="result" data-readout>--</span>
+        <span data-part="demo-progress"><span data-node="progress"></span></span>
+      </div>
+    </div>
+
+    <div data-part="demo-chart">
+      <div data-part="demo-chart-head">
+        <h3 data-part="demo-label">Total build time <span>minutes</span></h3>
+        <p data-part="demo-legend">
+          <span data-swatch="once">with Struo</span>
+          <span data-swatch="none">no cache</span>
+        </p>
+      </div>
+      <div data-part="demo-plot">
+        <div data-part="demo-ticks" data-node="total-ticks"></div>
+        <svg
+          data-part="demo-lines"
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+        >
+          <path data-node="line-none" data-series="none" d="" />
+          <path data-node="line-once" data-series="once" d="" />
+        </svg>
+        <div data-part="demo-contacts" data-node="contacts"></div>
+      </div>
+    </div>
+
+    <dl data-part="demo-stats">
+      <div>
+        <dt data-part="demo-label">Restored</dt>
+        <dd data-node="restored" data-readout data-figures>0 / 0</dd>
+      </div>
+      <div>
+        <dt data-part="demo-label">Time saved</dt>
+        <dd data-node="saved" data-readout data-figures>0m 00s</dd>
+      </div>
+      <div>
+        <dt data-part="demo-label">Speedup</dt>
+        <dd data-node="speedup" data-readout data-figures>1.0x</dd>
+      </div>
+    </dl>
+  </div>
+</section>

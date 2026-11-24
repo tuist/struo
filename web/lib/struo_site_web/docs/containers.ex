@@ -11,7 +11,7 @@ defmodule StruoSiteWeb.Docs.Containers do
 
   @icons_path Path.join([File.cwd!(), "deps", "noora", "lib", "noora", "icons"])
   @copy_icon @icons_path |> Path.join("copy.svg") |> File.read!() |> String.trim()
-  @copy_check_icon @icons_path |> Path.join("copy-check.svg") |> File.read!() |> String.trim()
+  @copy_check_icon @icons_path |> Path.join("check.svg") |> File.read!() |> String.trim()
 
   @statuses %{
     "tip" => "success",
@@ -103,7 +103,7 @@ defmodule StruoSiteWeb.Docs.Containers do
       end)
 
     copy_button =
-      ~s(<button data-part="copy" aria-label="Copy code"><span data-part="copy-icon">#{@copy_icon}</span><span data-part="copy-check-icon">#{@copy_check_icon}</span></button>)
+      ~s(<button data-part="copy" class="noora-ghost-button" data-variant="secondary" data-size="large" aria-label="Copy code"><span data-part="copy-icon">#{@copy_icon}</span><span data-part="copy-check-icon">#{@copy_check_icon}</span></button>)
 
     ~s(\n<div class="code-group"><div data-part="header"><div data-part="tabs">) <>
       tabs <>

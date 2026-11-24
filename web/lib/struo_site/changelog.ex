@@ -68,10 +68,20 @@ defmodule StruoSite.Changelog do
     |> String.split("\n", trim: true)
     |> Enum.map(&String.split(&1, ":", parts: 2))
     |> Enum.reduce(%{}, fn
-      [key, value], acc -> Map.put(acc, String.trim(key), String.trim(value))
-      _, acc -> acc
+      [key, value], acc ->
+        Map.put(acc, String.trim(key), value |> String.trim() |> unquote_value())
+
+      _, acc ->
+        acc
     end)
   end
+
+  defp unquote_value(<<quote, _::binary>> = value)
+       when quote in [?", ?'] and byte_size(value) > 1 do
+    if String.ends_with?(value, <<quote>>), do: String.slice(value, 1..-2//1), else: value
+  end
+
+  defp unquote_value(value), do: value
 
   defp parse_date(nil), do: Date.utc_today()
 
@@ -86,7 +96,8 @@ defmodule StruoSite.Changelog do
     body
     |> String.split("\n\n", trim: true)
     |> List.first("")
-    |> String.replace(~r/[`*_>#\[\]()]/, "")
+    |> String.replace(~r/\[([^\]]*)\]\([^)]*\)/, "\\1")
+    |> String.replace(~r/[`*>#\[\]()]|(?<!\w)_|_(?!\w)/, "")
     |> String.replace(~r/\s+/, " ")
     |> String.trim()
     |> String.slice(0, 200)

@@ -1,96 +1,161 @@
 <Layouts.app flash={@flash}>
   <section data-part="hero">
-    <div data-part="hero-glow"></div>
-    <a
-      data-part="oss-badge"
-      href="https://github.com/tuist/struo"
-      target="_blank"
-      rel="noopener"
-    >
-      <span data-part="oss-icon">{Phoenix.HTML.raw(github_icon())}</span>
-      <span>Open source</span>
-      <span data-part="oss-sep"></span>
-      <span data-part="oss-muted">MIT licensed</span>
-    </a>
-    <h1>Build once.<br />Reuse everywhere.</h1>
-    <p data-part="lede">
-      Struo gives every action explicit inputs, outputs, and environment, so results are
-      content-addressed, cached, and reusable across developers, coding agents, continuous
-      integration, and machines. Build it once, and never build it again.
-    </p>
-    <div data-part="hero-actions">
-      <a data-part="button" data-variant="primary" href="/docs/guide/getting-started">
-        Get started
-      </a>
-      <a data-part="button" data-variant="secondary" href="/docs">Read the docs</a>
-      <a
-        data-part="button"
-        data-variant="secondary"
-        href="https://discord.gg/fTpB5e3rRp"
-        target="_blank"
-        rel="noopener"
-      >
-        Join Discord
-      </a>
-    </div>
-
-    <div data-part="terminal" id="home-terminal" aria-label="Struo build examples">
-      <div data-part="terminal-bar">
-        <span data-part="terminal-dot"></span>
-        <span data-part="terminal-dot"></span>
-        <span data-part="terminal-dot"></span>
-        <div data-part="terminal-tabs" role="tablist">
-          <button
-            :for={{term, index} <- Enum.with_index(terminals())}
-            type="button"
-            data-part="terminal-tab"
-            data-index={index}
+    <div data-part="crt" id="home-crt">
+      <div data-part="crt-screen">
+        <canvas data-part="crt-canvas" aria-hidden="true"></canvas>
+        <div data-part="crt-content">
+          <h1>Remote cache &amp; execution,<br />for the rest of us</h1>
+          <div
+            :for={{channel, index} <- Enum.with_index(channels())}
+            data-part="crt-channel"
             data-active={to_string(index == 0)}
           >
-            <span data-part="tab-icon" data-lang={term.icon} aria-hidden="true"></span>
-            {term.label}
-          </button>
+            <p data-part="works-with">
+              <span data-part="works-with-lead">Works with</span>
+              <span data-part="platform">{channel.label}</span>
+            </p>
+            <pre data-part="crt-command"><code><span data-part="prompt">$</span> {channel.command}</code></pre>
+          </div>
         </div>
       </div>
-      <div data-part="terminal-panels">
-        <pre
-          :for={{term, index} <- Enum.with_index(terminals())}
-          data-part="terminal-panel"
-          data-index={index}
-          data-active={to_string(index == 0)}
-        ><code><span data-part="prompt">$</span> {term.command}
-target     {term.target}
-cache key  {term.cache}
-result     <span data-part={term.result}>{term.result}</span>
-duration   {term.duration}</code></pre>
+      <div data-part="crt-controls">
+        <a
+          data-part="oss-badge"
+          href="https://github.com/tuist/struo"
+          target="_blank"
+          rel="noopener"
+        >
+          <span data-part="oss-icon">{Phoenix.HTML.raw(github_icon())}</span>
+          <span>Open source</span>
+          <span data-part="oss-sep"></span>
+          <span data-part="oss-muted">MIT licensed</span>
+        </a>
+        <div data-part="channel-keys" role="group" aria-label="Platform">
+          <button
+            :for={{channel, index} <- Enum.with_index(channels())}
+            type="button"
+            data-part="channel-key"
+            aria-label={channel.label}
+            aria-pressed={to_string(index == 0)}
+            title={channel.label}
+          >
+            <span data-part="key-cap" aria-hidden="true">
+              <span data-part="key-dish">
+                <span data-part="key-icon" data-icon={channel.icon}></span>
+              </span>
+            </span>
+          </button>
+        </div>
+        <%!-- The rotary channel dial, switched off for now.
+        <fieldset data-part="channel-dial" style={"--dial-angle: #{dial_angle(0)}deg"}>
+          <legend>Platform</legend>
+          <label
+            :for={{channel, index} <- Enum.with_index(channels())}
+            data-part="dial-stop"
+            style={"--stop-angle: #{dial_angle(index)}deg"}
+          >
+            <input type="radio" name="channel" value={index} checked={index == 0} />
+            <span data-part="dial-stop-name">{channel.label}</span>
+          </label>
+          <span data-part="dial-knob" aria-hidden="true">
+            <span data-part="dial-pointer"></span>
+          </span>
+        </fieldset>
+        --%>
+      </div>
+    </div>
+
+    <div data-part="hero-pitch">
+      <p data-part="lede">
+        Struo gives every action explicit inputs, outputs, and environment, so results are
+        content-addressed, cached, and reusable across developers, coding agents, continuous
+        integration, and machines. Build it once, and never build it again.
+      </p>
+      <div data-part="hero-actions">
+        <Noora.Button.button
+          label="Get started"
+          variant="primary"
+          href="/docs/guide/getting-started"
+        />
       </div>
     </div>
   </section>
 
+  <.cache_demo />
+
   <section data-part="features" aria-label="How Struo works">
-    <a :for={feature <- features()} data-part="feature-card" href={feature.link}>
-      <div data-part="image">
-        <span data-part="title">{feature.title}</span>
-        <div data-part="icon">{Phoenix.HTML.raw(feature.icon)}</div>
-      </div>
-      <div data-part="body">
-        <p>{feature.details}</p>
-        <span data-part="feature-cta">Learn more →</span>
-      </div>
+    <a :for={feature <- features()} data-part="feature" href={feature.link}>
+      <h2 data-part="feature-title">
+        <span data-part="feature-icon" aria-hidden="true">{Phoenix.HTML.raw(feature.icon)}</span>
+        {feature.title}
+        <span data-part="feature-chevron" aria-hidden="true">{Phoenix.HTML.raw(chevron_icon())}</span>
+      </h2>
+      <p data-part="feature-details">{feature.details}</p>
     </a>
   </section>
 
   <section data-part="languages" aria-label="Supported languages">
-    <p data-part="section-eyebrow">Works with your stack</p>
     <h2>Natively supported languages and ecosystems</h2>
     <p data-part="section-copy">
       Cache and reuse builds and tests across the tools your teams already ship with.
     </p>
     <div data-part="language-grid">
       <a :for={lang <- languages()} data-part="language-chip" href={lang.link}>
-        <span data-part="lang-icon" data-lang={lang.icon} aria-hidden="true"></span>
+        <span data-part="lang-cap" aria-hidden="true">
+          <span data-part="lang-icon" data-lang={lang.icon}></span>
+        </span>
         <span>{lang.name}</span>
       </a>
     </div>
+  </section>
+
+  <section data-part="gaps" aria-labelledby="gaps-title">
+    <h2 id="gaps-title">Help us find the gaps</h2>
+    <p data-part="section-copy">
+      Struo does not cover every build graph yet. Hand this prompt to your coding agent: it
+      builds Struo from source, tries it on your project, and reports what is missing.
+    </p>
+    <div data-part="prompt-card">
+      <div data-part="prompt-bar">
+        <span data-part="prompt-label">Prompt for your agent</span>
+        <Noora.Button.ghost_button
+          variant="secondary"
+          size="large"
+          data-part="copy"
+          aria-label="Copy prompt"
+        >
+          <span data-part="copy-icon" aria-hidden="true">{Phoenix.HTML.raw(copy_icon())}</span>
+          <span data-part="copy-check-icon" aria-hidden="true">
+            {Phoenix.HTML.raw(check_icon())}
+          </span>
+        </Noora.Button.ghost_button>
+      </div>
+      <div id="gaps-prompt" data-part="prompt-text">
+        <pre data-part="prompt-lead">{gaps_prompt_lead()}</pre>
+        <pre data-part="prompt-rest">{gaps_prompt_steps(StruoSiteWeb.Endpoint.url())}</pre>
+      </div>
+      <template data-part="copy-source">{gaps_prompt(StruoSiteWeb.Endpoint.url())}</template>
+      <div data-part="prompt-more">
+        <Noora.Button.ghost_button
+          label="Show more"
+          variant="outline"
+          size="large"
+          data-part="prompt-toggle"
+          aria-expanded="false"
+          aria-controls="gaps-prompt"
+        >
+          <:icon_right>
+            <span data-part="prompt-toggle-icon" aria-hidden="true">
+              {Phoenix.HTML.raw(chevron_down_icon())}
+            </span>
+          </:icon_right>
+        </Noora.Button.ghost_button>
+      </div>
+    </div>
+    <p data-part="gaps-note">
+      Found one?
+      <a href="https://github.com/tuist/struo/issues" target="_blank" rel="noopener">Open an issue</a>
+      or tell us on <a href="https://discord.gg/fTpB5e3rRp" target="_blank" rel="noopener">Discord</a>.
+    </p>
   </section>
 </Layouts.app>

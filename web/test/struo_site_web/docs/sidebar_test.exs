@@ -29,6 +29,19 @@ defmodule StruoSiteWeb.Docs.SidebarTest do
     end
   end
 
+  test "a group's introduction is the group's own page, not an item" do
+    groups = Sidebar.guide_tree() ++ Sidebar.reference_tree()
+    typed_graph = Enum.find(groups, &(&1.label == "Typed Graph"))
+
+    assert typed_graph.slug == "/docs/guide/graph"
+    refute Enum.any?(typed_graph.items, &(&1.slug == "/docs/guide/graph"))
+    assert Sidebar.adjacent_pages("/docs/guide/graph").next.slug == "/docs/guide/graph/ecosystems"
+    assert Sidebar.adjacent_pages("/docs/guide/graph/ecosystems").previous.label == "Typed Graph"
+
+    refute Enum.any?(groups, fn group -> Enum.any?(group.items, &(&1.label == "Overview")) end)
+    assert Enum.find(groups, &(&1.label == "Toolchains")).slug == nil
+  end
+
   test "item_active? matches the current slug" do
     item = %Item{label: "Why", slug: "/docs/guide/why"}
     assert Sidebar.item_active?(item, "/docs/guide/why")
@@ -45,43 +58,35 @@ defmodule StruoSiteWeb.Docs.SidebarTest do
     refute Sidebar.item_or_children_active?(parent, "/docs/reference/prelude/other")
   end
 
-  test "infrastructure providers include execution and cache providers with icons" do
-    infrastructure =
-      Sidebar.guide_tree()
-      |> Enum.find(&(&1.label == "Infrastructure"))
-
+  test "infrastructure providers are their own group: Tuist, then the rest by name" do
+    infrastructure = Enum.find(Sidebar.guide_tree(), &(&1.label == "Infrastructure"))
     providers = Enum.find(Sidebar.guide_tree(), &(&1.label == "Infrastructure Providers"))
 
-    assert Map.new(providers.items, &{&1.label, &1.icon}) == %{
-             "Blaxel" => "blaxel",
-             "Boat" => "boat",
-             "Cloudflare" => "cloudflare",
-             "Daytona" => "daytona",
-             "Docker" => "docker",
-             "E2B" => "e2b",
-             "HTTP Cache" => "http-cache",
-             "LangSmith" => "langsmith",
-             "Microsandbox" => "microsandbox",
-             "Northflank" => "northflank",
-             "Object Storage" => "object-storage",
-             "Runloop" => "runloop",
-             "Sprites" => "sprites",
-             "OpenSandbox" => "opensandbox",
-             "Tensorlake" => "tensorlake",
-             "Together" => "together",
-             "Tuist" => "tuist",
-             "Vercel Sandbox" => "vercel"
-           }
-
-    labels = Enum.map(providers.items, & &1.label)
-    assert labels == Enum.sort(labels)
-
-    css = File.read!("assets/docs/docs.css")
+    assert Enum.map(providers.items, & &1.label) == [
+             "Tuist",
+             "Blaxel",
+             "Boat",
+             "Cloudflare",
+             "Daytona",
+             "Docker",
+             "E2B",
+             "HTTP Cache",
+             "LangSmith",
+             "Microsandbox",
+             "Northflank",
+             "Object Storage",
+             "OpenSandbox",
+             "Runloop",
+             "Sprites",
+             "Tensorlake",
+             "Together",
+             "Vercel Sandbox"
+           ]
 
     for provider <- providers.items do
-      assert is_binary(provider.icon)
-      assert Path.wildcard("priv/static/docs/icons/#{provider.icon}.*") != []
-      assert css =~ ~s([data-icon="#{provider.icon}"])
+      assert File.exists?(
+               "priv/docs" <> String.replace_prefix(provider.slug, "/docs", "") <> ".md"
+             )
     end
 
     refute Enum.any?(
@@ -89,8 +94,7 @@ defmodule StruoSiteWeb.Docs.SidebarTest do
              &(&1.slug in Enum.map(providers.items, fn item -> item.slug end))
            )
 
-    assert Enum.find(infrastructure.items, &(&1.label == "Buildkite (Example)")).icon ==
-             "buildkite"
+    assert Enum.any?(infrastructure.items, &(&1.label == "Buildkite (Example)"))
   end
 
   test "natively supported toolchains live in their own group with logos" do

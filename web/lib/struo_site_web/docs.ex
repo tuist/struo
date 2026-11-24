@@ -23,6 +23,19 @@ defmodule StruoSiteWeb.Docs do
   @spec source_path([String.t()]) :: {:ok, Path.t()} | :error
   def source_path(segments), do: resolve(segments)
 
+  @doc "The URL path of every documentation page, such as `/docs/guide/why`, in a stable order."
+  @spec paths() :: [String.t()]
+  def paths do
+    root = root()
+
+    for file <- [root, "**", "*.md"] |> Path.join() |> Path.wildcard() |> Enum.sort(),
+        segments = file |> Path.relative_to(root) |> Path.rootname() |> Path.split(),
+        segments = if(List.last(segments) == "index", do: Enum.drop(segments, -1), else: segments),
+        segments != [] do
+      "/docs/" <> Enum.join(segments, "/")
+    end
+  end
+
   @doc "Root directory holding the documentation markdown."
   @spec root() :: Path.t()
   def root, do: Application.app_dir(:struo_site, "priv/docs")

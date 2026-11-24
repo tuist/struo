@@ -88,6 +88,8 @@ data = [
   "priv/static/docs/*.png",
   "priv/static/fonts/*",
   "priv/static/images/*.svg",
+  "priv/static/images/*.webp",
+  "priv/static/images/languages/*.svg",
 ]
 priv = [
   "priv/posts/**/*.md",
@@ -106,6 +108,8 @@ priv = [
   "priv/static/favicon.ico",
   "priv/static/fonts/*",
   "priv/static/images/*.svg",
+  "priv/static/images/*.webp",
+  "priv/static/images/languages/*.svg",
   "priv/static/robots.txt",
 ]
 env_inherit = ["PORT"]
@@ -146,6 +150,8 @@ data = [
   "priv/static/docs/*.png",
   "priv/static/fonts/*",
   "priv/static/images/*.svg",
+  "priv/static/images/*.webp",
+  "priv/static/images/languages/*.svg",
 ]
 priv = [
   "priv/posts/**/*.md",
@@ -164,6 +170,8 @@ priv = [
   "priv/static/favicon.ico",
   "priv/static/fonts/*",
   "priv/static/images/*.svg",
+  "priv/static/images/*.webp",
+  "priv/static/images/languages/*.svg",
   "priv/static/robots.txt",
 ]
 
@@ -207,6 +215,8 @@ data = [
   "priv/static/favicon.ico",
   "priv/static/fonts/*",
   "priv/static/images/*.svg",
+  "priv/static/images/*.webp",
+  "priv/static/images/languages/*.svg",
   "priv/static/robots.txt",
 ]
 tools = ["_build/esbuild-*"]
@@ -250,6 +260,8 @@ data = [
   "priv/static/docs/*.png",
   "priv/static/fonts/*",
   "priv/static/images/*.svg",
+  "priv/static/images/*.webp",
+  "priv/static/images/languages/*.svg",
 ]
 priv = [
   "priv/posts/**/*.md",
@@ -268,5 +280,7 @@ priv = [
   "priv/static/favicon.ico",
   "priv/static/fonts/*",
   "priv/static/images/*.svg",
+  "priv/static/images/*.webp",
+  "priv/static/images/languages/*.svg",
   "priv/static/robots.txt",
 ]

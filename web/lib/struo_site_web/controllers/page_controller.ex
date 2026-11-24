@@ -3,7 +3,7 @@ defmodule StruoSiteWeb.PageController do
 
   def home(conn, _params) do
     conn
-    |> assign(:page_title, "Build once. Reuse everywhere.")
+    |> assign(:page_title, "Remote cache & execution, for the rest of us")
     |> assign(:meta_description, meta_description())
     |> assign(:og_image, "/images/og/home.jpg")
     |> render(:home)

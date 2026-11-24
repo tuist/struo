@@ -1,14 +1,16 @@
 #docs-page-layout {
-  margin: 0 auto;
-  padding: 0 var(--noora-spacing-5);
+  box-sizing: border-box;
+  padding: 0 var(--docs-gutter);
+  width: 100%;
 
+  /* The sidebar keeps to the left edge of the window and the table of
+     contents to the right; the page sits in the middle of what is left. */
   & #docs-layout {
     display: grid;
     grid-template-columns:
       var(--docs-sidebar-width)
-      minmax(0, var(--docs-content-width))
+      minmax(0, 1fr)
       var(--docs-toc-width);
-    justify-content: center;
     gap: var(--noora-spacing-10);
   }
 
@@ -19,15 +21,14 @@
     top: var(--docs-nav-height);
     flex-direction: column;
     align-self: start;
-    justify-self: start;
     width: var(--docs-sidebar-width);
     max-height: calc(100vh - var(--docs-nav-height));
 
     & > [data-part="sidebar-scroll"] {
       display: flex;
       flex-direction: column;
-      gap: var(--noora-spacing-7);
-      padding: var(--noora-spacing-7) var(--noora-spacing-4);
+      gap: var(--noora-spacing-9);
+      padding: 0 0 var(--noora-spacing-13);
       min-height: 0;
       overflow-anchor: none;
       overflow-y: auto;
@@ -35,46 +36,76 @@
     }
   }
 
-  /* Section group (line divider + content divider + items) */
+  /* A group: its label, then its pages */
   & [data-part="nav-section"] {
-    display: flex;
-    flex-direction: column;
-    gap: var(--noora-spacing-7);
-  }
-
-  & [data-part="sidebar-scroll"] > [data-part="nav-section"]:first-child .noora-line-divider {
-    display: none;
-  }
-
-  /* Nav items list */
-  & [data-part="nav-items"] {
     display: flex;
     flex-direction: column;
     gap: var(--noora-spacing-4);
   }
 
-  /* Content divider: icon + label */
-  & [data-part="content-divider"] {
+  /* A label that is a link opens the page that introduces its group. */
+  & #docs-sidebar [data-part="group-label"] {
     display: flex;
     align-items: center;
-    gap: var(--noora-spacing-2);
-    padding: var(--noora-spacing-2) var(--noora-spacing-4);
-    color: light-dark(var(--noora-surface-label-primary), var(--noora-neutral-dark-500));
+    gap: var(--noora-spacing-1);
+    padding: var(--noora-spacing-2) 0;
+    text-decoration: none;
 
     & svg {
-      width: var(--noora-icon-size-large);
-      height: var(--noora-icon-size-large);
-    }
-
-    & span {
-      font: var(--noora-font-weight-medium) var(--noora-font-body-medium);
+      flex-shrink: 0;
+      width: 14px;
+      height: 14px;
     }
   }
 
-  /* Navigation links (wrapping tab_menu_vertical) */
-  & [data-part="nav-link"] {
+  & #docs-sidebar a[data-part="group-label"] {
+    transition: color 0.15s;
+
+    &:hover,
+    &[data-selected] {
+      color: var(--noora-surface-label-primary);
+    }
+  }
+
+  & [data-part="nav-items"] {
+    display: flex;
+    flex-direction: column;
+  }
+
+  & #docs-sidebar [data-part="nav-link"],
+  & #docs-sidebar [data-part="trigger"][data-fill] {
+    display: flex;
+    align-items: center;
+    gap: var(--noora-spacing-4);
+    transition: color 0.15s;
+    padding: 5px 0;
+    min-width: 0;
+    color: var(--docs-label-muted);
+    font: var(--noora-font-weight-regular) var(--noora-font-body-medium);
     user-select: none;
+    text-align: left;
     text-decoration: none;
+
+    &:hover {
+      color: var(--noora-surface-label-primary);
+    }
+
+    & > [data-part="label"] {
+      flex: 1;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    & > svg {
+      flex-shrink: 0;
+      width: 14px;
+      height: 14px;
+    }
+  }
+
+  & #docs-sidebar [data-part="nav-link"][data-selected] {
+    color: var(--noora-surface-label-primary);
+    font-weight: var(--noora-font-weight-medium);
   }
 
   & [data-part="nav-row"] {
@@ -85,18 +116,6 @@
 
   & [data-part="nav-row"] > [data-part="nav-link"] {
     flex: 1;
-    min-width: 0;
-  }
-
-  /* Compact tab_menu_vertical inside sidebar */
-  & #docs-sidebar .noora-tab-menu-vertical {
-    border-radius: var(--noora-radius-3);
-    padding: var(--noora-spacing-3) var(--noora-spacing-4);
-
-    & [data-part="label"] {
-      flex: 1;
-      font: var(--noora-font-body-medium);
-    }
   }
 
   /* Collapsible trigger */
@@ -104,20 +123,29 @@
     flex-shrink: 0;
     cursor: pointer;
     border: none;
+    border-radius: var(--noora-radius-3);
     background: transparent;
-    padding: var(--noora-spacing-3) var(--noora-spacing-4);
-    user-select: none;
-    text-decoration: unset;
+    padding: var(--noora-spacing-2);
+    color: var(--docs-label-faint);
+
+    &:hover {
+      color: var(--noora-surface-label-primary);
+    }
+
+    &[data-fill] {
+      padding: 5px 0;
+      width: 100%;
+    }
 
     & [data-part="indicator"] {
       display: flex;
       justify-content: center;
       align-items: center;
-      color: var(--noora-surface-label-secondary);
 
-      & > div {
-        width: 18px;
-        height: 18px;
+      & > span {
+        display: flex;
+        width: 14px;
+        height: 14px;
       }
 
       & svg {
@@ -136,15 +164,6 @@
     display: none;
   }
 
-  /* Also handle indicator state from the root element */
-  & #docs-sidebar [data-part="root"]:not([data-state="open"]) > [data-part="trigger"] [data-part="indicator-up"] {
-    display: none;
-  }
-
-  & #docs-sidebar [data-part="root"][data-state="open"] > [data-part="trigger"] [data-part="indicator-down"] {
-    display: none;
-  }
-
   /* Collapsible content visibility */
   & #docs-sidebar [data-part="root"]:not([data-state="open"]) > [data-part="content"] {
     display: none;
@@ -153,17 +172,18 @@
   & #docs-sidebar [data-part="root"][data-state="open"] > [data-part="content"] {
     display: flex;
     flex-direction: column;
-    gap: var(--noora-spacing-2);
-    margin-top: var(--noora-spacing-3);
-    margin-left: 17px;
-    border-left: 1.5px solid var(--noora-surface-border-primary);
-    padding-left: var(--noora-spacing-5);
+    margin: var(--noora-spacing-2) 0 var(--noora-spacing-3) var(--noora-spacing-1);
+    border-left: 1px solid var(--noora-surface-border-primary);
+    padding-left: var(--noora-spacing-6);
   }
 
   /* Main content area */
   & #docs-layout > #docs-content {
-    padding: var(--noora-spacing-7) 0;
+    justify-self: center;
+    padding: var(--noora-spacing-11) 0 0;
+    width: 100%;
     min-width: 0;
+    max-width: var(--docs-content-width);
 
     & [data-part="mobile-copy"] {
       display: none;
@@ -173,8 +193,7 @@
   /* Responsive */
   @media (max-width: 1024px) {
     & #docs-layout {
-      grid-template-columns: 1fr;
-      padding: 0 var(--noora-spacing-4);
+      grid-template-columns: minmax(0, 1fr);
     }
 
     & #docs-sidebar {
@@ -185,10 +204,14 @@
       display: none;
     }
 
+    & #docs-layout > #docs-content {
+      padding-top: var(--noora-spacing-6);
+    }
+
     & #docs-layout > #docs-content [data-part="mobile-copy"] {
       display: flex;
       justify-content: flex-end;
-      padding: var(--noora-spacing-5) 0;
+      padding-bottom: var(--noora-spacing-6);
     }
 
     & #docs-sidebar[data-mobile-open] {
@@ -198,11 +221,18 @@
       bottom: 0;
       left: 0;
       z-index: var(--noora-z-index-5);
-      border-right: 1px solid var(--noora-content-divider-line);
+      border-right: 1px solid var(--noora-surface-border-primary);
       background: var(--noora-surface-background-primary);
       width: 280px;
       max-height: 100vh;
-      overflow-y: auto;
+
+      & > [data-part="search-trigger"] {
+        padding: var(--noora-spacing-8) var(--noora-spacing-7) var(--noora-spacing-7);
+      }
+
+      & > [data-part="sidebar-scroll"] {
+        padding: 0 var(--noora-spacing-7) var(--noora-spacing-11);
+      }
     }
   }
 }

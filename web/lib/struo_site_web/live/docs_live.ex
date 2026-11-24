@@ -13,6 +13,9 @@ defmodule StruoSiteWeb.DocsLive do
   alias StruoSiteWeb.Docs
   alias StruoSiteWeb.Docs.OgImage
   alias StruoSiteWeb.Docs.Sidebar
+  alias StruoSiteWeb.Endpoint
+
+  @max_description_length 160
 
   @impl true
   def mount(_params, _session, socket), do: {:ok, socket}
@@ -28,6 +31,10 @@ defmodule StruoSiteWeb.DocsLive do
        headings: [],
        markdown: "",
        not_found: false,
+       meta_description:
+         "Guides and reference for Struo: get started, cache scripts, describe a typed build " <>
+           "graph, and connect a remote cache and remote execution.",
+       canonical_url: Endpoint.url() <> "/docs",
        head_image: og_image_url("index.jpg")
      )}
   end
@@ -51,6 +58,8 @@ defmodule StruoSiteWeb.DocsLive do
            markdown: page.markdown,
            page_title: page.title || "Documentation",
            not_found: false,
+           meta_description: meta_description(page),
+           canonical_url: Endpoint.url() <> current_slug,
            head_image: og_image_url(OgImage.slug_to_filename(segments))
          )}
 
@@ -64,18 +73,22 @@ defmodule StruoSiteWeb.DocsLive do
            markdown: "",
            page_title: "Page not found",
            not_found: true,
+           meta_description: nil,
+           canonical_url: nil,
            head_image: og_image_url("index.jpg")
          )}
     end
   end
 
-  @impl true
-  def handle_event("copy-page-markdown", _params, %{assigns: %{markdown: markdown}} = socket)
-      when is_binary(markdown) and markdown != "" do
-    {:noreply, push_event(socket, "docs:copy-to-clipboard", %{text: markdown})}
-  end
+  # A page describes itself with its opening paragraph. One that opens with a
+  # table or code is described by its title.
+  defp meta_description(%{description: description}) when is_binary(description),
+    do: OgImage.summarize(description, @max_description_length)
 
-  def handle_event("copy-page-markdown", _params, socket), do: {:noreply, socket}
+  defp meta_description(%{title: title}) when is_binary(title),
+    do: "#{title}, in the Struo documentation."
+
+  defp meta_description(_page), do: nil
 
   @impl true
   def render(%{live_action: :index} = assigns) do

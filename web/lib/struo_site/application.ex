@@ -13,6 +13,8 @@ defmodule StruoSite.Application do
       {Phoenix.PubSub, name: StruoSite.PubSub},
       {StruoSite.RateLimit, [clean_period: :timer.minutes(1)]},
       StruoSiteWeb.Docs.Cache,
+      # Builds the docs search index ahead of the first search.
+      Supervisor.child_spec({Task, &StruoSiteWeb.Docs.Search.warm/0}, restart: :temporary),
       # Start to serve requests, typically the last entry
       StruoSiteWeb.Endpoint
     ]

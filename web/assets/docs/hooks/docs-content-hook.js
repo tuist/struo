@@ -6,9 +6,12 @@ function initializeCodeBlocks(container) {
   setupCodeGroups(container);
 }
 
+// Each page has its own element, so one mounting means a page was shown,
+// whether by a link or by the browser's back and forward buttons.
 const DocsContentHook = {
   mounted() {
     initializeCodeBlocks(this.el);
+    window.dispatchEvent(new Event("docs:page-shown"));
   },
   updated() {
     initializeCodeBlocks(this.el);

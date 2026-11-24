@@ -1,10 +1,26 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
     <meta name="csrf-token" content={get_csrf_token()} />
-    <link rel="icon" type="image/png" href="/docs/favicon.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/docs/favicon.png" />
+    <link rel="icon" type="image/svg+xml" href="/images/favicon.svg" />
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="/fonts/GeistMono-latin.woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="/fonts/GeistPixel-Line.woff2"
+      crossorigin
+    />
     <.live_title default="Struo" suffix=" · Struo">
       {assigns[:page_title]}
     </.live_title>
@@ -14,6 +30,10 @@
     <% social_image_alt = assigns[:og_image_alt] || assigns[:page_title] || "Struo" %>
 
     <meta name="description" content={assigns[:meta_description] || default_description()} />
+    <meta name="author" content="Tuist" />
+    <script type="application/ld+json">
+      <%= Phoenix.HTML.raw(StruoSiteWeb.StructuredData.json_ld(assigns)) %>
+    </script>
     <link
       rel="canonical"
       href={assigns[:canonical_url] || StruoSiteWeb.Endpoint.url() <> @conn.request_path}

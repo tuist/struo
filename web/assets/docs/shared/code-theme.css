@@ -1,0 +1,116 @@
+/* The colors of highlighted code, after Ayu Dark: orange keywords, yellow
+   functions, green strings, blue types and properties, and quiet gray
+   comments on a dark ground. Every color is one of Noora's. Ayu's lavender
+   for constants has no counterpart here, since Noora's purple is the brand
+   orange on this site, so constants take Noora's pink.
+
+   The highlighter gives each token one class, named from general to
+   specific, such as l-function-builtin. A rule for a family matches by
+   prefix, and a later rule picks out its exceptions. */
+[data-part="code-window"] > [data-part="code"] {
+  --code-text: var(--noora-neutral-dark-200);
+  --code-comment: var(--noora-neutral-dark-400);
+  --code-punctuation: var(--noora-neutral-dark-300);
+  --code-keyword: var(--noora-orange-300);
+  --code-operator: var(--noora-orange-200);
+  --code-function: var(--noora-yellow-400);
+  --code-special: var(--noora-yellow-600);
+  --code-string: var(--noora-green-300);
+  --code-constant: var(--noora-pink-300);
+  --code-type: var(--noora-blue-300);
+  --code-property: var(--noora-azure-300);
+
+  color: var(--code-text);
+
+  & [class^="l-comment"] {
+    color: var(--code-comment);
+  }
+
+  & [class^="l-punctuation"],
+  & .l-tag-delimiter {
+    color: var(--code-punctuation);
+  }
+
+  & [class^="l-keyword"],
+  & [class^="l-markup-heading"],
+  & .l-label,
+  & .l-tag,
+  & .l-comment-warning {
+    color: var(--code-keyword);
+  }
+
+  & .l-operator {
+    color: var(--code-operator);
+  }
+
+  & [class^="l-function"],
+  & .l-module,
+  & .l-variable-builtin {
+    color: var(--code-function);
+  }
+
+  & [class^="l-string"] {
+    color: var(--code-string);
+  }
+
+  & [class^="l-number"],
+  & [class^="l-constant"],
+  & .l-boolean,
+  & .l-character {
+    color: var(--code-constant);
+  }
+
+  & [class^="l-type"],
+  & .l-tag-attribute,
+  & .l-diff-delta,
+  & .l-comment-note {
+    color: var(--code-type);
+  }
+
+  & .l-property,
+  & .l-variable-member {
+    color: var(--code-property);
+  }
+
+  /* What a language builds in or treats specially. */
+  & [class^="l-attribute"],
+  & [class^="l-string-special"],
+  & .l-string-escape,
+  & .l-string-regexp,
+  & .l-character-special,
+  & .l-constant-builtin,
+  & .l-constructor,
+  & .l-function-builtin,
+  & .l-module-builtin,
+  & .l-punctuation-special,
+  & .l-tag-builtin,
+  & .l-type-builtin,
+  & .l-variable-parameter-builtin,
+  & .l-markup-list,
+  & .l-markup-quote,
+  & .l-markup-raw {
+    color: var(--code-special);
+  }
+
+  & .l-diff-plus {
+    color: var(--noora-green-300);
+  }
+
+  & .l-diff-minus,
+  & .l-comment-todo,
+  & .l-comment-error {
+    color: var(--noora-red-300);
+  }
+
+  & .l-markup-strong {
+    font-weight: var(--noora-font-weight-semibold);
+  }
+
+  & .l-markup-strikethrough {
+    text-decoration: line-through;
+  }
+
+  & :is(.l-markup-link, .l-markup-link-url, .l-string-special-url) {
+    text-decoration: underline;
+  }
+}

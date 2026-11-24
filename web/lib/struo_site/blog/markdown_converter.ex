@@ -11,17 +11,7 @@ defmodule StruoSite.Blog.MarkdownConverter do
   @syntax_highlight (if Mix.env() == :test do
                        [syntax_highlight: nil]
                      else
-                       [
-                         syntax_highlight: [
-                           engine: :lumis,
-                           opts: [
-                             formatter:
-                               {:html_multi_themes,
-                                themes: [light: "github_light", dark: "github_dark"],
-                                default_theme: "light-dark()"}
-                           ]
-                         ]
-                       ]
+                       [syntax_highlight: [engine: :lumis, opts: [formatter: :html_linked]]]
                      end)
 
   @mdex_options [

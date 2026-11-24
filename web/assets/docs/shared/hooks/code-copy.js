@@ -1,9 +1,28 @@
 import { copyTextToClipboard } from "../clipboard.js";
 
+// Sweeps one scanline down the code in the box it was copied from, below the
+// box's bar. Removing the attribute and reading the layout first restarts a
+// sweep still in flight.
+function sweepCopyScan(box) {
+  if (!box) return;
+  const bar = box.querySelector(':scope > :is([data-part="bar"], [data-part="header"], [data-part="prompt-bar"])');
+  box.removeAttribute("data-copy-scan");
+  box.style.setProperty("--scan-top", `${bar?.offsetHeight ?? 0}px`);
+  void box.offsetWidth;
+  box.setAttribute("data-copy-scan", "");
+  box.onanimationend = (event) => {
+    if (event.animationName === "copy-scan") box.removeAttribute("data-copy-scan");
+  };
+}
+
 function flashCopyCheck(button) {
+  sweepCopyScan(button.closest('[data-part="code-window"], .code-group'));
   button.setAttribute("data-copied", "");
   button.setAttribute("aria-label", "Copied");
-  setTimeout(() => {
+  // A second click restarts the confirmation instead of letting the first
+  // click's timer end it early.
+  clearTimeout(button.copyResetTimer);
+  button.copyResetTimer = setTimeout(() => {
     button.removeAttribute("data-copied");
     button.setAttribute("aria-label", "Copy code");
   }, 2000);
@@ -46,4 +65,4 @@ const CodeCopy = {
   },
 };
 
-export { CodeCopy, setupCodeCopy, flashCopyCheck, copySourceText };
+export { CodeCopy, setupCodeCopy, flashCopyCheck, copySourceText, sweepCopyScan };

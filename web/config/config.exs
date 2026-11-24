@@ -44,7 +44,8 @@ config :logger, :default_formatter,
 config :lumis, artifact_source: :cloudflare
 
 # Use the Lumis-enabled MDEx native highlighter so documentation code blocks are
-# syntax highlighted with the github_light / github_dark themes. This pulls the
+# syntax highlighted. Lumis marks the tokens and the site's stylesheet colors
+# them, for the languages whose parsers are in the dependencies. This pulls the
 # precompiled `--lumis` NIF variant (no Rust toolchain needed).
 # GitHub release headers exceed OTP's default limit; vendor mirrors retain checksums.
 config :mdex_native, syntax_highlighter: :lumis, artifact_source: :cloudflare

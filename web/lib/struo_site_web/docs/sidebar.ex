@@ -5,6 +5,9 @@ defmodule StruoSiteWeb.Docs.Sidebar do
   Two trees are selected by URL prefix (`tab_for_slug/1`): the reference tree
   under `/docs/reference` and the guide tree everywhere else. Slugs are the full
   `/docs/...` paths, so no path rewriting is needed at render time.
+
+  A group may have its own page, the introduction to its section. The sidebar
+  links the group's label to it instead of listing it as an item.
   """
 
   defmodule Item do
@@ -14,7 +17,7 @@ defmodule StruoSiteWeb.Docs.Sidebar do
 
   defmodule Group do
     @moduledoc false
-    defstruct [:label, items: []]
+    defstruct [:label, :slug, items: []]
   end
 
   @doc "Top navigation shown in the docs header."
@@ -53,7 +56,7 @@ defmodule StruoSiteWeb.Docs.Sidebar do
       slug
       |> tab_for_slug()
       |> tree_for_tab()
-      |> Enum.flat_map(&flatten_pages(&1.items))
+      |> Enum.flat_map(&pages/1)
 
     case Enum.find_index(pages, &(&1.slug == slug)) do
       nil ->
@@ -67,6 +70,12 @@ defmodule StruoSiteWeb.Docs.Sidebar do
     end
   end
 
+  @doc "A group's pages in reading order: its own page, when it has one, then its items'."
+  def pages(%Group{slug: slug, label: label, items: items}) do
+    page = if is_binary(slug), do: [%Item{label: label, slug: slug}], else: []
+    page ++ flatten_pages(items)
+  end
+
   defp flatten_pages(items) do
     Enum.flat_map(items, fn item ->
       page = if is_binary(item.slug), do: [item], else: []
@@ -78,8 +87,8 @@ defmodule StruoSiteWeb.Docs.Sidebar do
     [
       %Group{
         label: "Start Here",
+        slug: "/docs/guide",
         items: [
-          %Item{label: "Overview", slug: "/docs/guide"},
           %Item{label: "Getting Started", slug: "/docs/guide/getting-started"},
           %Item{label: "Why Struo", slug: "/docs/guide/why"},
           %Item{label: "Coding Harnesses", slug: "/docs/guide/harness"}
@@ -87,16 +96,16 @@ defmodule StruoSiteWeb.Docs.Sidebar do
       },
       %Group{
         label: "Scripted Automation",
+        slug: "/docs/guide/scripted",
         items: [
-          %Item{label: "Overview", slug: "/docs/guide/scripted"},
           %Item{label: "Caching", slug: "/docs/guide/scripted/caching"},
           %Item{label: "Manual Cache Access", slug: "/docs/guide/scripted/runtime"}
         ]
       },
       %Group{
         label: "Typed Graph",
+        slug: "/docs/guide/graph",
         items: [
-          %Item{label: "Overview", slug: "/docs/guide/graph"},
           %Item{label: "Ecosystems", slug: "/docs/guide/graph/ecosystems"},
           %Item{label: "Configurations", slug: "/docs/guide/graph/configuration"},
           %Item{label: "Testing and Scheduling", slug: "/docs/guide/graph/testing"},
@@ -156,8 +165,8 @@ defmodule StruoSiteWeb.Docs.Sidebar do
       },
       %Group{
         label: "Infrastructure",
+        slug: "/docs/guide/infrastructure",
         items: [
-          %Item{label: "Overview", slug: "/docs/guide/infrastructure"},
           %Item{
             label: "Become a Provider",
             slug: "/docs/guide/infrastructure/providers"
@@ -166,83 +175,43 @@ defmodule StruoSiteWeb.Docs.Sidebar do
           %Item{label: "Connect A Project", slug: "/docs/guide/infrastructure/connect"},
           %Item{label: "Remote Execution", slug: "/docs/guide/infrastructure/remote-execution"},
           %Item{label: "Triggers (Experimental)", slug: "/docs/guide/infrastructure/triggers"},
-          %Item{
-            label: "Buildkite (Example)",
-            slug: "/docs/guide/infrastructure/buildkite",
-            icon: "buildkite"
-          }
+          %Item{label: "Buildkite (Example)", slug: "/docs/guide/infrastructure/buildkite"}
         ]
       },
       %Group{
         label: "Infrastructure Providers",
         items: [
-          %Item{label: "Blaxel", slug: "/docs/guide/infrastructure/blaxel", icon: "blaxel"},
-          %Item{label: "Boat", slug: "/docs/guide/infrastructure/boat", icon: "boat"},
-          %Item{
-            label: "Cloudflare",
-            slug: "/docs/guide/infrastructure/cloudflare",
-            icon: "cloudflare"
-          },
-          %Item{label: "Daytona", slug: "/docs/guide/infrastructure/daytona", icon: "daytona"},
-          %Item{label: "Docker", slug: "/docs/guide/infrastructure/docker", icon: "docker"},
-          %Item{label: "E2B", slug: "/docs/guide/infrastructure/e2b", icon: "e2b"},
-          %Item{
-            label: "HTTP Cache",
-            slug: "/docs/guide/infrastructure/http-cache",
-            icon: "http-cache"
-          },
-          %Item{
-            label: "LangSmith",
-            slug: "/docs/guide/infrastructure/langsmith",
-            icon: "langsmith"
-          },
-          %Item{
-            label: "Microsandbox",
-            slug: "/docs/guide/infrastructure/microsandbox",
-            icon: "microsandbox"
-          },
-          %Item{
-            label: "Northflank",
-            slug: "/docs/guide/infrastructure/northflank",
-            icon: "northflank"
-          },
-          %Item{
-            label: "Object Storage",
-            slug: "/docs/guide/infrastructure/object-storage",
-            icon: "object-storage"
-          },
-          %Item{
-            label: "OpenSandbox",
-            slug: "/docs/guide/infrastructure/opensandbox",
-            icon: "opensandbox"
-          },
-          %Item{label: "Runloop", slug: "/docs/guide/infrastructure/runloop", icon: "runloop"},
-          %Item{label: "Sprites", slug: "/docs/guide/infrastructure/sprites", icon: "sprites"},
-          %Item{
-            label: "Tensorlake",
-            slug: "/docs/guide/infrastructure/tensorlake",
-            icon: "tensorlake"
-          },
-          %Item{label: "Together", slug: "/docs/guide/infrastructure/together", icon: "together"},
-          %Item{label: "Tuist", slug: "/docs/guide/infrastructure/tuist", icon: "tuist"},
-          %Item{
-            label: "Vercel Sandbox",
-            slug: "/docs/guide/infrastructure/vercel",
-            icon: "vercel"
-          }
+          %Item{label: "Tuist", slug: "/docs/guide/infrastructure/tuist"},
+          %Item{label: "Blaxel", slug: "/docs/guide/infrastructure/blaxel"},
+          %Item{label: "Boat", slug: "/docs/guide/infrastructure/boat"},
+          %Item{label: "Cloudflare", slug: "/docs/guide/infrastructure/cloudflare"},
+          %Item{label: "Daytona", slug: "/docs/guide/infrastructure/daytona"},
+          %Item{label: "Docker", slug: "/docs/guide/infrastructure/docker"},
+          %Item{label: "E2B", slug: "/docs/guide/infrastructure/e2b"},
+          %Item{label: "HTTP Cache", slug: "/docs/guide/infrastructure/http-cache"},
+          %Item{label: "LangSmith", slug: "/docs/guide/infrastructure/langsmith"},
+          %Item{label: "Microsandbox", slug: "/docs/guide/infrastructure/microsandbox"},
+          %Item{label: "Northflank", slug: "/docs/guide/infrastructure/northflank"},
+          %Item{label: "Object Storage", slug: "/docs/guide/infrastructure/object-storage"},
+          %Item{label: "OpenSandbox", slug: "/docs/guide/infrastructure/opensandbox"},
+          %Item{label: "Runloop", slug: "/docs/guide/infrastructure/runloop"},
+          %Item{label: "Sprites", slug: "/docs/guide/infrastructure/sprites"},
+          %Item{label: "Tensorlake", slug: "/docs/guide/infrastructure/tensorlake"},
+          %Item{label: "Together", slug: "/docs/guide/infrastructure/together"},
+          %Item{label: "Vercel Sandbox", slug: "/docs/guide/infrastructure/vercel"}
         ]
       },
       %Group{
         label: "Memory",
+        slug: "/docs/guide/memory",
         items: [
-          %Item{label: "Overview", slug: "/docs/guide/memory"},
           %Item{label: "Evidence", slug: "/docs/guide/memory/evidence"}
         ]
       },
       %Group{
         label: "Language Libraries",
+        slug: "/docs/guide/sdk",
         items: [
-          %Item{label: "Overview", slug: "/docs/guide/sdk"},
           %Item{label: "Rust", slug: "/docs/guide/sdk/rust", icon: "rust"},
           %Item{label: "Swift", slug: "/docs/guide/sdk/swift", icon: "swift"},
           %Item{label: "Ruby", slug: "/docs/guide/sdk/ruby", icon: "ruby"},
@@ -257,8 +226,8 @@ defmodule StruoSiteWeb.Docs.Sidebar do
     [
       %Group{
         label: "References",
+        slug: "/docs/reference",
         items: [
-          %Item{label: "Overview", slug: "/docs/reference"},
           %Item{label: "Manifest", slug: "/docs/reference/manifest"},
           %Item{
             label: "Infrastructure Providers",
@@ -283,8 +252,8 @@ defmodule StruoSiteWeb.Docs.Sidebar do
       },
       %Group{
         label: "Commands",
+        slug: "/docs/reference/cli",
         items: [
-          %Item{label: "Overview", slug: "/docs/reference/cli"},
           %Item{label: "artifact", slug: "/docs/reference/cli/artifact"},
           %Item{label: "auth", slug: "/docs/reference/cli/auth"},
           %Item{label: "build", slug: "/docs/reference/cli/build"},
@@ -303,77 +272,74 @@ defmodule StruoSiteWeb.Docs.Sidebar do
       },
       %Group{
         label: "Target Kinds",
-        items:
-          [%Item{label: "Overview", slug: "/docs/reference/prelude"}] ++
-            [
-              target_group(
-                "Linting",
-                ~w(ruff_lint eslint_lint golangci_lint swiftlint_lint detekt_lint credo_lint rubocop_lint)
-              ),
-              target_group(
-                "Apple",
-                ~w(apple_library apple_system_module swift_macro apple_framework apple_application
+        slug: "/docs/reference/prelude",
+        items: [
+          target_group(
+            "Linting",
+            ~w(ruff_lint eslint_lint golangci_lint swiftlint_lint detekt_lint credo_lint rubocop_lint)
+          ),
+          target_group(
+            "Apple",
+            ~w(apple_library apple_system_module swift_macro apple_framework apple_application
                 apple_executable apple_resource_bundle apple_thinned_package apple_test_bundle
                 apple_xcframework_import swift_package_workspace swift_package_dependencies swift_package_pin
                 swift_package_build_tools)
-              ),
-              target_group("Core", ~w(archive_download artifact script)),
-              target_group("Containers", ~w(dockerfile_image oci_layer oci_image oci_index
+          ),
+          target_group("Core", ~w(archive_download artifact script)),
+          target_group("Containers", ~w(dockerfile_image oci_layer oci_image oci_index
                 oci_pull oci_import oci_load oci_push)),
-              target_group("Shell", ~w(shellspec_test)),
-              target_group("Bazel", ~w(bazel_workspace bazel_target bazel_test bazel_binary)),
-              target_group("Xcode", ~w(xcode_workspace)),
-              target_group("Android", ~w(android_resource android_library android_local_test
+          target_group("Shell", ~w(shellspec_test)),
+          target_group("Bazel", ~w(bazel_workspace bazel_target bazel_test bazel_binary)),
+          target_group("Xcode", ~w(xcode_workspace)),
+          target_group("Android", ~w(android_resource android_library android_local_test
                 android_instrumentation_test android_binary)),
-              target_group("Cross-platform", ~w(swift_android_library kotlin_apple_framework)),
-              target_group(
-                "Kotlin",
-                ~w(kotlin_jvm_library kotlin_jvm_binary kotlin_jvm_test java_import)
-              ),
-              target_group("C and C++", ~w(c_library)),
-              target_group("CMake", ~w(cmake_project cmake_test cmake_workspace cmake_target)),
-              target_group("Elixir", ~w(mix_workspace mix_dependencies mix_package mix_project
+          target_group("Cross-platform", ~w(swift_android_library kotlin_apple_framework)),
+          target_group(
+            "Kotlin",
+            ~w(kotlin_jvm_library kotlin_jvm_binary kotlin_jvm_test java_import)
+          ),
+          target_group("C and C++", ~w(c_library)),
+          target_group("CMake", ~w(cmake_project cmake_test cmake_workspace cmake_target)),
+          target_group("Elixir", ~w(mix_workspace mix_dependencies mix_package mix_project
                 mix_release elixir_library elixir_test)),
-              target_group("Python", ~w(pytest_test)),
-              target_group("Ruby", ~w(rspec_test minitest_test)),
-              target_group("JavaScript", ~w(javascript_build vitest_test jest_test)),
-              target_group("Nx", ~w(nx_workspace nx_task nx_test)),
-              target_group("Turborepo", ~w(turbo_workspace turbo_task turbo_test)),
-              target_group(
-                "React Native",
-                ~w(react_native_dependencies react_native_module
+          target_group("Python", ~w(pytest_test)),
+          target_group("Ruby", ~w(rspec_test minitest_test)),
+          target_group("JavaScript", ~w(javascript_build vitest_test jest_test)),
+          target_group("Nx", ~w(nx_workspace nx_task nx_test)),
+          target_group("Turborepo", ~w(turbo_workspace turbo_task turbo_test)),
+          target_group(
+            "React Native",
+            ~w(react_native_dependencies react_native_module
                 react_native_bundle react_native_codegen react_native_autolinking
                 react_native_apple_application react_native_android_application react_native_metro)
-              ),
-              target_group(
-                "Go",
-                ~w(go_dependencies go_module go_source go_library go_binary go_test)
-              ),
-              target_group(
-                "Rust",
-                ~w(cargo_workspace cargo_dependencies rust_library rust_mobile_library
+          ),
+          target_group(
+            "Go",
+            ~w(go_dependencies go_module go_source go_library go_binary go_test)
+          ),
+          target_group(
+            "Rust",
+            ~w(cargo_workspace cargo_dependencies rust_library rust_mobile_library
                 rust_binary rust_test rust_crate rust_proc_macro)
-              ),
-              target_group(
-                "Zig",
-                ~w(zig_dependencies zig_package zig_library zig_generated_library
+          ),
+          target_group(
+            "Zig",
+            ~w(zig_dependencies zig_package zig_library zig_generated_library
                 zig_c_library zig_binary zig_static_library zig_shared_library zig_test zig_configure
                 zig_configure_binary zig_configure_test)
-              )
-            ]
+          )
+        ]
       },
       %Group{
         label: "Model Context Protocol",
+        slug: "/docs/reference/mcp",
         items: [
-          %Item{label: "Overview", slug: "/docs/reference/mcp"},
           %Item{label: "Tools", slug: "/docs/reference/mcp/tools"}
         ]
       },
       %Group{
         label: "Live Run Event Protocol",
-        items: [
-          %Item{label: "Overview", slug: "/docs/reference/events"}
-        ]
+        slug: "/docs/reference/events"
       }
     ]
   end

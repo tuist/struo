@@ -4,51 +4,22 @@
   top: var(--docs-nav-height);
   flex-direction: column;
   align-self: start;
-  justify-self: end;
-  gap: var(--noora-spacing-3);
+  gap: var(--noora-spacing-4);
   z-index: 1;
-  padding: var(--noora-spacing-7) var(--noora-spacing-2) var(--noora-spacing-7) var(--noora-spacing-2);
+  box-sizing: border-box;
+  padding: var(--noora-spacing-11) 0 var(--noora-spacing-9);
   width: 100%;
-  max-width: 250px;
   max-height: calc(100vh - var(--docs-nav-height));
 
-  & > [data-part="toc-actions"] {
-    display: flex;
-    flex-shrink: 0;
-    align-items: center;
-
-    & #docs-copy-dropdown {
-      width: fit-content;
-
-      & .noora-dropdown-content {
-        box-shadow: var(--noora-border-light-default);
-        width: 280px;
-      }
-    }
-  }
-
   & > [data-part="toc-header"] {
-    display: flex;
     flex-shrink: 0;
-    align-items: center;
-    gap: var(--noora-spacing-2);
-    padding: var(--noora-spacing-7) 0 0 0;
-    color: var(--noora-surface-label-primary);
-
-    & svg {
-      flex-shrink: 0;
-    }
-
-    & span {
-      font: var(--noora-font-weight-medium) var(--noora-font-body-medium);
-    }
+    padding: var(--noora-spacing-2) 0;
   }
 
   & > [data-part="list"] {
     display: flex;
     flex-direction: column;
     margin: 0;
-    border-left: 1.5px solid var(--noora-surface-border-primary);
     padding: 0;
     min-width: 0;
     min-height: 0;
@@ -62,9 +33,9 @@
       & a {
         display: block;
         transition: color 0.15s;
-        padding: var(--noora-spacing-3) var(--noora-spacing-4);
+        padding: 5px 0;
         overflow: hidden;
-        color: var(--noora-surface-label-secondary);
+        color: var(--docs-label-muted);
         font: var(--noora-font-weight-regular) var(--noora-font-body-medium);
         text-decoration: none;
         text-overflow: ellipsis;
@@ -80,13 +51,82 @@
         }
 
         &[data-level="3"] {
-          padding-left: var(--noora-spacing-8);
+          padding-left: var(--noora-spacing-6);
         }
 
         &[data-level="4"] {
-          padding-left: var(--noora-spacing-11);
+          padding-left: var(--noora-spacing-9);
         }
       }
     }
   }
+
+  & > [data-part="toc-actions"] {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    padding-top: var(--noora-spacing-6);
+  }
+}
+
+/* The copy menu, here and above the page on small screens. Noora's split
+   button takes a label only, so its copy icon is drawn here, at the size and
+   spacing of a Noora button dropdown's leading icon. The icon turns into a
+   check while the script holds data-copied, the way a code block's copy
+   button does: the check sits on top of the copy icon, and the hidden one
+   waits at half size, so the swap fades and grows instead of flipping. */
+:is(#docs-copy-menu, #docs-mobile-copy-menu) > [data-part="main-button"] {
+  --copy-icon-size: var(--noora-icon-size-large);
+
+  &::before,
+  &::after {
+    flex-shrink: 0;
+    transition:
+      opacity 200ms ease-in-out,
+      transform 200ms ease-in-out;
+    background-color: currentColor;
+    width: var(--copy-icon-size);
+    height: var(--copy-icon-size);
+    content: "";
+  }
+
+  &::before {
+    -webkit-mask: url("/docs/icons/copy.svg") center / contain no-repeat;
+    mask: url("/docs/icons/copy.svg") center / contain no-repeat;
+  }
+
+  /* Placed first and pulled back by its own width and the button's gap, so
+     it takes no room and lands on the copy icon. */
+  &::after {
+    order: -1;
+    margin-inline-end: calc(-1 * (var(--copy-icon-size) + var(--noora-spacing-1)));
+    -webkit-mask: url("/docs/icons/check.svg") center / contain no-repeat;
+    mask: url("/docs/icons/check.svg") center / contain no-repeat;
+  }
+
+  &:not([data-copied])::after,
+  &[data-copied]::before {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+
+  /* "Copied" is shorter than the label it replaces. Centered, it would move
+     the icon in the middle of its change. */
+  &[data-copied] {
+    justify-content: flex-start;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    &::before,
+    &::after {
+      transition: none;
+    }
+  }
+}
+
+/* Noora leaves an item's trailing content unsized. */
+:is(#docs-copy-menu, #docs-mobile-copy-menu) .noora-menu-item > [data-part="extra"] svg {
+  width: var(--noora-icon-size-medium);
+  height: var(--noora-icon-size-medium);
+  color: var(--noora-surface-label-tertiary);
 }

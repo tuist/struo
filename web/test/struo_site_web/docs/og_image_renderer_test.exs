@@ -14,7 +14,7 @@ defmodule StruoSiteWeb.Docs.OgImageRendererTest do
   end
 
   test "JPEG dimensions match the social metadata across pooled renders", %{renderer: renderer} do
-    for title <- ["Rust", "Build once. Reuse everywhere."] do
+    for title <- ["Rust", "Remote cache & execution, for the rest of us"] do
       {:ok, jpeg} = OgImageRenderer.render(renderer, html(title: title))
       assert jpeg_dimensions(jpeg) == {OgImage.width(), OgImage.height()}
     end
@@ -23,8 +23,8 @@ defmodule StruoSiteWeb.Docs.OgImageRendererTest do
   test "long text and multiple authors stay inside the card without overlapping", %{
     renderer: renderer
   } do
-    logo_path = Application.app_dir(:struo_site, "priv/static/docs/nav-logo.png")
-    avatar = "data:image/png;base64," <> Base.encode64(File.read!(logo_path))
+    logo_path = Application.app_dir(:struo_site, "priv/static/images/struo-mark.webp")
+    avatar = "data:image/webp;base64," <> Base.encode64(File.read!(logo_path))
 
     cards = [
       [
@@ -53,17 +53,18 @@ defmodule StruoSiteWeb.Docs.OgImageRendererTest do
                    const rect = part => document.querySelector(`[data-part="${part}"]`)?.getBoundingClientRect();
                    const title = rect('title');
                    const description = rect('description');
-                   const footer = rect('footer');
+                   const header = rect('header');
                    const brand = rect('brand');
                    const meta = rect('author-meta');
-                   const parts = ['title', 'description', 'footer', 'brand', 'author-meta'];
+                   const parts = ['title', 'description', 'header', 'brand', 'author-meta'];
                    return parts.every(part => {
                      const box = rect(part);
                      return !box || (box.left >= 0 && box.top >= 0 && box.right <= #{OgImage.width()} && box.bottom <= #{OgImage.height()});
-                   }) && title.bottom < footer.top &&
-                     (!description || (title.bottom < description.top && description.bottom < footer.top)) &&
+                   }) && header.bottom < title.top &&
+                     (!description || title.bottom < description.top) &&
                      (!meta || brand.right < meta.left) &&
-                     document.fonts.check('500 128px "Inter Variable"') &&
+                     document.fonts.check('500 128px "Geist Pixel Line"') &&
+                     document.fonts.check('400 52px "Geist Mono"') &&
                      Array.from(document.images).every(image => image.complete && image.naturalWidth > 0);
                  })()
                  """)
@@ -76,7 +77,7 @@ defmodule StruoSiteWeb.Docs.OgImageRendererTest do
       Keyword.merge(
         [
           fonts_dir: Application.app_dir(:struo_site, "priv/static/fonts"),
-          logo_path: Application.app_dir(:struo_site, "priv/static/docs/nav-logo.png")
+          logo_path: Application.app_dir(:struo_site, "priv/static/images/struo-mark.webp")
         ],
         opts
       )
