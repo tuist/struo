@@ -15,11 +15,9 @@ Sandbox providers were also giving agents new places to run code. We wanted to c
 
 ## Keeping the project you already have
 
-[Google](https://about.google) and [Meta](https://about.meta.com) have dealt with high build volumes for years. [Bazel](https://bazel.build) and [Buck](https://buck2.build) brought their approach to remote caching and execution to other organizations.
+[Google](https://about.google) and [Meta](https://about.meta.com) have dealt with high build volumes for years, and [Bazel](https://bazel.build) and [Buck](https://buck2.build) brought their approach to remote caching and execution to other organizations. Struo brings those benefits to the project you already have. It reads the definitions your toolchain already uses, such as a `Cargo.toml` or an Xcode project, and derives the build graph from them. You keep your manifests and your workflow, and caching and remote execution work underneath.
 
-Adopting them means changing your project definition and workflow, even with agents helping with the migration. In our view, Bazel's developer experience also carries assumptions from Google's way of working that don't fit every team.
-
-Native tools are catching up. [Xcode 26 introduced compilation caching](https://developer.apple.com/documentation/xcode-release-notes/xcode-26-release-notes), and [Cargo is working toward a cache shared across workspaces](https://goals.rust-lang.org/2026/cargo-cross-workspace-cache.html), with remote caching as a possible future extension. We wanted to offer another option without asking teams to migrate or wait.
+Native tools are catching up, and we're happy to see it. [Xcode 26 introduced compilation caching](https://developer.apple.com/documentation/xcode-release-notes/xcode-26-release-notes), and [Cargo is working toward a cache shared across workspaces](https://goals.rust-lang.org/2026/cargo-cross-workspace-cache.html), with remote caching as a possible future extension. Until that support reaches every toolchain a team uses, Struo offers another option that works with your project today.
 
 ## A narrow waist between projects and infrastructure
 
@@ -27,7 +25,7 @@ Struo turns a project's work into actions: a command to run, the inputs it needs
 
 This is the narrow waist: **a common interface to caching and execution, without prescribing how teams organize their work.** It works for existing projects and for internal automation teams build themselves.
 
-We've integrated with many providers for caching and remote execution, and keep adding more. We want using them to become a solved problem, without requiring specialist Bazel expertise. Teams could stop wasting compute, and providers, including us, could work on other challenges.
+We've integrated with many providers for caching and remote execution, and keep adding more. We want using them to become a solved problem, without requiring specialist build-system expertise. Teams could stop wasting compute, and providers, including us, could work on other challenges.
 
 ## Start with a script
 
