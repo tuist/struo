@@ -11,7 +11,7 @@ rust = "1.99.0"
 zig = "0.16.0"
 ruby = "4.0.10"
 pipx = "1.17.11"
-"pipx:pytest" = "8.4.2"
+"pipx:pytest" = { version = "8.4.2", uvx = false, pipx_args = "--preinstall coverage==7.17.5" }
 "gem:rspec" = "3.13.2"
 shellspec = "0.28.1"
 git-cliff = "2.14.2"

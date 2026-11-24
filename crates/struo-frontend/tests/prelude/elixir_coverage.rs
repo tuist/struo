@@ -10,6 +10,9 @@ use super::{all_prelude_source, eval_prelude_string_function_in};
 #[allow(clippy::too_many_lines)]
 fn exunit_coverage_isolates_duplicate_names_and_rejects_external_work() {
     let dir = tempfile::tempdir().unwrap();
+    let workspace_alias = tempfile::tempdir().unwrap();
+    let root = workspace_alias.path().join("workspace");
+    std::os::unix::fs::symlink(dir.path(), &root).unwrap();
     let compilation = tempfile::tempdir().unwrap();
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/test_selection/elixir_coverage");
@@ -55,8 +58,8 @@ fn exunit_coverage_isolates_duplicate_names_and_rejects_external_work() {
     std::fs::write(
         dir.path().join("config.json"),
         serde_json::to_vec(&json!({
-        "argv":["elixir", "-pa", "ebin", "coverage.exs"], "cwd":".", "root":dir.path(),
-        "target":"Tests", "sources":["lib/alpha.ex", "lib/beta.ex", "lib/unused.ex"],
+        "argv":["elixir", "-pa", "ebin", "coverage.exs"], "cwd":".", "root":root,
+        "target":"Tests", "sources":["lib/alpha.ex", root.join("lib/beta.ex"), "lib/unused.ex"],
         "ebin":["ebin"], "tests":["test/product_test.exs"], "mix":false,
         "compile_metadata":{"ebin":"compile-metadata.tsv"},
         "native_defaults":false,"timeout_ms":null,"version":"fixture","platform":"native"}))
@@ -114,6 +117,7 @@ fn exunit_coverage_isolates_duplicate_names_and_rejects_external_work() {
         );
         let report = read();
         assert_eq!(report["coverage"]["partial"], false, "{report}");
+        assert_eq!(report["cases"][0]["file"], "test/product_test.exs");
         for index in 0..3 {
             assert_eq!(
                 report["coverage"]["files"][index]["execution_counts"],

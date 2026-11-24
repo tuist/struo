@@ -135,6 +135,8 @@ parser.add_argument('--struo-test-unit')
 parser.add_argument('--struo-inventory', action='store_true')
 args = parser.parse_args()
 options = json.loads(pathlib.Path(args.struo_config).read_text())
+options['root'] = str(pathlib.Path(options['root']).resolve())
+options['sources'] = [str((pathlib.Path(options['cwd']) / source).resolve()) for source in options['sources']]
 output = pathlib.Path(args.struo_results).resolve()
 output.parent.mkdir(parents=True, exist_ok=True)
 output.unlink(missing_ok=True)
