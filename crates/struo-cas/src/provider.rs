@@ -146,6 +146,46 @@ impl CacheProvider {
         }
     }
 
+    /// The local tier alone. Writes through it are not mirrored; pass their
+    /// digests to [`publish_blobs`](Self::publish_blobs) to mirror them
+    /// together.
+    #[must_use]
+    pub fn local_tier(&self) -> CacheProvider {
+        match self {
+            Self::Local(cas) => Self::Local(cas.clone()),
+            Self::Tuist(cache) => Self::Local(cache.local().clone()),
+            Self::Remote(cache) => Self::Local(cache.local().clone()),
+        }
+    }
+
+    /// Mirror blobs written through [`local_tier`](Self::local_tier), with
+    /// the same size policy as [`put_stream`](Self::put_stream). The Tuist
+    /// tier checks which ones it lacks in one request per batch. Best effort,
+    /// like every remote write.
+    pub async fn publish_blobs(&self, digests: &[Digest]) -> Result<()> {
+        let local = match self {
+            Self::Local(_) => return Ok(()),
+            Self::Tuist(cache) => cache.local(),
+            Self::Remote(cache) => cache.local(),
+        };
+        let mut small = Vec::with_capacity(digests.len());
+        for digest in digests {
+            if local.blob_size(digest).await? <= STREAM_REMOTE_UPLOAD_LIMIT {
+                small.push(*digest);
+            }
+        }
+        match self {
+            Self::Local(_) => {}
+            Self::Tuist(cache) => cache.publish_local_blobs(&small).await,
+            Self::Remote(cache) => {
+                for digest in &small {
+                    cache.publish_local_blob(digest).await;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Read a whole blob into memory, consulting the remote tier on a
     /// local miss.
     ///

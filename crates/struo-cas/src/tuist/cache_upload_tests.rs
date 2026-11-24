@@ -29,6 +29,8 @@ struct Observations {
     action_delay: Option<Duration>,
     write_message_delay: Option<Duration>,
     write_stops_reading: bool,
+    /// Report every blob as already present.
+    holds_all: bool,
 }
 
 #[derive(Clone, Default)]
@@ -68,8 +70,13 @@ impl ContentAddressableStorage for UploadServer {
         let mut state = self.0.lock().await;
         state.heads.push(request.get_ref().clone());
         fail(&mut state, "head")?;
+        let missing = if state.holds_all {
+            Vec::new()
+        } else {
+            request.into_inner().blob_digests
+        };
         Ok(Response::new(reapi::FindMissingBlobsResponse {
-            missing_blob_digests: request.into_inner().blob_digests,
+            missing_blob_digests: missing,
         }))
     }
 
@@ -624,4 +631,51 @@ async fn an_upload_is_reported_struo_and_a_blob_the_remote_already_holds_not_at_
             ),
         ]
     );
+}
+
+#[tokio::test]
+async fn publishing_many_blobs_checks_the_remote_once_and_uploads_only_missing_ones() {
+    for holds_all in [true, false] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let (cache, service, server) = fixture(&temp).await;
+        service.0.lock().await.holds_all = holds_all;
+        let mut digests = Vec::new();
+        for index in 0..5 {
+            digests.push(
+                cache
+                    .local
+                    .put_blob(format!("output {index}").as_bytes())
+                    .await
+                    .unwrap(),
+            );
+        }
+        digests.push(digests[0]);
+
+        cache.publish_local_blobs(&digests).await;
+
+        let state = service.0.lock().await;
+        assert_eq!(
+            state.heads[0].blob_digests.len(),
+            5,
+            "one check covers every distinct blob"
+        );
+        assert_eq!(state.actions.len(), 5, "every blob gets its mapping");
+        if holds_all {
+            assert_eq!(state.heads.len(), 1);
+            assert!(state.blobs.is_empty() && state.writes.is_empty());
+        } else {
+            let uploaded = state
+                .blobs
+                .iter()
+                .map(|batch| batch.requests.len())
+                .sum::<usize>()
+                + state.writes.len();
+            assert_eq!(uploaded, 5);
+        }
+        drop(state);
+        for digest in &digests[..5] {
+            assert!(cache.known_remote_blobs.lock().await.contains_key(digest));
+        }
+        server.abort();
+    }
 }

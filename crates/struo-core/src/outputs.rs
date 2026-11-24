@@ -461,6 +461,11 @@ async fn capture_scoped(
     symlink_mode: OutputSymlinkMode,
     remote: bool,
 ) -> Result<BTreeMap<String, Digest>> {
+    // Store locally first and mirror every output together: one remote
+    // round trip per output dominated actions with hundreds of files.
+    let remote_cache = cache;
+    let local = cache.local_tier();
+    let cache = &local;
     let mut captured = BTreeMap::new();
     for rel in outputs {
         let abs = rel.resolve(workspace_root);
@@ -550,6 +555,8 @@ async fn capture_scoped(
         };
         captured.insert(rel.as_str().to_string(), digest);
     }
+    let digests = captured.values().copied().collect::<Vec<_>>();
+    remote_cache.publish_blobs(&digests).await?;
     Ok(captured)
 }
 

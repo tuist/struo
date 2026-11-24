@@ -73,6 +73,8 @@ const BYTE_STREAM_CHUNK_SIZE: usize = 2 * 1024 * 1024;
 #[allow(clippy::cast_possible_truncation)]
 const BYTE_STREAM_MESSAGE_LIMIT: usize = crate::budget::MAX_STREAM_MESSAGE_BYTES as usize;
 const MAX_PARALLEL_TRANSFERS: usize = 8;
+/// Blobs one existence check covers when publishing many at once.
+const PUBLISH_BATCH: usize = 256;
 /// Largest response a metadata RPC (action cache, existence checks) may
 /// decode. Each such call reserves this much memory from the transfer budget,
 /// which makes the reservation a bound rather than an estimate.
@@ -276,6 +278,101 @@ impl TuistCache {
                 "failed to upload blob to remote cache"
             );
         }
+    }
+
+    /// Mirror many blobs the local tier already holds. One request per batch
+    /// asks the remote which it lacks, instead of one per blob, and the
+    /// mappings and uploads that follow run concurrently. Best effort.
+    pub(crate) async fn publish_local_blobs(&self, digests: &[Digest]) {
+        let mut seen = std::collections::HashSet::new();
+        let unique = digests
+            .iter()
+            .copied()
+            .filter(|digest| seen.insert(*digest))
+            .collect::<Vec<_>>();
+        for batch in unique.chunks(PUBLISH_BATCH) {
+            if let Err(error) = self.upload_local_blobs(batch).await {
+                tracing::warn!(
+                    blobs = batch.len(),
+                    error = %error,
+                    "failed to upload blobs to remote cache"
+                );
+            }
+        }
+    }
+
+    async fn upload_local_blobs(&self, digests: &[Digest]) -> Result<()> {
+        use futures::{StreamExt as _, TryStreamExt as _};
+        let unknown = {
+            let known = self.known_remote_blobs.lock().await;
+            digests
+                .iter()
+                .filter(|digest| !known.contains_key(digest))
+                .copied()
+                .collect::<Vec<Digest>>()
+        };
+        // Owned digests keep these futures `Send` for callers that box them.
+        let hashed = stream::iter(unknown)
+            .map(|digest: Digest| async move {
+                let remote = self.remote_digest_of_local(&digest).await?;
+                Ok::<_, Error>((digest, remote))
+            })
+            .buffer_unordered(MAX_PARALLEL_TRANSFERS)
+            .try_collect::<Vec<_>>()
+            .await?;
+        let missing = self
+            .missing_reapi_blobs(
+                hashed.iter().map(|(_, remote)| remote.clone()).collect(),
+                "put blob",
+            )
+            .await?
+            .iter()
+            .map(digest_key)
+            .collect::<std::collections::HashSet<_>>();
+        stream::iter(hashed)
+            .map(|(digest, remote)| {
+                let missing = missing.contains(&digest_key(&remote));
+                async move {
+                    if missing {
+                        // Rare once the remote holds a project's files; the
+                        // single-blob path stages, uploads and maps it.
+                        self.upload_local_blob(Some(&digest), "put blob").await?;
+                    } else {
+                        tracing::debug!(blob_digest = %digest, bytes = remote.size_bytes, "remote blob already present");
+                        self.put_blob_mapping(&digest, &remote).await?;
+                        self.known_remote_blobs.lock().await.insert(digest, remote);
+                    }
+                    Ok::<_, Error>(())
+                }
+            })
+            .buffer_unordered(MAX_PARALLEL_TRANSFERS)
+            .try_collect::<()>()
+            .await
+    }
+
+    /// The remote digest of a locally stored blob, read through a verified
+    /// copy in temporary space that counts against the staging budget.
+    async fn remote_digest_of_local(&self, digest: &Digest) -> Result<reapi::Digest> {
+        let _staging = self
+            .budget
+            .reserve_staging(self.local.blob_size(digest).await?)
+            .await?;
+        let directory = tempfile::tempdir().map_err(|source| Error::Io {
+            path: std::env::temp_dir(),
+            source,
+        })?;
+        let (struo_digest, remote_digest) = self
+            .local
+            .copy_blob_to_file_with(digest, &directory.path().join("blob"), copy_blob_digests)
+            .await?;
+        if struo_digest != *digest {
+            return Err(status::remote(
+                "put blob",
+                ErrorKind::Corrupt,
+                format!("local blob body did not match digest {digest}"),
+            ));
+        }
+        Ok(remote_digest)
     }
 
     pub async fn ensure_blob_local(&self, digest: &Digest) -> Result<()> {
@@ -1164,8 +1261,20 @@ impl TuistCache {
         &self,
         digests: Vec<reapi::Digest>,
     ) -> Result<Option<reapi::Digest>> {
+        Ok(self
+            .missing_reapi_blobs(digests, "get action result")
+            .await?
+            .into_iter()
+            .next())
+    }
+
+    async fn missing_reapi_blobs(
+        &self,
+        digests: Vec<reapi::Digest>,
+        operation: &'static str,
+    ) -> Result<Vec<reapi::Digest>> {
         if digests.is_empty() {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let channel = self.grpc_channel().await?;
         let client = ContentAddressableStorageClient::new(channel)
@@ -1175,22 +1284,19 @@ impl TuistCache {
             blob_digests: digests,
             digest_function: SHA256_DIGEST_FUNCTION,
         };
-        let response = retry::grpc("get action result", || {
+        let response = retry::grpc(operation, || {
             let mut client = client.clone();
             let request = request.clone();
             async move {
                 let _memory = self.reserve_metadata().await?;
                 Ok(client
-                    .find_missing_blobs(
-                        self.authorized_grpc_request(request, "get action result")
-                            .await?,
-                    )
+                    .find_missing_blobs(self.authorized_grpc_request(request, operation).await?)
                     .await?)
             }
         })
         .await?
         .into_inner();
-        Ok(response.missing_blob_digests.into_iter().next())
+        Ok(response.missing_blob_digests)
     }
 
     /// `None` only when the action cache answers `NOT_FOUND`.
