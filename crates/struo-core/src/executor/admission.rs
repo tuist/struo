@@ -85,6 +85,14 @@ impl ExecutorResources {
 
     pub async fn acquire(&self, executor: Executor, request: &ResourceRequest) -> ExecutionPermit {
         let (remote, host) = match executor.resource_domain() {
+            // A request for no CPU, such as a filesystem-only action,
+            // reserves memory and named slots without a CPU slot.
+            ResourceDomain::Host if request.cpu_slots == 0 => (
+                None,
+                self.host
+                    .acquire_client(request.memory_bytes, request.slots.clone())
+                    .await,
+            ),
             ResourceDomain::Host => (None, self.host.acquire(request.clone()).await),
             ResourceDomain::Remote => {
                 // Remote first: a queued remote request must not pin host memory.
@@ -313,6 +321,35 @@ mod tests {
         .await
         .unwrap();
         drop(remote);
+    }
+
+    #[tokio::test]
+    async fn filesystem_actions_start_beside_busy_cpus_within_memory() {
+        const MIB: u64 = 1024 * 1024;
+        let resources = resources(1, 32 * MIB);
+        let command = resources
+            .acquire(Executor::Local, &ResourceRequest::new(1, MIB))
+            .await;
+        let write = crate::Action::WriteFile {
+            path: crate::WorkspacePath::try_from("out.txt").unwrap(),
+            bytes: b"x".to_vec().into(),
+            input_digest: None,
+        };
+        let file = tokio::time::timeout(
+            Duration::from_secs(1),
+            resources.acquire(Executor::Local, write.resource_request()),
+        )
+        .await
+        .expect("a filesystem action must not wait for a CPU slot");
+        assert_eq!(file.host_request().cpu_slots, 0);
+        blocked(resources.acquire(Executor::Local, &ResourceRequest::new(1, MIB))).await;
+        let rest_of_memory = ResourceRequest {
+            cpu_slots: 0,
+            memory_bytes: 16 * MIB,
+            slots: BTreeMap::new(),
+        };
+        blocked(resources.acquire(Executor::Local, &rest_of_memory)).await;
+        drop((command, file));
     }
 
     #[tokio::test]

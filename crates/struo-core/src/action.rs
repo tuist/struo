@@ -18,6 +18,16 @@ pub(crate) const ACTION_DIGEST_DOMAIN: &[u8] = b"struo.action.v12\0";
 static DEFAULT_RESOURCE_REQUEST: LazyLock<ResourceRequest> =
     LazyLock::new(ResourceRequest::default);
 
+/// Writing a file, linking a path, or preparing a directory does almost no
+/// computation, and most of the time such an action holds its reservation is
+/// spent on action cache round trips. Reserving a CPU slot for that idles a
+/// slot other local work could use, so these reserve buffer memory only.
+static FILESYSTEM_RESOURCE_REQUEST: LazyLock<ResourceRequest> = LazyLock::new(|| ResourceRequest {
+    cpu_slots: 0,
+    memory_bytes: 16 * 1024 * 1024,
+    slots: BTreeMap::new(),
+});
+
 fn default_success_exit_codes() -> Vec<i32> {
     vec![0]
 }
@@ -489,12 +499,12 @@ impl Action {
     pub fn resource_request(&self) -> &ResourceRequest {
         match self {
             Action::RunCommand { resources, .. } => resources,
-            Action::WriteFile { .. }
-            | Action::CopyPath { .. }
-            | Action::LinkPath { .. }
+            Action::WriteFile { .. } | Action::LinkPath { .. } | Action::PreparePath { .. } => {
+                &FILESYSTEM_RESOURCE_REQUEST
+            }
+            Action::CopyPath { .. }
             | Action::MaterializeHostFile { .. }
             | Action::MaterializeHostTree { .. }
-            | Action::PreparePath { .. }
             | Action::WriteTreeDigest { .. }
             | Action::MergeTestCoverage { .. }
             | Action::WriteArchive { .. }
