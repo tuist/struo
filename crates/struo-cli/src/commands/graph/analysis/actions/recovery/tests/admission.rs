@@ -9,6 +9,12 @@ mod archives;
 mod legacy_capture;
 mod repair;
 
+/// Everything a test pool holds. A write reserves memory but no CPU slot, so
+/// only a probe for the whole pool shows whether its reservation is still held.
+fn whole_pool() -> ResourceRequest {
+    ResourceRequest::new(1, 1 << 30)
+}
+
 struct Reader(Option<File>);
 
 impl Reader {
@@ -122,7 +128,7 @@ async fn cancelled_graph_write(cacheable: bool) {
         .is_none_or(|lock| matches!(lock.try_lock(), Err(std::fs::TryLockError::WouldBlock)));
     let held = tokio::time::timeout(
         Duration::from_millis(100),
-        workspace.resources.acquire(ResourceRequest::default()),
+        workspace.resources.acquire(whole_pool()),
     )
     .await
     .is_err();
@@ -137,7 +143,7 @@ async fn cancelled_graph_write(cacheable: bool) {
     );
     let _permit = tokio::time::timeout(
         Duration::from_secs(5),
-        workspace.resources.acquire(ResourceRequest::default()),
+        workspace.resources.acquire(whole_pool()),
     )
     .await
     .unwrap();

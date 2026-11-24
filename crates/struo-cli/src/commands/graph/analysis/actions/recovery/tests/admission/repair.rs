@@ -74,7 +74,7 @@ async fn repair_deadline_keeps_the_admission_and_action_lock_until_writing_stops
     let locked = matches!(lock.try_lock(), Err(std::fs::TryLockError::WouldBlock));
     let held = tokio::time::timeout(
         Duration::from_millis(100),
-        workspace.resources.acquire(ResourceRequest::default()),
+        workspace.resources.acquire(whole_pool()),
     )
     .await
     .is_err();
@@ -89,7 +89,7 @@ async fn repair_deadline_keeps_the_admission_and_action_lock_until_writing_stops
     );
     let _permit = tokio::time::timeout(
         Duration::from_secs(5),
-        workspace.resources.acquire(ResourceRequest::default()),
+        workspace.resources.acquire(whole_pool()),
     )
     .await
     .unwrap();
