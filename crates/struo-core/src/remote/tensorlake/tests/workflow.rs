@@ -32,7 +32,11 @@ async fn stages_dependencies_preserves_binary_capture_and_restores_only_accepted
                     ("POST", "/api/v1/processes") => {
                         let body: serde_json::Value =
                             serde_json::from_slice(&request.body).unwrap();
-                        exited(if body["command"] == "sh" { exit } else { 0 })
+                        exited(if body["command"] == "python3" {
+                            exit
+                        } else {
+                            0
+                        })
                     }
                     ("GET", path) if path.contains("struo-stdout") => Response {
                         body: b"stdout\0\xff".to_vec(),
@@ -123,16 +127,20 @@ async fn stages_dependencies_preserves_binary_capture_and_restores_only_accepted
             .iter()
             .filter(|request| request.method == "POST" && request.path == "/api/v1/processes")
             .map(|request| serde_json::from_slice::<serde_json::Value>(&request.body).unwrap())
-            .find(|body| body["command"] == "sh")
+            .find(|body| body["command"] == "python3")
             .unwrap();
         assert_eq!(
             execute["working_dir"],
             "/home/tl-user/struo-workspace/tests"
         );
         assert_eq!(execute["env"], serde_json::json!({}));
-        let script = execute["args"][1].as_str().unwrap();
-        assert!(script.contains("'IFS=literal-ifs'"));
-        assert!(script.contains("'PWD=selected-pwd'"));
+        assert_eq!(execute["args"][0], "-I");
+        let payload: serde_json::Value =
+            serde_json::from_str(execute["args"][3].as_str().unwrap()).unwrap();
+        assert_eq!(payload[0][0], "printf");
+        assert_eq!(payload[0][2], "literal ' ; $HOME");
+        assert_eq!(payload[1]["IFS"], "literal-ifs");
+        assert_eq!(payload[1]["PWD"], "selected-pwd");
         assert!(records(workspace.path()).is_empty());
     }
 }

@@ -264,6 +264,12 @@ SH
     The stderr should include 'set VERCEL_TOKEN'
   End
 
+  It 'requires credentials for Runloop execution'
+    When call env -u RUNLOOP_API_KEY -u STRUO_RUNLOOP_API_KEY "$STRUO_BIN" -C "$WORKSPACE" exec --remote --compute runloop -- true
+    The status should be failure
+    The stderr should include 'set STRUO_RUNLOOP_API_KEY or RUNLOOP_API_KEY'
+  End
+
   It 'runs a command through the daytona compute provider'
     copy_exec_fixture daytona
     start_python_server "$WORKSPACE/daytona_api.py" "$WORKSPACE/daytona_deleted" > "$WORKSPACE/daytona_port" &
@@ -333,6 +339,12 @@ TOML
     When call struo exec -e PATH=/usr/bin:/bin -- /bin/sh -c 'exit 7'
     The status should equal 7
     The stderr should include 'exit=7'
+  End
+
+  It 'diagnoses missing Blaxel credentials without provisioning'
+    When call env STRUO_BLAXEL_WORKSPACE= STRUO_BLAXEL_API_KEY= BL_WORKSPACE= BL_API_KEY= "$STRUO_BIN" -C "$WORKSPACE" exec --remote --compute blaxel -- true
+    The status should be failure
+    The stderr should include 'set STRUO_BLAXEL_WORKSPACE or BL_WORKSPACE'
   End
 
   It 'does not cache failing exits by default'

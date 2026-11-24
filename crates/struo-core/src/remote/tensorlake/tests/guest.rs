@@ -1,20 +1,37 @@
 use super::*;
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn final_executable_receives_literal_arguments_and_selected_ifs_and_pwd() {
     let directory = tempfile::tempdir().unwrap();
+    let python = std::process::Command::new("python3")
+        .args(["-I", "-c", "import sys; print(sys.executable)"])
+        .output()
+        .unwrap();
+    assert!(python.status.success());
+    let executable = directory.path().join("tool=probe ' ; $");
+    std::os::unix::fs::symlink(
+        String::from_utf8(python.stdout).unwrap().trim(),
+        &executable,
+    )
+    .unwrap();
     let stdout = directory.path().join("stdout");
     let stderr = directory.path().join("stderr");
     let (url, server) = test_server::spawn_with_handler(3, move |request| {
         if request.method == "POST" {
             let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
-            let script = body["args"][1]
-                .as_str()
+            assert_eq!(body["command"], "python3");
+            let mut args = body["args"]
+                .as_array()
                 .unwrap()
-                .replace("/tmp/struo-stdout", stdout.to_str().unwrap())
-                .replace("/tmp/struo-stderr", stderr.to_str().unwrap());
-            let status = std::process::Command::new("sh")
-                .args(["-c", &script])
+                .iter()
+                .map(|value| value.as_str().unwrap().to_owned())
+                .collect::<Vec<_>>();
+            assert_eq!(args[0], "-I");
+            args[4] = stdout.to_str().unwrap().into();
+            args[5] = stderr.to_str().unwrap().into();
+            let status = std::process::Command::new("python3")
+                .args(args)
                 .status()
                 .unwrap();
             exited(status.code().unwrap())
@@ -36,9 +53,18 @@ async fn final_executable_receives_literal_arguments_and_selected_ifs_and_pwd() 
     let env = BTreeMap::from([
         ("IFS".into(), "selected ' ; $IFS".into()),
         ("PWD".into(), "selected ' ; $PWD".into()),
+        ("not-a.shell identifier".into(), "value\n' ; $HOME".into()),
+        ("PYTHONPATH".into(), "/nonexistent/selected".into()),
     ]);
     let resources = ResourceRequest::default();
-    let argv = vec!["env".into(), "literal=value ' ; $HOME".into()];
+    let literal_args = vec!["literal=value ' ; $HOME", "", "--", "line\nnext"];
+    let mut argv = vec![
+        executable.to_str().unwrap().into(),
+        "-I".into(),
+        "-c".into(),
+        "import json, os, sys; os.write(1, json.dumps([sys.argv[1:], dict(os.environ)]).encode() + b'\\x00\\xff'); os.write(2, b'\\xfe\\x00'); sys.exit(7)".into(),
+    ];
+    argv.extend(literal_args.iter().map(|arg| (*arg).to_owned()));
     let command = PreparedCommand {
         lease: None,
         argv: &argv,
@@ -63,23 +89,18 @@ async fn final_executable_receives_literal_arguments_and_selected_ifs_and_pwd() 
     )
     .await
     .unwrap();
-    assert_eq!(result.exit_code, 0);
-    let stdout = String::from_utf8(cache.get_blob(&result.stdout.unwrap()).await.unwrap()).unwrap();
-    for expected in [
-        "IFS=selected ' ; $IFS",
-        "PWD=selected ' ; $PWD",
-        "literal=value ' ; $HOME",
-    ] {
-        assert!(
-            stdout.lines().any(|line| line == expected),
-            "missing {expected}"
-        );
+    assert_eq!(result.exit_code, 7);
+    let stdout = cache.get_blob(&result.stdout.unwrap()).await.unwrap();
+    assert!(stdout.ends_with(b"\0\xff"));
+    let observed: serde_json::Value = serde_json::from_slice(&stdout[..stdout.len() - 2]).unwrap();
+    assert_eq!(observed[0], serde_json::json!(literal_args));
+    for (key, value) in env {
+        assert_eq!(observed[1][&key], value);
     }
-    assert!(cache
-        .get_blob(&result.stderr.unwrap())
-        .await
-        .unwrap()
-        .is_empty());
+    assert_eq!(
+        cache.get_blob(&result.stderr.unwrap()).await.unwrap(),
+        b"\xfe\0"
+    );
     test_server::assert_ready(server).await.unwrap();
 }
 

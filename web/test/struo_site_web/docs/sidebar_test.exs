@@ -53,6 +53,7 @@ defmodule StruoSiteWeb.Docs.SidebarTest do
     providers = Enum.find(Sidebar.guide_tree(), &(&1.label == "Infrastructure Providers"))
 
     assert Map.new(providers.items, &{&1.label, &1.icon}) == %{
+             "Blaxel" => "blaxel",
              "Boat" => "boat",
              "Cloudflare" => "cloudflare",
              "Daytona" => "daytona",
@@ -63,6 +64,7 @@ defmodule StruoSiteWeb.Docs.SidebarTest do
              "Microsandbox" => "microsandbox",
              "Northflank" => "northflank",
              "Object Storage" => "object-storage",
+             "Runloop" => "runloop",
              "Sprites" => "sprites",
              "OpenSandbox" => "opensandbox",
              "Tensorlake" => "tensorlake",

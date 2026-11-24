@@ -37,14 +37,15 @@ pub const BUILD_FILE_NAME: &str = TOML_BUILD_FILE_NAME;
 
 pub use analysis::flush_host_tree_digest_caches;
 pub use cache_provider::{
-    BoatExecutionProviderConfig, CacheProviderConfig, CloudflareExecutionProviderConfig,
-    DaytonaExecutionProviderConfig, DockerExecutionProviderConfig, E2bExecutionProviderConfig,
-    ExecutionProviderConfig, HttpCacheProviderConfig, InfrastructureConfig,
-    InfrastructureProviderConfig, LangSmithExecutionProviderConfig,
-    MicrosandboxExecutionProviderConfig, NamedCacheProviderConfig,
-    NorthflankExecutionProviderConfig, ObjectStoreCacheProviderConfig,
-    OpenSandboxExecutionProviderConfig, TogetherExecutionProviderConfig, TuistCacheProviderConfig,
-    VercelExecutionProviderConfig, DEFAULT_TUIST_URL,
+    BlaxelExecutionProviderConfig, BoatExecutionProviderConfig, CacheProviderConfig,
+    CloudflareExecutionProviderConfig, DaytonaExecutionProviderConfig,
+    DockerExecutionProviderConfig, E2bExecutionProviderConfig, ExecutionProviderConfig,
+    HttpCacheProviderConfig, InfrastructureConfig, InfrastructureProviderConfig,
+    LangSmithExecutionProviderConfig, MicrosandboxExecutionProviderConfig,
+    NamedCacheProviderConfig, NorthflankExecutionProviderConfig, ObjectStoreCacheProviderConfig,
+    OpenSandboxExecutionProviderConfig, RunloopExecutionProviderConfig,
+    TogetherExecutionProviderConfig, TuistCacheProviderConfig, VercelExecutionProviderConfig,
+    DEFAULT_TUIST_URL,
 };
 pub use cache_resolution::{
     resolve_cache_provider, ResolvedCacheProviderConfig, ResolvedHttpCacheProviderConfig,

@@ -758,6 +758,10 @@ snapshot = "node-tests-v1"
 [infrastructures.vercel_tests]
 kind = "vercel"
 runtime = "node24"
+
+[infrastructures.blaxel_tests]
+kind = "blaxel"
+image = "blaxel/base-image:version"
 "#,
         )
         .unwrap();
@@ -788,6 +792,9 @@ runtime = "node24"
                 }
             ))
         );
+        assert!(
+            matches!(config.providers.get("blaxel_tests"), Some(crate::InfrastructureProviderConfig::Blaxel(config)) if config.image == "blaxel/base-image:version")
+        );
     }
 
     #[test]
@@ -817,6 +824,11 @@ snapshot = "   "
 [infrastructures.remote_tests]
 kind = "vercel"
 runtime = "   "
+"#,
+            r#"
+[infrastructures.remote_tests]
+kind = "blaxel"
+image = "   "
 "#,
         ] {
             let error = load_infrastructure_toml_str("struo.toml", manifest).unwrap_err();

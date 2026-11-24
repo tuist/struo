@@ -26,6 +26,8 @@ pub enum Executor {
     Tensorlake,
     OpenSandbox,
     Vercel,
+    Runloop,
+    Blaxel,
     Docker,
     /// A Tuist project's Remote Execution API service.
     Tuist,
@@ -45,6 +47,18 @@ impl Executor {
             return Ok(Self::Local);
         };
         let executor = Self::from_binding(binding)?;
+        if executor == Self::Blaxel
+            && binding
+                .properties
+                .get("workspace")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|workspace| workspace.trim().is_empty())
+        {
+            return Err(Error::RemoteProviderConfig {
+                provider: binding.provider.clone(),
+                message: "Blaxel requires properties.workspace before cache lookup; set STRUO_BLAXEL_WORKSPACE or BL_WORKSPACE for the CLI, or bind the workspace explicitly".into(),
+            });
+        }
         if executor == Self::Vercel
             && [&binding.account, &binding.project]
                 .iter()
@@ -96,6 +110,8 @@ impl Executor {
             "tensorlake" => Ok(Self::Tensorlake),
             "opensandbox" => Ok(Self::OpenSandbox),
             "vercel" => Ok(Self::Vercel),
+            "runloop" => Ok(Self::Runloop),
+            "blaxel" => Ok(Self::Blaxel),
             "docker" => Ok(Self::Docker),
             "tuist" => Ok(Self::Tuist),
             adapter => Err(Error::UnsupportedRemoteProvider {
@@ -211,6 +227,8 @@ impl Executor {
             | Self::Tensorlake
             | Self::OpenSandbox
             | Self::Vercel
+            | Self::Runloop
+            | Self::Blaxel
             | Self::Docker
             | Self::Tuist => None,
         };
@@ -237,6 +255,8 @@ impl Executor {
             | Self::Tensorlake
             | Self::OpenSandbox
             | Self::Vercel
+            | Self::Runloop
+            | Self::Blaxel
             | Self::Tuist => ResourceDomain::Remote,
         }
     }
@@ -256,6 +276,8 @@ impl Executor {
             Self::Tensorlake => "tensorlake",
             Self::OpenSandbox => "opensandbox",
             Self::Vercel => "vercel",
+            Self::Runloop => "runloop",
+            Self::Blaxel => "blaxel",
             Self::Docker => "docker",
             Self::Tuist => "tuist",
         }
@@ -297,6 +319,7 @@ mod tests {
             Executor::OpenSandbox.resource_domain(),
             ResourceDomain::Remote
         );
+        assert_eq!(Executor::Runloop.resource_domain(), ResourceDomain::Remote);
     }
 
     #[test]
@@ -310,6 +333,7 @@ mod tests {
             "together",
             "cloudflare",
             "opensandbox",
+            "runloop",
         ] {
             for project in [false, true] {
                 let mut binding = RemoteExecution::provider(adapter);

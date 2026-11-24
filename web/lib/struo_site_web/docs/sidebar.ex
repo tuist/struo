@@ -176,6 +176,7 @@ defmodule StruoSiteWeb.Docs.Sidebar do
       %Group{
         label: "Infrastructure Providers",
         items: [
+          %Item{label: "Blaxel", slug: "/docs/guide/infrastructure/blaxel", icon: "blaxel"},
           %Item{label: "Boat", slug: "/docs/guide/infrastructure/boat", icon: "boat"},
           %Item{
             label: "Cloudflare",
@@ -215,6 +216,7 @@ defmodule StruoSiteWeb.Docs.Sidebar do
             slug: "/docs/guide/infrastructure/opensandbox",
             icon: "opensandbox"
           },
+          %Item{label: "Runloop", slug: "/docs/guide/infrastructure/runloop", icon: "runloop"},
           %Item{label: "Sprites", slug: "/docs/guide/infrastructure/sprites", icon: "sprites"},
           %Item{
             label: "Tensorlake",

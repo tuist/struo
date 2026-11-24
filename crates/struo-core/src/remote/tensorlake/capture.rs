@@ -5,7 +5,7 @@ use struo_cas::{ActionResult, CacheProvider};
 
 use super::client::{Client, Sandbox};
 use super::transport::file_error;
-use super::{shell_word, GUEST_ROOT};
+use super::GUEST_ROOT;
 use crate::remote::archive::output_archive_file;
 use crate::remote::PreparedCommand;
 use crate::stream::{self, Destination};
@@ -25,13 +25,7 @@ pub(super) async fn execute(
         return Err(Error::EmptyArgv);
     }
     let env = resolve_execution_env(command.env, Path::new(GUEST_ROOT));
-    let words = env
-        .iter()
-        .map(|(key, value)| shell_word(&format!("{key}={value}")))
-        .chain(argv.iter().map(|word| shell_word(word)))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let script = format!("exec env -- {words} > /tmp/struo-stdout 2> /tmp/struo-stderr");
+    let payload = serde_json::json!([argv, env]).to_string();
     let cwd = command.cwd.map_or_else(
         || GUEST_ROOT.into(),
         |cwd| crate::remote::join_path(GUEST_ROOT, cwd.as_str()),
@@ -40,7 +34,15 @@ pub(super) async fn execute(
         .process(
             sandbox,
             origin,
-            &["sh".into(), "-c".into(), script],
+            &[
+                "python3".into(),
+                "-I".into(),
+                "-c".into(),
+                include_str!("../launcher.py").into(),
+                payload,
+                "/tmp/struo-stdout".into(),
+                "/tmp/struo-stderr".into(),
+            ],
             Some(&cwd),
         )
         .await?;

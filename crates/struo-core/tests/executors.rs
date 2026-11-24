@@ -84,6 +84,78 @@ async fn unresolved_vercel_scope_cannot_return_a_cached_result() {
 }
 
 #[tokio::test]
+async fn blaxel_workspace_is_required_before_reusing_cached_results() {
+    let (_workspace, cache, _resources, runner) = setup();
+    for workspace in [
+        None,
+        Some(serde_json::json!(42)),
+        Some(serde_json::json!(" ")),
+    ] {
+        let mut binding = RemoteExecution::provider("blaxel");
+        binding.environment = Some("my-template".into());
+        if let Some(workspace) = workspace {
+            binding.properties.insert("workspace".into(), workspace);
+        }
+        let action = command(Some(binding));
+        seed_cache(&cache, &action).await;
+        for streaming in [false, true] {
+            let result = if streaming {
+                runner.run_streaming(&action).await
+            } else {
+                runner.run(&action).await
+            };
+            assert!(matches!(result, Err(Error::RemoteProviderConfig { .. })));
+        }
+    }
+
+    for workspace in ["development", "production"] {
+        let mut binding = RemoteExecution::provider("blaxel");
+        binding.environment = Some("my-template".into());
+        binding
+            .properties
+            .insert("workspace".into(), workspace.into());
+        let action = command(Some(binding));
+        let stdout = cache.put_blob(workspace.as_bytes()).await.unwrap();
+        cache
+            .put_action_result(
+                &action.digest(),
+                &ActionResult {
+                    exit_code: 0,
+                    stdout: Some(stdout),
+                    stderr: None,
+                    outputs: BTreeMap::new(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+    for workspace in ["production", "development"] {
+        let mut binding = RemoteExecution::provider("blaxel");
+        binding.environment = Some("my-template".into());
+        binding
+            .properties
+            .insert("workspace".into(), workspace.into());
+        let action = command(Some(binding));
+        for streaming in [false, true] {
+            let outcome = if streaming {
+                runner.run_streaming(&action).await
+            } else {
+                runner.run(&action).await
+            }
+            .unwrap();
+            assert_eq!(outcome.cache, CacheState::Hit);
+            assert_eq!(
+                cache
+                    .get_blob(&outcome.result.stdout.unwrap())
+                    .await
+                    .unwrap(),
+                workspace.as_bytes()
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn cached_remote_results_do_not_wait_for_remote_capacity() {
     let (_workspace, cache, resources, runner) = setup();
     let _held = resources

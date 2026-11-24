@@ -5,9 +5,9 @@ repository while the process runs in a fresh environment supplied by an
 infrastructure provider.
 
 The important boundary is the action, not the test framework. Vitest is the
-program being run. Docker, Microsandbox, E2B, Daytona, Boat,
-[Northflank](/guide/infrastructure/northflank), Sprites, and
-[Vercel Sandbox](/guide/infrastructure/vercel) are execution providers.
+program being run. Infrastructure providers supply the environment in which
+it runs. See [Infrastructure](/guide/infrastructure#available-providers) for the
+available execution and caching capabilities.
 
 Declared build graphs can also dispatch command actions with
 `struo build --remote --compute <provider>`. Struo keeps dependency scheduling and
@@ -93,11 +93,14 @@ you want Struo to start from a container image.
 Use [Boat](/guide/infrastructure/boat) to start from a saved Linux snapshot.
 Use [Sprites](/guide/infrastructure/sprites) for a disposable Fly.io Linux
 environment without a custom image or template.
+Use [Runloop](/guide/infrastructure/runloop) with a prepared Devbox Blueprint ID.
+Use [Blaxel](/guide/infrastructure/blaxel) for disposable hosted VMs with
+a prepared Blaxel image.
 Use [Tuist](/guide/infrastructure/tuist#run-actions-on-tuist-workers) to run
 graph actions on a Tuist project's remote execution workers.
 
-These adapters implement the same declared input and output boundary. E2B
-and Daytona use one archive for each transfer so large dependency trees do not
+These adapters implement the same declared input and output boundary. E2B,
+Daytona, and Runloop use one archive for each transfer so large dependency trees do not
 require one network request per file. The hosted image or template must
 provide `tar` for unpacking and packing those archives.
 

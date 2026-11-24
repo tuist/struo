@@ -508,6 +508,8 @@ async fn execute_command(
             | Executor::Tensorlake
             | Executor::OpenSandbox
             | Executor::Vercel
+            | Executor::Runloop
+            | Executor::Blaxel
             | Executor::Docker
             | Executor::Tuist,
             _,

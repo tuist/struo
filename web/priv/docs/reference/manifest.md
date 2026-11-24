@@ -116,6 +116,10 @@ image = "node:22.18.0-bookworm"
 kind = "boat"
 snapshot = "node-tests-v1"
 
+[infrastructures.langsmith_tests]
+kind = "langsmith"
+snapshot = "node-tests:v1"
+
 [infrastructures.together_tests]
 kind = "together"
 snapshot = "<snapshot-id>"
@@ -132,6 +136,14 @@ image = "node:22.18.0-bookworm"
 [infrastructures.vercel_tests]
 kind = "vercel"
 runtime = "node24"
+
+[infrastructures.runloop_tests]
+kind = "runloop"
+blueprint = "bpt_your_node_blueprint"
+
+[infrastructures.blaxel_tests]
+kind = "blaxel"
+image = "blaxel/base-image:latest"
 ```
 
 Northflank also requires a `project` in the execution binding. For team-scoped
@@ -164,14 +176,29 @@ namespace = "your-project-namespace"
 
 See [Tensorlake](/guide/infrastructure/tensorlake) for prerequisites and cleanup.
 
+LangSmith requires a prepared v2 snapshot and an explicit workspace UUID in the
+environment. See [LangSmith Sandboxes](/guide/infrastructure/langsmith) for
+credentials, trusted sandbox origins, and cleanup.
+
 Boat uses a saved snapshot rather than an OCI image. See
 [Boat execution](/guide/infrastructure/boat) for snapshot preparation and cleanup.
 
 Vercel selects a provider-managed runtime rather than an immutable image. See
 [Vercel Sandbox](/guide/infrastructure/vercel) for authentication and team/project scope.
 
-Docker, E2B, Daytona, Boat, Together, Northflank, Sprites, Tensorlake, OpenSandbox, Vercel Sandbox, and Microsandbox provide execution only. Tuist provides shared
-caching. Bind each capability independently when a workspace uses both.
+Runloop requires a Blueprint ID in `blueprint`. See
+[Runloop Devboxes](/guide/infrastructure/runloop) for authentication and lifecycle details.
+
+Blaxel requires a prepared image and workspace credentials. Its execution
+binding must include `properties.workspace`; the CLI resolves it from
+`STRUO_BLAXEL_WORKSPACE` or `BL_WORKSPACE` when not explicitly configured.
+The workspace participates in action cache identity. See
+[Blaxel](/guide/infrastructure/blaxel) for setup and cleanup.
+
+Docker, E2B, Daytona, Blaxel, Boat, LangSmith, Together, Northflank, Sprites, Tensorlake,
+OpenSandbox, Vercel Sandbox, Runloop, and Microsandbox provide execution only.
+Tuist provides execution and shared caching. Bind each capability independently
+when a workspace uses both.
 
 ## Targets
 

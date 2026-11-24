@@ -84,6 +84,18 @@ fn bind_environment_override(
             }
         }
     }
+    if binding.executor.as_deref().unwrap_or(&binding.provider) == "blaxel"
+        && !binding.properties.contains_key("workspace")
+    {
+        if let Some(workspace) = lookup("STRUO_BLAXEL_WORKSPACE")
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| lookup("BL_WORKSPACE").filter(|value| !value.trim().is_empty()))
+        {
+            binding
+                .properties
+                .insert("workspace".into(), workspace.into());
+        }
+    }
     if binding.environment.is_none() {
         let variable = match binding.executor.as_deref().unwrap_or(&binding.provider) {
             "e2b" => Some("STRUO_E2B_TEMPLATE"),
@@ -359,6 +371,8 @@ fn resolve_named_workspace_provider(
         | InfrastructureProviderConfig::Cloudflare(_)
         | InfrastructureProviderConfig::OpenSandbox(_)
         | InfrastructureProviderConfig::Vercel(_)
+        | InfrastructureProviderConfig::Runloop(_)
+        | InfrastructureProviderConfig::Blaxel(_)
         | InfrastructureProviderConfig::Docker(_) => {
             bail!("infrastructure `{name}` provides execution but not shared caching")
         }
@@ -475,6 +489,8 @@ fn remote_from_workspace_provider(
             remote.project = remote.project.or(config.project);
             ("tuist", config.execution_image)
         }
+        InfrastructureProviderConfig::Runloop(config) => ("runloop", Some(config.blueprint)),
+        InfrastructureProviderConfig::Blaxel(config) => ("blaxel", Some(config.image)),
         InfrastructureProviderConfig::ObjectStore(_)
         | InfrastructureProviderConfig::HttpCache(_) => {
             bail!(
@@ -541,6 +557,8 @@ fn is_builtin_execution_provider(name: &str) -> bool {
             | "tensorlake"
             | "opensandbox"
             | "vercel"
+            | "runloop"
+            | "blaxel"
             | "docker"
     )
 }
@@ -1259,6 +1277,42 @@ project = "prj-a"
     }
 
     #[test]
+    fn blaxel_environment_workspace_partitions_action_keys_without_overriding_bindings() {
+        let mut keys = std::collections::HashSet::new();
+        for (primary, fallback, expected) in [
+            (Some("development"), Some("production"), "development"),
+            (None, Some("production"), "production"),
+            (Some(" "), Some("staging"), "staging"),
+        ] {
+            let binding =
+                bind_environment_override(RemoteExecution::provider("blaxel"), |name| match name {
+                    "STRUO_BLAXEL_WORKSPACE" => primary.map(str::to_owned),
+                    "BL_WORKSPACE" => fallback.map(str::to_owned),
+                    _ => None,
+                });
+            assert_eq!(
+                binding.properties.get("workspace"),
+                Some(&serde_json::json!(expected))
+            );
+            let action: struo_core::Action = serde_json::from_value(serde_json::json!({
+                "kind": "run_command", "argv": ["tool"], "remote": binding,
+            }))
+            .unwrap();
+            assert!(keys.insert(action.digest()));
+        }
+        let mut binding = RemoteExecution::provider("blaxel");
+        binding
+            .properties
+            .insert("workspace".into(), "explicit-workspace".into());
+        assert_eq!(
+            bind_environment_override(binding.clone(), |_| panic!(
+                "must retain explicit workspace"
+            )),
+            binding
+        );
+    }
+
+    #[test]
     fn resolve_execution_defaults_to_microsandbox_without_config() {
         let tmp = TempDir::new().unwrap();
         let xdg = xdg_under(tmp.path());
@@ -1389,6 +1443,27 @@ template = "vitest-v1"
     }
 
     #[test]
+    fn resolve_execution_uses_named_runloop_blueprint() {
+        let tmp = TempDir::new().unwrap();
+        let xdg = xdg_under(tmp.path());
+        write_workspace(
+            tmp.path(),
+            r#"
+[infrastructures.remote_tests]
+kind = "runloop"
+blueprint = "bpt_node_tests"
+"#,
+        );
+        let remote = resolve_execution(tmp.path(), &xdg, Some("remote_tests")).unwrap();
+        assert_eq!(remote.executor.as_deref(), Some("runloop"));
+        assert_eq!(remote.environment.as_deref(), Some("bpt_node_tests"));
+        assert_eq!(
+            struo_core::Executor::from_binding(&remote).unwrap(),
+            struo_core::Executor::Runloop
+        );
+    }
+
+    #[test]
     fn resolve_execution_uses_named_daytona_image() {
         let tmp = TempDir::new().unwrap();
         let xdg = xdg_under(tmp.path());
@@ -1413,6 +1488,40 @@ image = "node:22-bookworm"
                 project: None,
                 properties: BTreeMap::new(),
             }
+        );
+    }
+
+    #[test]
+    fn resolve_execution_uses_named_blaxel_image() {
+        let tmp = TempDir::new().unwrap();
+        let xdg = xdg_under(tmp.path());
+        write_workspace(
+            tmp.path(),
+            r#"
+[infrastructures.remote_tests]
+kind = "blaxel"
+image = "blaxel/base-image:version"
+
+[infrastructure.execution]
+provider = "remote_tests"
+properties.workspace = "tests"
+"#,
+        );
+        let remote = resolve_execution(tmp.path(), &xdg, None).unwrap();
+        assert_eq!(remote.provider, "remote_tests");
+        assert_eq!(remote.executor.as_deref(), Some("blaxel"));
+        assert_eq!(remote.properties["workspace"], "tests");
+        assert_eq!(
+            remote.environment.as_deref(),
+            Some("blaxel/base-image:version")
+        );
+        assert_eq!(
+            struo_core::Executor::from_binding(&remote).unwrap(),
+            struo_core::Executor::Blaxel
+        );
+        assert_eq!(
+            resolve_execution(tmp.path(), &xdg, Some("blaxel")).unwrap(),
+            RemoteExecution::provider("blaxel")
         );
     }
 

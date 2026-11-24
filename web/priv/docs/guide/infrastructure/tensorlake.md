@@ -15,10 +15,11 @@ and terminates the sandbox.
   environment; `STRUO_TENSORLAKE_API_KEY` takes precedence.
 - Your project's namespace identifier. Struo checks that returned sandboxes
   belong to this namespace; it does not switch projects on your behalf.
-- A prepared, registered Tensorlake Linux image or snapshot containing your runtime and `sh`, `env`,
-  `rm`, `mkdir`, and GNU-compatible `tar`. The guest user must be able to write
-  `/tmp` and create `/home/tl-user/struo-workspace`. Tensorlake's default
-  `tl-user` may not write `/workspace`, so Struo does not use that directory.
+- A prepared, registered Tensorlake Linux image or snapshot containing your runtime,
+  Python 3 with isolated-mode support and its standard library, `rm`, `mkdir`,
+  and GNU-compatible `tar`. `python3` must be on the guest's default `PATH`.
+  The guest user must be able to write
+  `/tmp` and create `/home/tl-user/struo-workspace`.
 
 Prepare the environment without embedded credentials or background workloads.
 Import or register an OCI image with Tensorlake before using it here; an
@@ -94,8 +95,8 @@ they do not resize the Tensorlake sandbox. Prepare an environment with suitable
 resources.
 
 Struo preserves binary stdout and stderr, subject to its combined capture
-limit. Terminal output appears after the command completes. Selected environment
-values reach the final executable, including `IFS` and `PWD`. The guest retains
+limit. Terminal output appears after the command completes. Your command receives
+the selected environment values. The guest retains
 the prepared environment's other defaults. Struo bounds file transfers and
 validates retrieved output archives before installation.
 

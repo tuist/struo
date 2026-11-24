@@ -37,7 +37,3 @@ pub(super) async fn execute_command(
     )
     .await
 }
-
-fn shell_word(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}

@@ -70,6 +70,7 @@ defmodule StruoSiteWeb.DocsLiveTest do
     for {path, title} <- [
           {"/docs/guide/infrastructure/providers", "Become an Infrastructure Provider"},
           {"/docs/guide/infrastructure/boat", "Boat"},
+          {"/docs/guide/infrastructure/runloop", "Runloop Devboxes"},
           {"/docs/reference/infrastructure", "Infrastructure Provider Contracts"},
           {"/docs/reference/infrastructure/cache", "Cache Provider Contract"},
           {"/docs/reference/infrastructure/execution", "Execution Provider Contract"}

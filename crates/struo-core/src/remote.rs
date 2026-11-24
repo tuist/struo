@@ -7,6 +7,7 @@ use struo_cas::{ActionResult, CacheProvider};
 use crate::{ExecutionPermit, Executor, RemoteExecution, ResourceRequest, Result, WorkspacePath};
 
 mod archive;
+mod blaxel;
 mod boat;
 mod cloudflare;
 mod daytona;
@@ -22,6 +23,7 @@ mod output_install;
 pub(crate) use output_install::restore_output_snapshots;
 mod path;
 mod phase;
+mod runloop;
 mod sprites;
 mod tensorlake;
 #[cfg(test)]
@@ -168,6 +170,16 @@ pub(crate) async fn execute_command(
             ))
             .await
         }
+        Executor::Blaxel => {
+            Box::pin(blaxel::execute_command(
+                remote,
+                command,
+                workspace_root,
+                cache,
+                stream_to_parent,
+            ))
+            .await
+        }
         Executor::Daytona => {
             Box::pin(daytona::execute_command(
                 remote,
@@ -190,6 +202,16 @@ pub(crate) async fn execute_command(
         }
         Executor::Together => {
             Box::pin(together::execute_command(
+                remote,
+                command,
+                workspace_root,
+                cache,
+                stream_to_parent,
+            ))
+            .await
+        }
+        Executor::Runloop => {
+            Box::pin(runloop::execute_command(
                 remote,
                 command,
                 workspace_root,

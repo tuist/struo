@@ -118,6 +118,7 @@ pub(super) async fn execute_with_client(
                 )),
             )
             .await?;
+            drop(capture_budget);
             if command.accepts_exit_code(result.exit_code) && !command.outputs.is_empty() {
                 let mut argv = vec![
                     "tar".into(),

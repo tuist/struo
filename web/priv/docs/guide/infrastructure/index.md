@@ -95,9 +95,13 @@ It can also use either capability on its own.
 | [Microsandbox](/guide/infrastructure/microsandbox) | Execution | Local image | Validate an action boundary on the current computer. |
 | [E2B](/guide/infrastructure/e2b) | Execution | Hosted template | Start a prepared hosted environment quickly. |
 | [Daytona](/guide/infrastructure/daytona) | Execution | Hosted container image | Build a hosted environment from a familiar image. |
+| [Blaxel](/guide/infrastructure/blaxel) | Execution | Hosted sandbox image | Transfer declared dependencies and run tests in a disposable VM. |
 | [Boat](/guide/infrastructure/boat) | Execution | Hosted saved snapshot | Run scripts with a prepared Linux toolchain and disposable ownership. |
+| [LangSmith](/guide/infrastructure/langsmith) | Execution | Hosted v2 snapshot | Run scripts in your LangSmith workspace. |
+| [Tensorlake](/guide/infrastructure/tensorlake) | Execution | Hosted registered image or snapshot | Run scripts in your Tensorlake project namespace. |
 | [Together Code Sandbox](/guide/infrastructure/together) | Execution | Hosted snapshot | Run against a prepared snapshot with Together sandbox access. |
 | [Northflank](/guide/infrastructure/northflank) | Execution | Service-backed sandbox image | Run annotated tests in a dedicated Northflank project. |
+| [Runloop](/guide/infrastructure/runloop) | Execution | Hosted Blueprint | Run scripts in a prepared Devbox. |
 | [Sprites](/guide/infrastructure/sprites) | Execution | Hosted Linux environment | Run scripts in a disposable Fly.io Sprite. |
 | [OpenSandbox](/guide/infrastructure/opensandbox) | Execution | Self-hosted container image | Run actions on your own sandbox service. |
 | [Vercel Sandbox](/guide/infrastructure/vercel) | Execution | Hosted runtime | Run isolated tests with declared local dependencies. |

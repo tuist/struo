@@ -200,6 +200,8 @@ fn resolve_named_workspace_provider(
         | InfrastructureProviderConfig::Cloudflare(_)
         | InfrastructureProviderConfig::OpenSandbox(_)
         | InfrastructureProviderConfig::Vercel(_)
+        | InfrastructureProviderConfig::Runloop(_)
+        | InfrastructureProviderConfig::Blaxel(_)
         | InfrastructureProviderConfig::Daytona(_) => Err(Error::CacheProvider {
             path: name.clone(),
             kind: CacheProviderError::ExecutionProviderNotCacheable { name: name.clone() },

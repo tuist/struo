@@ -53,6 +53,8 @@ fn local_aliases_use_native_runtime_and_environment_resolution() {
         "cloudflare",
         "opensandbox",
         "vercel",
+        "blaxel",
+        "runloop",
     ] {
         assert!(uses_provider_environment(Some(&RemoteExecution::provider(name))).unwrap());
     }
@@ -152,6 +154,16 @@ async fn remote_script_resolves_named_executor_and_dependency_outputs() {
             "kind = \"vercel\"\nruntime = \"node24\"",
             "vercel",
             Some("node24"),
+        ),
+        (
+            "kind = \"runloop\"\nblueprint = \"bpt_node_tests\"",
+            "runloop",
+            Some("bpt_node_tests"),
+        ),
+        (
+            "kind = \"blaxel\"\nimage = \"blaxel/base-image:version\"",
+            "blaxel",
+            Some("blaxel/base-image:version"),
         ),
     ] {
         let tmp = TempDir::new().unwrap();

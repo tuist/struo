@@ -142,6 +142,16 @@ pub struct OpenSandboxExecutionProviderConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunloopExecutionProviderConfig {
+    pub blueprint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlaxelExecutionProviderConfig {
+    pub image: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DockerExecutionProviderConfig {
     pub image: String,
 }
@@ -165,6 +175,8 @@ pub enum InfrastructureProviderConfig {
         namespace: String,
     },
     OpenSandbox(OpenSandboxExecutionProviderConfig),
+    Runloop(RunloopExecutionProviderConfig),
+    Blaxel(BlaxelExecutionProviderConfig),
     Docker(DockerExecutionProviderConfig),
     Tuist(TuistCacheProviderConfig),
     ObjectStore(ObjectStoreCacheProviderConfig),
@@ -283,6 +295,12 @@ pub(crate) enum InfrastructureProviderToml {
     },
     #[serde(rename = "opensandbox")]
     OpenSandbox {
+        image: String,
+    },
+    Runloop {
+        blueprint: String,
+    },
+    Blaxel {
         image: String,
     },
     Docker {
@@ -468,6 +486,20 @@ impl InfrastructureProviderToml {
                     image,
                 })
             }
+            Self::Runloop { blueprint } => {
+                let blueprint = required_value(
+                    display_name,
+                    provider_name,
+                    "runloop",
+                    "blueprint",
+                    &blueprint,
+                )?;
+                InfrastructureProviderConfig::Runloop(RunloopExecutionProviderConfig { blueprint })
+            }
+            Self::Blaxel { image } => {
+                let image = required_value(display_name, provider_name, "blaxel", "image", &image)?;
+                InfrastructureProviderConfig::Blaxel(BlaxelExecutionProviderConfig { image })
+            }
             Self::Docker { image } => {
                 let image = required_value(display_name, provider_name, "docker", "image", &image)?;
                 InfrastructureProviderConfig::Docker(DockerExecutionProviderConfig { image })
@@ -546,6 +578,27 @@ mod tests {
             config,
             InfrastructureProviderConfig::Cloudflare(CloudflareExecutionProviderConfig {
                 image: "pinned-v1".into()
+            })
+        );
+    }
+
+    #[test]
+    fn runloop_requires_a_nonempty_blueprint() {
+        for value in ["", "  "] {
+            assert!(InfrastructureProviderToml::Runloop {
+                blueprint: value.into()
+            }
+            .into_config("struo.toml", "tests")
+            .is_err());
+        }
+        assert_eq!(
+            InfrastructureProviderToml::Runloop {
+                blueprint: " bpt_node ".into()
+            }
+            .into_config("struo.toml", "tests")
+            .unwrap(),
+            InfrastructureProviderConfig::Runloop(RunloopExecutionProviderConfig {
+                blueprint: "bpt_node".into()
             })
         );
     }
