@@ -294,6 +294,16 @@ impl TuistExecution {
         .await
     }
 
+    /// Upload small blobs held in memory together, in as few requests as the
+    /// batch size allows.
+    pub async fn upload_blobs(&self, blobs: &[(reapi::Digest, Vec<u8>)]) -> Result<()> {
+        for (digest, bytes) in blobs {
+            validate_sha256_digest(digest, bytes, "upload execution input")?;
+        }
+        self.refreshing(|| self.cas.upload_reapi_blobs(blobs, "upload execution input"))
+            .await
+    }
+
     /// Stream a file whose content `digest` describes.
     pub async fn upload_file(&self, digest: &reapi::Digest, path: &Path) -> Result<()> {
         let operation = "upload execution input";

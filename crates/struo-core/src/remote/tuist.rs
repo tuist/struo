@@ -30,6 +30,10 @@ mod tree;
 
 pub(super) const PROVIDER: &str = "tuist";
 const PARALLEL_TRANSFERS: usize = 8;
+/// Inputs at most this large are uploaded in groups rather than streamed.
+const SMALL_INPUT_BYTES: u64 = 512 * 1024;
+/// Bytes of small inputs one upload request carries, the cache's batch size.
+const BATCH_INPUT_BYTES: u64 = 2 * 1024 * 1024;
 /// Tuist workers refuse actions that declare a longer timeout.
 const MAX_TIMEOUT: Duration = Duration::from_mins(10);
 /// Largest output tree a Tuist worker returns.
@@ -337,24 +341,107 @@ async fn upload_missing(
         missing = pending.len(),
         "uploading missing remote inputs"
     );
-    futures::stream::iter(pending)
-        .map(|(digest, blob)| {
-            async move {
-                match blob {
-                    tree::Blob::File(relative) => {
-                        let size = u64::try_from(digest.size_bytes).unwrap_or(u64::MAX);
-                        let _phase = super::phase_permit(lease, size).await?;
-                        let copy = verified_copy(workspace, relative, &digest).await?;
-                        Ok(execution.upload_file(&digest, copy.path()).await?)
-                    }
-                    tree::Blob::Bytes(bytes) => Ok(execution.upload_blob(&digest, &bytes).await?),
-                }
+    // Small blobs travel together, one request per group, so an action's
+    // dozen small inputs cost one round trip and one transfer slot rather
+    // than one each. Larger files keep streaming on their own.
+    let (small, large): (Vec<_>, Vec<_>) = pending.into_iter().partition(|(digest, _)| {
+        u64::try_from(digest.size_bytes).unwrap_or(u64::MAX) <= SMALL_INPUT_BYTES
+    });
+    let mut groups = Vec::<Vec<(reapi::Digest, tree::Blob)>>::new();
+    let mut group_bytes = 0;
+    for (digest, blob) in small {
+        let size = u64::try_from(digest.size_bytes).unwrap_or(u64::MAX);
+        match groups.last_mut() {
+            Some(_) if group_bytes + size <= BATCH_INPUT_BYTES => group_bytes += size,
+            _ => {
+                groups.push(Vec::new());
+                group_bytes = size;
             }
-            .boxed()
-        })
+        }
+        groups
+            .last_mut()
+            .expect("a group was just ensured")
+            .push((digest, blob));
+    }
+    let uploads =
+        groups
+            .into_iter()
+            .map(|group| upload_group(execution, workspace, lease, group).boxed())
+            .chain(large.into_iter().map(|(digest, blob)| {
+                upload_one(execution, workspace, lease, digest, blob).boxed()
+            }))
+            .collect::<Vec<_>>();
+    futures::stream::iter(uploads)
         .buffer_unordered(PARALLEL_TRANSFERS)
         .try_collect::<()>()
         .await
+}
+
+async fn upload_group(
+    execution: &TuistExecution,
+    workspace: &Path,
+    lease: Option<&crate::ExecutionPermit>,
+    group: Vec<(reapi::Digest, tree::Blob)>,
+) -> Result<()> {
+    let size = group
+        .iter()
+        .map(|(digest, _)| u64::try_from(digest.size_bytes).unwrap_or(u64::MAX))
+        .fold(0_u64, u64::saturating_add);
+    let _phase = super::phase_permit(lease, size).await?;
+    let mut blobs = Vec::with_capacity(group.len());
+    for (digest, blob) in group {
+        let bytes = match blob {
+            tree::Blob::File(relative) => verified_bytes(workspace, relative, &digest).await?,
+            tree::Blob::Bytes(bytes) => bytes,
+        };
+        blobs.push((digest, bytes));
+    }
+    Ok(execution.upload_blobs(&blobs).await?)
+}
+
+async fn upload_one(
+    execution: &TuistExecution,
+    workspace: &Path,
+    lease: Option<&crate::ExecutionPermit>,
+    digest: reapi::Digest,
+    blob: tree::Blob,
+) -> Result<()> {
+    match blob {
+        tree::Blob::File(relative) => {
+            let size = u64::try_from(digest.size_bytes).unwrap_or(u64::MAX);
+            let _phase = super::phase_permit(lease, size).await?;
+            let copy = verified_copy(workspace, relative, &digest).await?;
+            Ok(execution.upload_file(&digest, copy.path()).await?)
+        }
+        tree::Blob::Bytes(bytes) => Ok(execution.upload_blob(&digest, &bytes).await?),
+    }
+}
+
+/// Read a small input through a handle that never follows links, and refuse
+/// it if its bytes no longer match the digest the input tree was built from.
+async fn verified_bytes(
+    workspace: &Path,
+    relative: PathBuf,
+    digest: &reapi::Digest,
+) -> Result<Vec<u8>> {
+    let workspace = workspace.to_path_buf();
+    let expected = digest.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut bytes = Vec::new();
+        Directory::open(&workspace)
+            .and_then(|directory| directory.open_file(&relative))
+            .and_then(|mut file| std::io::Read::read_to_end(&mut file, &mut bytes))
+            .map_err(|source| file_error("open_remote_input", &relative, source))?;
+        if tree::digest_bytes(&bytes) != expected {
+            return Err(tree::api_error(format!(
+                "input `{}` changed while it was uploaded; build again once it is stable",
+                relative.display()
+            )));
+        }
+        Ok(bytes)
+    })
+    .await
+    .map_err(|source| tree::api_error(format!("input staging task failed: {source}")))?
 }
 
 /// Copy an input through a handle that never follows links, and refuse it if
@@ -795,14 +882,26 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(std::fs::read(copy.path()).unwrap(), b"pub fn a() {}");
+        assert_eq!(
+            verified_bytes(workspace.path(), relative.clone(), &digest)
+                .await
+                .unwrap(),
+            b"pub fn a() {}"
+        );
 
         std::fs::write(workspace.path().join("src/lib.rs"), b"pub fn b() {}").unwrap();
+        assert!(verified_bytes(workspace.path(), relative.clone(), &digest)
+            .await
+            .is_err());
         assert!(verified_copy(workspace.path(), relative.clone(), &digest)
             .await
             .is_err());
 
         std::fs::remove_dir_all(workspace.path().join("src")).unwrap();
         std::os::unix::fs::symlink(outside.path(), workspace.path().join("src")).unwrap();
+        assert!(verified_bytes(workspace.path(), relative.clone(), &digest)
+            .await
+            .is_err());
         assert!(verified_copy(workspace.path(), relative, &digest)
             .await
             .is_err());

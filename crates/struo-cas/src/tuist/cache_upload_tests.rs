@@ -401,6 +401,64 @@ async fn batch_upload_retries_individual_transient_status_but_not_permission_den
 }
 
 #[tokio::test]
+async fn small_blobs_share_batch_requests_and_a_transient_status_retries_the_request() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (cache, service, server) = fixture(&temp).await;
+    service
+        .0
+        .lock()
+        .await
+        .batch_statuses
+        .push_back(Code::Unavailable);
+    let blob = |seed: usize, len: usize| -> Vec<u8> {
+        (0..len)
+            .map(|index| u8::try_from((index * 31 + seed) % 251).unwrap())
+            .collect()
+    };
+    let near_half = BATCH_BLOB_LIMIT * 2 / 5;
+    let blobs = [
+        blob(1, near_half),
+        blob(2, near_half),
+        blob(3, near_half),
+        blob(4, 10),
+        blob(5, BATCH_BLOB_LIMIT + 1),
+    ]
+    .into_iter()
+    .map(|bytes| (sha256_digest(&bytes).unwrap(), bytes))
+    .collect::<Vec<_>>();
+
+    cache.upload_reapi_blobs(&blobs, "put blob").await.unwrap();
+
+    let state = service.0.lock().await;
+    let requests = state
+        .blobs
+        .iter()
+        .map(|request| {
+            request
+                .requests
+                .iter()
+                .map(|blob| blob.digest.clone().unwrap())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let digest = |index: usize| blobs[index].0.clone();
+    // Two blobs fill a request; the first request failed with a transient
+    // per-blob status and was sent again whole.
+    assert_eq!(
+        requests,
+        [
+            vec![digest(0), digest(1)],
+            vec![digest(0), digest(1)],
+            vec![digest(2), digest(3)],
+        ]
+    );
+    // A blob over the batch limit is streamed on its own.
+    assert_eq!(state.writes.len(), 1);
+    drop(state);
+    server.abort();
+}
+
+#[tokio::test]
 async fn streamed_upload_reopens_file_and_restarts_memory_body_with_fresh_resource() {
     for (from_file, compressed) in [(false, false), (false, true), (true, false), (true, true)] {
         let temp = tempfile::TempDir::new().unwrap();

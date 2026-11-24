@@ -988,6 +988,85 @@ impl TuistCache {
         .await
     }
 
+    /// Upload small blobs packed into `BatchUpdateBlobs` requests of at most
+    /// [`BATCH_BLOB_LIMIT`] bytes each, one transfer slot per request, so a
+    /// set of small inputs costs a round trip rather than one per blob.
+    /// Blobs larger than that limit are streamed on their own.
+    async fn upload_reapi_blobs(
+        &self,
+        blobs: &[(reapi::Digest, Vec<u8>)],
+        operation: &'static str,
+    ) -> Result<()> {
+        let mut pending = blobs.iter().peekable();
+        while pending.peek().is_some() {
+            let mut request = Vec::new();
+            let mut request_bytes = 0;
+            while let Some((digest, bytes)) = pending.next_if(|(_, bytes)| {
+                request.is_empty() || request_bytes + bytes.len() <= BATCH_BLOB_LIMIT
+            }) {
+                request_bytes += bytes.len();
+                request.push((digest, bytes));
+            }
+            if let [(digest, bytes)] = request[..] {
+                self.upload_reapi_blob(digest, bytes, operation).await?;
+                continue;
+            }
+            // Each blob encoded, the copy each attempt sends, and the raw bytes.
+            let len = request_bytes as u64;
+            let _memory = self.budget.reserve_memory(len.saturating_mul(3)).await?;
+            let _permit = self
+                .transfer_limit
+                .acquire()
+                .await
+                .expect("transfer semaphore remains open");
+            let capabilities = self.remote_capabilities().await;
+            let requests = request
+                .iter()
+                .map(|(digest, bytes)| {
+                    let (data, compressor) =
+                        encode_reapi_blob(bytes, capabilities.zstd_batches, operation)?;
+                    Ok(reapi::batch_update_blobs_request::Request {
+                        digest: Some((*digest).clone()),
+                        data,
+                        compressor,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let channel = self.grpc_channel().await?;
+            let client = ContentAddressableStorageClient::new(channel);
+            let request = reapi::BatchUpdateBlobsRequest {
+                instance_name: self.instance_name(),
+                requests,
+                digest_function: SHA256_DIGEST_FUNCTION,
+            };
+            retry::grpc(operation, || {
+                let mut client = client.clone();
+                let request = request.clone();
+                async move {
+                    let expected = request.requests.len();
+                    let response = client
+                        .batch_update_blobs(self.authorized_grpc_request(request, operation).await?)
+                        .await?
+                        .into_inner();
+                    if response.responses.len() != expected {
+                        return Err(status::remote(
+                            operation,
+                            ErrorKind::Protocol,
+                            format!(
+                                "Kura answered {} of {expected} blob uploads",
+                                response.responses.len()
+                            ),
+                        )
+                        .into());
+                    }
+                    batch_upload_outcome(&response, operation)
+                }
+            })
+            .await?;
+        }
+        Ok(())
+    }
+
     async fn write_reapi_blob_stream(
         &self,
         digest: &reapi::Digest,
@@ -1375,27 +1454,34 @@ fn batch_upload_outcome(
     response: &reapi::BatchUpdateBlobsResponse,
     operation: &'static str,
 ) -> std::result::Result<(), retry::Failure> {
-    let Some(status) = response
-        .responses
-        .first()
-        .and_then(|response| response.status.as_ref())
-    else {
-        return Err(status::remote(
-            operation,
-            ErrorKind::Protocol,
-            "Kura returned no status for blob upload",
-        )
-        .into());
-    };
-    if status.code == REAPI_STATUS_OK {
-        return Ok(());
+    if response.responses.is_empty() {
+        return Err(missing_upload_status(operation));
     }
-    let rpc = super::retry_hint::from_rpc(status);
-    if retry::retryable(&rpc) {
-        Err(rpc.into())
-    } else {
-        Err(status::rpc_status_error(operation, status).into())
+    // A retryable failure retries the whole request; uploads are idempotent.
+    let mut retryable = None;
+    for response in &response.responses {
+        let Some(status) = response.status.as_ref() else {
+            return Err(missing_upload_status(operation));
+        };
+        if status.code == REAPI_STATUS_OK {
+            continue;
+        }
+        let rpc = super::retry_hint::from_rpc(status);
+        if !retry::retryable(&rpc) {
+            return Err(status::rpc_status_error(operation, status).into());
+        }
+        retryable.get_or_insert(rpc);
     }
+    retryable.map_or(Ok(()), |rpc| Err(rpc.into()))
+}
+
+fn missing_upload_status(operation: &'static str) -> retry::Failure {
+    status::remote(
+        operation,
+        ErrorKind::Protocol,
+        "Kura returned no status for blob upload",
+    )
+    .into()
 }
 
 fn encode_action_result_metadata(
