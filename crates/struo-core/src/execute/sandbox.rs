@@ -20,8 +20,8 @@ use super::{
 };
 use crate::stream::ActionOutputObserver;
 use crate::{
-    contract, local, outputs, Action, Error, ExecutionPermit, OutputSymlinkMode, Result,
-    WorkspacePath,
+    access_trace, contract, local, outputs, Action, Error, ExecutionPermit, OutputSymlinkMode,
+    Result, WorkspacePath,
 };
 
 /// The filesystem contract a sandboxed run is held to.
@@ -53,8 +53,32 @@ pub(super) async fn execute_sandboxed_command(
     stream_to_parent: bool,
     observer: Option<&dyn ActionOutputObserver>,
 ) -> Result<ActionResult> {
-    let sandbox = prepare_input_sandbox(action, &policy, invocation.cwd, workspace_root).await?;
+    let trace = if policy.validate_contract {
+        access_trace::current()
+    } else {
+        None
+    };
+    let sandbox = prepare_input_sandbox(
+        action,
+        &policy,
+        invocation.cwd,
+        workspace_root,
+        trace.is_some() && access_trace::stages_undeclared_files(),
+    )
+    .await?;
     let execroot = sandbox.execroot.clone();
+    let wrapper = match &trace {
+        Some(request) => Some(write_trace_spec(
+            request,
+            &policy,
+            &execroot,
+            workspace_root,
+            invocation.network,
+        )?),
+        None => None,
+    };
+    let mut invocation = invocation;
+    invocation.trace = wrapper.as_ref();
     let result = if let Some(observer) = observer {
         local::execute_command_observed(invocation, &execroot, cache, stream_to_parent, observer)
             .await
@@ -223,11 +247,13 @@ struct PreparedSandbox {
     before_workspace: contract::ContractSnapshot,
 }
 
+#[allow(clippy::too_many_lines)]
 async fn prepare_input_sandbox(
     action: &Action,
     policy: &SandboxPolicy<'_>,
     cwd: Option<&WorkspacePath>,
     workspace_root: &Path,
+    stage_undeclared: bool,
 ) -> Result<PreparedSandbox> {
     let SandboxPolicy {
         inputs,
@@ -298,15 +324,6 @@ async fn prepare_input_sandbox(
     })?;
     let execroot = dir.root().join("execroot");
 
-    let before_execroot = if validate_contract {
-        contract::snapshot_tree(&execroot, &[]).map_err(|source| Error::FileAction {
-            action: "snapshot_sandbox",
-            path: execroot.display().to_string(),
-            source,
-        })?
-    } else {
-        contract::ContractSnapshot(std::collections::BTreeMap::new())
-    };
     let before_workspace = if validate_contract {
         contract::snapshot_tree(workspace_root, &[".struo"]).map_err(|source| {
             Error::FileAction {
@@ -318,12 +335,109 @@ async fn prepare_input_sandbox(
     } else {
         contract::ContractSnapshot(std::collections::BTreeMap::new())
     };
+    if stage_undeclared {
+        stage_undeclared_files(
+            &before_workspace,
+            workspace_root,
+            &execroot,
+            inputs,
+            outputs,
+        )
+        .map_err(|source| Error::FileAction {
+            action: "stage_undeclared_files",
+            path: execroot.display().to_string(),
+            source,
+        })?;
+    }
+    let before_execroot = if validate_contract {
+        contract::snapshot_tree(&execroot, &[]).map_err(|source| Error::FileAction {
+            action: "snapshot_sandbox",
+            path: execroot.display().to_string(),
+            source,
+        })?
+    } else {
+        contract::ContractSnapshot(std::collections::BTreeMap::new())
+    };
     Ok(PreparedSandbox {
         dir,
         execroot,
         before_execroot,
         before_workspace,
     })
+}
+
+/// Write the trace helper's spec for this execroot.
+fn write_trace_spec(
+    request: &access_trace::Request,
+    policy: &SandboxPolicy<'_>,
+    execroot: &Path,
+    workspace_root: &Path,
+    network: crate::NetworkPolicy,
+) -> Result<access_trace::Wrapper> {
+    let spec = access_trace::Spec {
+        log: request.log_path(),
+        execroot: execroot.to_path_buf(),
+        workspace: workspace_root.to_path_buf(),
+        readable: policy
+            .inputs
+            .iter()
+            .chain(policy.outputs)
+            .map(|path| path.as_str().to_string())
+            .collect(),
+        deny_network: network.is_denied(),
+    };
+    let path = request.spec_path();
+    let bytes = serde_json::to_vec(&spec).map_err(std::io::Error::other);
+    bytes
+        .and_then(|bytes| std::fs::write(&path, bytes))
+        .map_err(|source| Error::FileAction {
+            action: "write_trace_spec",
+            path: path.display().to_string(),
+            source,
+        })?;
+    Ok(access_trace::Wrapper {
+        program: request.helper.clone(),
+        spec: path,
+    })
+}
+
+/// Stage every workspace file no declared input or output covers, so a
+/// backend that observes reads only by denying them sees reads of files the
+/// action did not declare. Regular files are cloned where the filesystem
+/// supports it, which `std::fs::copy` does on APFS.
+fn stage_undeclared_files(
+    workspace: &contract::ContractSnapshot,
+    workspace_root: &Path,
+    execroot: &Path,
+    inputs: &[WorkspacePath],
+    outputs: &[WorkspacePath],
+) -> std::io::Result<()> {
+    let covered = |relative: &str| {
+        inputs.iter().chain(outputs).any(|declared| {
+            let declared = declared.as_str().trim_end_matches('/');
+            relative == declared || relative.starts_with(&format!("{declared}/"))
+        })
+    };
+    for (relative, fingerprint) in &workspace.0 {
+        let destination = execroot.join(relative);
+        if covered(relative) || std::fs::symlink_metadata(&destination).is_ok() {
+            continue;
+        }
+        if fingerprint == "dir" {
+            std::fs::create_dir_all(&destination)?;
+            continue;
+        }
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let source = workspace_root.join(relative);
+        if fingerprint.starts_with("link:") {
+            copy_sandbox_output_blocking(&source, &destination)?;
+        } else if fingerprint.starts_with("file:") {
+            std::fs::copy(&source, &destination)?;
+        }
+    }
+    Ok(())
 }
 
 fn keep_sandbox() -> bool {

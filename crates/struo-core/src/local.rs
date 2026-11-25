@@ -5,7 +5,7 @@
 //! outlive the leader are drained for a bounded time only.
 
 mod capture;
-mod isolation;
+pub(crate) mod isolation;
 pub(crate) mod process_group;
 mod supervise;
 
@@ -52,6 +52,8 @@ pub(crate) struct Invocation<'a> {
     pub timeout_ms: Option<u64>,
     pub redirect: Redirect<'a>,
     pub network: NetworkPolicy,
+    /// Run under the file access trace helper.
+    pub trace: Option<&'a crate::access_trace::Wrapper>,
 }
 
 /// How a child's stdout and stderr are consumed.
@@ -179,13 +181,17 @@ async fn spawn_and_capture(
         timeout_ms,
         redirect,
         network,
+        trace,
     } = invocation;
     let argv = resolve_execution_argv(argv, workspace_root);
     let env = resolve_execution_env(env, workspace_root);
     let (program, rest) = argv.split_first().ok_or(Error::EmptyArgv)?;
     tracing::Span::current().record("program", tracing::field::display(program));
 
-    let mut command = isolation::command(network, program, rest)?;
+    let mut command = match trace {
+        Some(helper) => isolation::traced_command(network, helper, program, rest)?,
+        None => isolation::command(network, program, rest)?,
+    };
     command.env_clear();
     for (k, v) in &env {
         command.env(k, v);

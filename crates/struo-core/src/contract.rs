@@ -7,7 +7,9 @@ use struo_cas::{ActionResult, CacheProvider};
 
 use crate::{Action, SandboxMode, WorkspacePath};
 
-const CONTRACT_STDERR_LIMIT: u64 = 16 * 1024 * 1024;
+mod traced;
+
+pub(super) const CONTRACT_STDERR_LIMIT: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum FilesystemOperation {
@@ -33,12 +35,22 @@ pub struct ActionContractReport {
     pub exit_code: i32,
     pub diagnostics: Vec<ActionContractDiagnostic>,
     pub limitations: Vec<String>,
+    /// Files outside the workspace the traced action read or executed, such
+    /// as toolchains and system libraries. Empty when the probe was not traced.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub host_reads: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct ActionContractOptions {
     pub create_dirs: Vec<WorkspacePath>,
+    /// Trace the probe's file accesses with this executable's hidden
+    /// `__trace` verb, normally the running `struo` binary. Without it,
+    /// successful undeclared reads are not observed.
+    pub trace_helper: Option<std::path::PathBuf>,
 }
+
+pub(super) const UNTRACED_READS: &str = "Successful reads are not observed without an access trace";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ContractViolationKind {
@@ -150,9 +162,8 @@ pub async fn validate_action_contract_with_options(
             valid: false,
             exit_code: 0,
             diagnostics: preflight,
-            limitations: vec![
-                "Successful reads are not observable with a symlink-only sandbox".to_string(),
-            ],
+            limitations: vec![UNTRACED_READS.to_string()],
+            host_reads: Vec::new(),
         });
     }
     let mut validated = action.clone();
@@ -166,30 +177,60 @@ pub async fn validate_action_contract_with_options(
             limitations: vec![
                 "Only command actions have a filesystem contract to validate".to_string(),
             ],
+            host_reads: Vec::new(),
         });
     }
-    match crate::run_uncached_contract(&validated, workspace, cache, false).await {
-        Ok(result) => Ok(ActionContractReport {
-            valid: result.exit_code == 0,
-            exit_code: result.exit_code,
-            diagnostics: Vec::new(),
-            limitations: vec![
-                "Successful reads are not observable with a symlink-only sandbox".to_string(),
-            ],
-        }),
-        Err(crate::Error::ContractViolation { violations }) => Ok(ActionContractReport {
-            valid: false,
-            exit_code: 0,
-            diagnostics: violations
-                .into_iter()
-                .map(diagnostic_from_violation)
-                .collect(),
-            limitations: vec![
-                "Successful reads are not observable with a symlink-only sandbox".to_string(),
-            ],
-        }),
-        Err(error) => Err(std::io::Error::other(error.to_string())),
+    let Some(helper) = options.trace_helper.clone() else {
+        let outcome = crate::run_uncached_contract(&validated, workspace, cache, false).await;
+        return report(
+            outcome,
+            Vec::new(),
+            vec![UNTRACED_READS.to_string()],
+            Vec::new(),
+        );
+    };
+    if !crate::access_trace::supported() {
+        let outcome = crate::run_uncached_contract(&validated, workspace, cache, false).await;
+        return report(
+            outcome,
+            Vec::new(),
+            vec![format!(
+                "{UNTRACED_READS}: no file access tracer for this platform"
+            )],
+            Vec::new(),
+        );
     }
+    traced::probe(validated, workspace, cache, helper).await
+}
+
+pub(super) fn report(
+    outcome: crate::Result<ActionResult>,
+    reads: Vec<ActionContractDiagnostic>,
+    limitations: Vec<String>,
+    host_reads: Vec<String>,
+) -> std::io::Result<ActionContractReport> {
+    let (exit_code, violations) = match outcome {
+        Ok(result) => (result.exit_code, Vec::new()),
+        Err(crate::Error::ContractViolation { violations }) => (0, violations),
+        Err(error) => return Err(std::io::Error::other(error.to_string())),
+    };
+    let mut diagnostics = reads;
+    for diagnostic in violations.into_iter().map(diagnostic_from_violation) {
+        if !diagnostics
+            .iter()
+            .any(|seen| seen.code == diagnostic.code && seen.path == diagnostic.path)
+        {
+            diagnostics.push(diagnostic);
+        }
+    }
+    diagnostics.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(ActionContractReport {
+        valid: exit_code == 0 && diagnostics.is_empty(),
+        exit_code,
+        diagnostics,
+        limitations,
+        host_reads,
+    })
 }
 
 fn diagnostic_from_violation(violation: ContractViolation) -> ActionContractDiagnostic {
@@ -366,7 +407,10 @@ fn under_any(path: &str, prefixes: &BTreeSet<String>) -> bool {
 /// input covers its children, so an absolute path to a file under a declared
 /// source directory is not an undeclared read even though `input_set` only holds
 /// the directory itself.
-fn path_within_declared_input<'a>(path: &str, inputs: impl IntoIterator<Item = &'a str>) -> bool {
+pub(super) fn path_within_declared_input<'a>(
+    path: &str,
+    inputs: impl IntoIterator<Item = &'a str>,
+) -> bool {
     inputs
         .into_iter()
         .any(|input| path == input || path.starts_with(&format!("{input}/")))
@@ -477,6 +521,58 @@ fn walk(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A helper that runs nothing and writes no event log stands in for a
+    /// trace that could not start. The command itself succeeds, so only the
+    /// missing trace can make the report invalid.
+    #[cfg(any(
+        all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ),
+        target_os = "macos"
+    ))]
+    #[tokio::test]
+    async fn an_unavailable_trace_fails_validation() {
+        let workspace = tempfile::tempdir().unwrap();
+        let cas = tempfile::tempdir().unwrap();
+        let cache = CacheProvider::Local(struo_cas::Cas::open(cas.path()));
+        let action = Action::RunCommand {
+            argv: vec!["/bin/sh".into(), "-c".into(), "true".into()],
+            env: BTreeMap::new(),
+            cwd: None,
+            input_digest: None,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            stdout_path: None,
+            stderr_path: None,
+            output_symlink_mode: crate::OutputSymlinkMode::default(),
+            resources: crate::ResourceRequest::default(),
+            sandbox: SandboxMode::Inputs,
+            network: crate::NetworkPolicy::default(),
+            timeout_ms: None,
+            success_exit_codes: vec![0],
+            remote: None,
+        };
+        let options = ActionContractOptions {
+            create_dirs: Vec::new(),
+            trace_helper: Some("/usr/bin/true".into()),
+        };
+
+        let report =
+            validate_action_contract_with_options(&action, workspace.path(), &cache, &options)
+                .await
+                .unwrap();
+
+        assert_eq!(report.exit_code, 0);
+        assert!(!report.valid);
+        let codes = report
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(codes, ["trace_unavailable"]);
+    }
 
     #[test]
     fn declared_directory_input_covers_its_children() {

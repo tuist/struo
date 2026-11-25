@@ -475,6 +475,7 @@ async fn execute_command(
             stderr: stderr_path.as_deref(),
         },
         network: *network,
+        trace: None,
     };
 
     let executor = Executor::resolve(action)?;

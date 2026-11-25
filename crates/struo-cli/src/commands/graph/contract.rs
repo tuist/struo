@@ -25,6 +25,9 @@ pub struct ActionValidationSummary {
     pub identifier: String,
     pub valid: bool,
     pub exit_code: i32,
+    /// Files outside the workspace the traced action read or executed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub host_reads: Vec<String>,
 }
 
 pub async fn validate_action_contracts(
@@ -52,6 +55,7 @@ pub async fn validate_action_contracts(
             identifier: validation.identifier,
             valid: validation.valid,
             exit_code: validation.exit_code,
+            host_reads: validation.host_reads,
         });
     }
     if selected_index.is_none() && actions.len() > 1 {

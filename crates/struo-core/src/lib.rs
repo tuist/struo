@@ -5,6 +5,8 @@
 //! work. Subprocess output is streamed through the CAS rather than
 //! buffered.
 
+mod access_trace;
+pub use access_trace::{run_helper as run_access_trace_helper, HELPER_VERB as ACCESS_TRACE_VERB};
 mod action;
 pub mod artifacts;
 pub use struo_presentation::ActionHistoryKey;

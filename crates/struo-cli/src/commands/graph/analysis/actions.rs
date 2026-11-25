@@ -328,6 +328,7 @@ pub(crate) struct DeclaredActionValidation {
     pub(crate) exit_code: i32,
     pub(crate) diagnostics: Vec<struo_frontend::Diagnostic>,
     pub(crate) limitations: Vec<String>,
+    pub(crate) host_reads: Vec<String>,
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -373,6 +374,7 @@ pub(super) async fn validate_declared_actions(
                 limitations: vec![
                     "Deferred actions require their planning inputs to be built first.".to_string(),
                 ],
+                host_reads: Vec::new(),
             });
             continue;
         }
@@ -409,6 +411,7 @@ pub(super) async fn validate_declared_actions(
                         "action not validated in isolation: consumes inputs produced by prior actions or dependencies ({})",
                         missing_inputs.join(", ")
                     )],
+                    host_reads: Vec::new(),
                 });
             }
             continue;
@@ -439,7 +442,10 @@ pub(super) async fn validate_declared_actions(
             &action,
             workspace,
             cache,
-            &ActionContractOptions { create_dirs },
+            &ActionContractOptions {
+                create_dirs,
+                trace_helper: std::env::current_exe().ok(),
+            },
         )
         .await
         .with_context(|| format!("validating action {index} for target `{}`", target.label.id))?;
@@ -458,12 +464,16 @@ pub(super) async fn validate_declared_actions(
                     | FilesystemOperation::Access => "inputs",
                     FilesystemOperation::Write => "outputs",
                 };
+                let traced = diagnostic.code != "trace_unavailable";
                 let mut converted = struo_frontend::Diagnostic::new(
                     diagnostic.code,
                     format!("action `{identifier}` ({index}): {}", diagnostic.message),
                 )
-                .with_target(target.label.id.clone())
-                .with_attribute(attribute);
+                .with_target(target.label.id.clone());
+                // A trace that could not run names no attribute to repair.
+                if traced {
+                    converted = converted.with_attribute(attribute);
+                }
                 for repair in diagnostic.repairs {
                     converted = converted.with_repair(repair);
                 }
@@ -492,6 +502,7 @@ pub(super) async fn validate_declared_actions(
             exit_code: report.exit_code,
             diagnostics,
             limitations: report.limitations,
+            host_reads: report.host_reads,
         });
     }
     Ok(validations)

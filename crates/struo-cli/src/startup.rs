@@ -9,6 +9,12 @@ use crate::{dispatch, errors, logging, sound};
 
 pub(crate) fn run() -> ExitCode {
     let process_args = std::env::args_os().collect::<Vec<_>>();
+    if process_args
+        .get(1)
+        .is_some_and(|verb| verb == struo_core::ACCESS_TRACE_VERB)
+    {
+        return ExitCode::from(struo_core::run_access_trace_helper(&process_args[2..]));
+    }
     let argv = process_args
         .iter()
         .map(std::ffi::OsString::as_os_str)

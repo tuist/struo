@@ -29,6 +29,7 @@ fn invocation<'a>(
         timeout_ms,
         redirect: Redirect::default(),
         network,
+        trace: None,
     }
 }
 

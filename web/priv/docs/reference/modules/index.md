@@ -1121,8 +1121,9 @@ and includes its identity in the action's cache key.
   links. Both isolated modes create parent directories for declared outputs
   inside the private workspace. Use `struo query validate-actions` to run an
   uncached contract investigation that checks created, modified, and deleted
-  paths and returns structured repairs. Reads that leave no observable
-  filesystem evidence remain a limitation of this investigation.
+  paths and returns structured repairs. On Linux (x86-64 and arm64) and macOS
+  it also traces reads and reports each undeclared workspace file the action
+  read.
 - `success_exit_codes`: integer list whose members mean the command completed
   and its declared outputs are valid. Defaults to `[0]`. Use this for tools
   that report valid findings with a nonzero process code. Accepted codes are
