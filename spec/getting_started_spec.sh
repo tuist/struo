@@ -1,34 +1,35 @@
 #shellcheck shell=bash
 
-verify_documented_greeting() (
+verify_documented_site_package() (
   cd "$WORKSPACE" || return
-  mkdir -p scripts
+  mkdir -p scripts site/css
   awk '
     /^#!\/usr\/bin\/env -S struo exec -- bash$/ { copying = 1 }
     copying && /^```/ { exit }
     copying { print }
-  ' "$REPO_ROOT/web/priv/docs/guide/getting-started.md" > scripts/greet.sh
-  [ -s scripts/greet.sh ] || return 1
-  chmod +x scripts/greet.sh
+  ' "$REPO_ROOT/web/priv/docs/guide/getting-started.md" > scripts/package-site.sh
+  [ -s scripts/package-site.sh ] || return 1
+  chmod +x scripts/package-site.sh
   PATH="$(dirname "$STRUO_BIN"):$PATH"
   export PATH
 
-  printf 'hello from Struo\n' > message.txt
-  ./scripts/greet.sh > first.txt 2>&1 || return
+  printf '<h1>Welcome</h1>\n' > site/index.html
+  printf 'h1 { color: tomato; }\n' > site/css/main.css
+  ./scripts/package-site.sh > first.txt 2>&1 || return
   grep -q 'cache miss' first.txt || return
-  ./scripts/greet.sh > second.txt 2>&1 || return
+  ./scripts/package-site.sh > second.txt 2>&1 || return
   grep -q 'cache hit' second.txt || return
 
-  rm build/greeting.txt
-  ./scripts/greet.sh > restored.txt 2>&1 || return
+  rm -r build
+  ./scripts/package-site.sh > restored.txt 2>&1 || return
   grep -q 'cache hit' restored.txt || return
-  [ "$(<build/greeting.txt)" = 'hello from Struo' ] || return 1
+  [ "$(tar -xOzf build/site.tar.gz ./index.html)" = '<h1>Welcome</h1>' ] || return 1
 
-  printf 'hello again\n' > message.txt
-  ./scripts/greet.sh > changed.txt 2>&1 || return
+  printf '<h1>Welcome back</h1>\n' > site/index.html
+  ./scripts/package-site.sh > changed.txt 2>&1 || return
   grep -q 'cache miss' changed.txt || return
-  [ "$(<build/greeting.txt)" = 'hello again' ] || return 1
-  printf 'documented greeting reuses, restores, and invalidates correctly\n'
+  [ "$(tar -xOzf build/site.tar.gz ./index.html)" = '<h1>Welcome back</h1>' ] || return 1
+  printf 'documented site package reuses, restores, and invalidates correctly\n'
 )
 
 Describe 'getting started documentation'
@@ -36,8 +37,8 @@ Describe 'getting started documentation'
   AfterEach 'cleanup_workspace'
 
   It 'runs the published script through its Struo shebang'
-    When call verify_documented_greeting
+    When call verify_documented_site_package
     The status should be success
-    The stdout should equal 'documented greeting reuses, restores, and invalidates correctly'
+    The stdout should equal 'documented site package reuses, restores, and invalidates correctly'
   End
 End

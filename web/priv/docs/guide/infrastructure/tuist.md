@@ -109,7 +109,7 @@ Set `TUIST_TOKEN` to a Tuist account token authorized for the project's operatio
 when the runner can store a long-lived secret:
 
 ```sh
-TUIST_TOKEN=tuist_... ./scripts/greet.sh
+TUIST_TOKEN=tuist_... ./scripts/package-site.sh
 ```
 
 #### OpenID Connect
@@ -120,7 +120,7 @@ cacheable commands:
 
 ```sh
 struo auth login --provider tuist --no-browser
-./scripts/greet.sh
+./scripts/package-site.sh
 ```
 
 On GitHub Actions, grant identity-token permission before the login step:
@@ -133,7 +133,7 @@ permissions:
 steps:
   - uses: actions/checkout@v6
   - run: struo auth login --provider tuist --no-browser
-  - run: ./scripts/greet.sh
+  - run: ./scripts/package-site.sh
 ```
 
 The resulting session remains available for the rest of the job.
@@ -152,19 +152,19 @@ Use two machines with the same `struo.toml`, script, and input. On the first
 machine, run the [example scripted workflow](/guide/scripted/):
 
 ```sh
-./scripts/greet.sh
+./scripts/package-site.sh
 ```
 
 The first run reports a cache miss. On a second machine whose local cache has
-not seen this result, create the same `message.txt` and run the script again:
+not seen this result, check out the same `site/` sources and run the script
+again:
 
 ```sh
-printf 'hello from Struo\n' > message.txt
-./scripts/greet.sh
+./scripts/package-site.sh
 ```
 
 The second machine should report a cache hit and restore
-`build/greeting.txt`. Because its local cache has no matching entry, the hit
+`build/site.tar.gz`. Because its local cache has no matching entry, the hit
 confirms that Tuist supplied the recorded result.
 
 ### Run actions on Tuist workers

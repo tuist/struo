@@ -9,19 +9,20 @@ the cache key.
 
 ## Create a cacheable script
 
-Suppose a repository turns `message.txt` into `build/greeting.txt`. Save this
-script as `scripts/greet.sh`:
+Suppose a repository packages its `site/` directory into
+`build/site.tar.gz` before deploying it. Save this script as
+`scripts/package-site.sh`:
 
 ```sh
 #!/usr/bin/env -S struo exec -- bash
-# struo input "../message.txt"
-# struo output "../build/greeting.txt"
+# struo input "../site"
+# struo output "../build/site.tar.gz"
 # struo cwd ".."
 
 set -eu
 mkdir -p build
-cp message.txt build/greeting.txt
-cat build/greeting.txt
+tar -czf build/site.tar.gz -C site .
+tar -tzf build/site.tar.gz
 ```
 
 The `struo` headers form the cache contract:
@@ -37,28 +38,29 @@ stable when the repository moves.
 Make the script executable, create its input, and run it:
 
 ```sh
-chmod +x scripts/greet.sh
-printf 'hello from Struo\n' > message.txt
-./scripts/greet.sh
+chmod +x scripts/package-site.sh
+mkdir -p site
+printf '<h1>Welcome</h1>\n' > site/index.html
+./scripts/package-site.sh
 ```
 
 The first run executes the script and reports a cache miss. Run the same command
 again:
 
 ```sh
-./scripts/greet.sh
+./scripts/package-site.sh
 ```
 
-The second run reports a cache hit and restores `build/greeting.txt` from the
-recorded result. If `message.txt` changes, the input digest changes and the
-script runs again.
+The second run reports a cache hit and restores `build/site.tar.gz` from the
+recorded result. If any file under `site/` changes, the input digest changes
+and the script runs again.
 
 ## Inspect the contract
 
 Inspect the parsed contract before execution:
 
 ```sh
-struo query script scripts/greet.sh
+struo query script scripts/package-site.sh
 ```
 
 Coding agents can do the same through the MCP server: `struo_validate_script`

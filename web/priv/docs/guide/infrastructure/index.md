@@ -98,7 +98,7 @@ The local cache stays available after you configure a shared cache. Set
 `STRUO_CACHE_PROVIDER=local` to skip the shared cache for one command:
 
 ```sh
-STRUO_CACHE_PROVIDER=local ./scripts/greet.sh
+STRUO_CACHE_PROVIDER=local ./scripts/package-site.sh
 ```
 
 For execution, omit `--remote` to run on the current computer, or pass

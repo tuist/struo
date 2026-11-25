@@ -8,13 +8,13 @@ evidence describes what happened when Struo requested a result.
 
 ## Run and query an action
 
-This walkthrough uses `scripts/greet.sh` from the
+This walkthrough uses `scripts/package-site.sh` from the
 [scripted workflow guide](/guide/scripted/). Give it a new input value so the
 first run computes a result:
 
 ```sh
-printf 'evidence %s\n' "$(date +%s)" > message.txt
-STRUO_CACHE_PROVIDER=local ./scripts/greet.sh
+printf '<p>evidence %s</p>\n' "$(date +%s)" > site/index.html
+STRUO_CACHE_PROVIDER=local ./scripts/package-site.sh
 ```
 
 Now inspect the newest record. The example uses
@@ -30,7 +30,7 @@ The record reports `passed` and `miss`. Run the unchanged script again and
 repeat the query:
 
 ```sh
-STRUO_CACHE_PROVIDER=local ./scripts/greet.sh
+STRUO_CACHE_PROVIDER=local ./scripts/package-site.sh
 struo --format json query evidence \
   | jq '.[-1] | {subject, status, cache, action_digest, input_digest}'
 ```
@@ -41,8 +41,8 @@ shows that Struo restored the previously computed result.
 Change the declared input, run again, and compare the two newest records:
 
 ```sh
-printf 'evidence changed %s\n' "$(date +%s)" > message.txt
-STRUO_CACHE_PROVIDER=local ./scripts/greet.sh
+printf '<p>evidence changed %s</p>\n' "$(date +%s)" > site/index.html
+STRUO_CACHE_PROVIDER=local ./scripts/package-site.sh
 struo --format json query evidence \
   | jq '.[-2:] | map({status, cache, action_digest, input_digest})'
 ```

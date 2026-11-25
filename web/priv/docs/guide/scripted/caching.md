@@ -154,11 +154,11 @@ The script file itself is always part of the cache key, even when it has no
 ## Check repeated execution
 
 A second cache hit checks cache reuse, not whether executing the command again
-produces the same result. To compare fresh executions of the greeting script
+produces the same result. To compare fresh executions of the site packaging script
 from [the first scripted workflow](/guide/scripted/), run:
 
 ```sh
-struo exec --verify-reproducible --script -- bash scripts/greet.sh
+struo exec --verify-reproducible --script -- bash scripts/package-site.sh
 ```
 
 Struo snapshots the whole workspace, then runs two trials from that same
