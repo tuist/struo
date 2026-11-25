@@ -7,9 +7,18 @@ prepared snapshot, then deletes it.
 Struo stages declared inputs, runs your command, retrieves declared outputs
 after an accepted exit, and deletes the sandbox.
 
-**Capabilities:** remote execution. Configure shared caching separately. Local
-protocol tests cover this provider; live execution, account availability and
-teardown are unverified.
+## Capabilities
+
+| Capability | Support |
+| --- | --- |
+| Shared cache | No; use a [cache provider](/guide/infrastructure/#available-providers) |
+| Remote execution | Hosted sandboxes from a snapshot |
+| Artifact publication | No |
+| Project setup | Manual [configuration](#configuration) |
+| Authentication | [API key and workspace ID](#authentication) |
+
+Local protocol tests cover this provider; live execution, account availability
+and teardown are unverified.
 
 ## Prerequisites
 

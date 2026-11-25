@@ -78,8 +78,9 @@ the cache to work.
 If you also support `struo connect`, implement session detection, project
 listing and creation, and useful permission and conflict errors. The current
 provisioner and login dispatch support Tuist only; another provider needs its
-own integration, not a copy of Tuist's HTTP routes. See
-[Connect a Project](/guide/infrastructure/connect).
+own integration, not a copy of Tuist's HTTP routes. See how the
+[Tuist guide](/guide/infrastructure/tuist#create-and-connect-a-project)
+documents it.
 
 ## Validate a cache without a local false positive
 

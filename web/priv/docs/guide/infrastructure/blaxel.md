@@ -7,9 +7,18 @@ deletes it afterwards.
 Struo uploads declared inputs, executes the command, retrieves declared outputs
 after an accepted exit code, and permanently deletes the sandbox.
 
-**Capabilities:** remote execution. Configure shared caching separately. Local
-protocol tests cover this provider; live account access, execution and teardown
-are unverified.
+## Capabilities
+
+| Capability | Support |
+| --- | --- |
+| Shared cache | No; use a [cache provider](/guide/infrastructure/#available-providers) |
+| Remote execution | Hosted sandboxes from an image |
+| Artifact publication | No |
+| Project setup | Manual [configuration](#configuration) |
+| Authentication | `BL_API_KEY` and `BL_WORKSPACE` |
+
+Local protocol tests cover this provider; live account access, execution and
+teardown are unverified.
 
 ## Prerequisites
 

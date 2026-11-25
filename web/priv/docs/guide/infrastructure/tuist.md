@@ -6,8 +6,17 @@ workers, live run reporting, and artifact publication with application previews.
 Configure each capability independently. For CI orchestration, see
 [Triggers](/guide/infrastructure/triggers).
 
-**Capabilities:** shared caching, remote execution when enabled for your account,
-live reporting, and artifact publication with supported application previews.
+## Capabilities
+
+| Capability | Support |
+| --- | --- |
+| Shared cache | Yes |
+| Remote execution | Linux AMD64 workers, when enabled |
+| Artifact publication | Yes, with application previews |
+| Live run reporting | Yes |
+| Test selection and sharding | [Selection](/guide/graph/testing#coverage-assisted-selection) and [sharding](/guide/graph/testing#distribute-tests-through-tuist) |
+| Project setup | [`struo connect`](#create-and-connect-a-project) |
+| Authentication | [`struo auth login` or `TUIST_TOKEN`](#authentication) |
 
 ## Prerequisites
 
@@ -19,20 +28,47 @@ access to the same project you use for caching. Workers run Linux on AMD64.
 
 ### Create and connect a project
 
-Provision a Tuist project and bind this repository to it in one command:
+Create a Tuist project and bind this repository to it in one command:
 
 ```sh
 struo connect --provider tuist --create
 ```
 
-Struo signs you in when needed, creates the project under your personal account,
-and writes the provider binding into the repository root `struo.toml`. Read
-[Connect a Project](/guide/infrastructure/connect) for account and project
-selection. The result is the same configuration described below.
+The command signs you in when needed, creates a project named after your
+workspace directory under your personal account, and writes the provider and
+cache binding described in [Configure the cache](#configure-the-cache) into the
+repository root `struo.toml`. Commit the file so teammates and CI use the same
+project. It holds no credentials: each machine still
+[authenticates](#authentication) before it can read or write the shared cache.
+
+Pass the account and project explicitly when the workspace directory name is not
+the project handle you want, or when the project should belong to an
+organization:
+
+```sh
+struo connect --provider tuist --create --account acme --project app
+```
+
+Leave out `--create` to bind a project that already exists. With no account or
+project, Struo lists the projects your session can see; it binds automatically
+when there is exactly one and asks you to choose when there are several:
+
+```sh
+struo connect --provider tuist --account acme --project app
+```
+
+Add `--dry-run` to print the binding without creating a project, signing in, or
+writing anything. A dry run with `--create` needs an explicit `--account`,
+since the account is otherwise only known once the project exists. Pass
+`--format json` for a machine-readable result. Re-running the same command is
+safe: when the workspace already has a matching binding, Struo reports that it
+is connected without rewriting the file or creating a second project. See the
+[`struo connect` reference](/reference/cli/connect) for every option.
 
 ### Configure the cache
 
-Add a Tuist provider and cache binding to the repository root `struo.toml`:
+To bind the project by hand instead, add a Tuist provider and cache binding to
+the repository root `struo.toml`:
 
 ```toml
 [infrastructures.tuist]

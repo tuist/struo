@@ -51,6 +51,7 @@ defmodule StruoSiteWeb.Router do
     get "/blog/:slug", BlogController, :show
 
     get "/docs-markdown/*path", DocsMarkdownController, :show
+    get "/docs/guide/infrastructure/connect", PageController, :moved
   end
 
   scope "/", StruoSiteWeb do

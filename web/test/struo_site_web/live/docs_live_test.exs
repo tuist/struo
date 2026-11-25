@@ -75,10 +75,25 @@ defmodule StruoSiteWeb.DocsLiveTest do
     for provider <- providers.items do
       {:ok, view, _html} = live(conn, provider.slug)
       assert has_element?(view, "article h1")
-      assert has_element?(view, "article strong", "Capabilities:")
 
-      for heading <- ["Prerequisites", "Configuration", "Usage", "Limits and cleanup"] do
+      for heading <- [
+            "Capabilities",
+            "Prerequisites",
+            "Configuration",
+            "Usage",
+            "Limits and cleanup"
+          ] do
         assert has_element?(view, "article h2", heading)
+      end
+
+      for capability <- [
+            "Shared cache",
+            "Remote execution",
+            "Artifact publication",
+            "Project setup",
+            "Authentication"
+          ] do
+        assert has_element?(view, "article table td", capability)
       end
 
       assert has_element?(view, "#docs-sidebar a[href='#{provider.slug}'][data-selected]")

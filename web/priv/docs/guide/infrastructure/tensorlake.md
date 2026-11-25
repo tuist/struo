@@ -7,7 +7,16 @@ sandbox, then terminates it.
 Struo stages declared inputs, runs the command, retrieves declared outputs after
 an accepted exit, and terminates the sandbox.
 
-**Capabilities:** remote execution. Configure shared caching separately.
+## Capabilities
+
+| Capability | Support |
+| --- | --- |
+| Shared cache | No; use a [cache provider](/guide/infrastructure/#available-providers) |
+| Remote execution | Hosted sandboxes from a registered image or snapshot |
+| Artifact publication | No |
+| Project setup | Manual [configuration](#configuration) |
+| Authentication | `TENSORLAKE_API_KEY` |
+
 Transport and failure tests cover this provider; live provisioning and
 account-specific retention behavior are unverified.
 

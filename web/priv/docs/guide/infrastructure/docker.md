@@ -7,8 +7,15 @@ With `struo build --remote`, Struo schedules ready actions independently,
 transfers their declared inputs into containers, and collects their declared
 outputs. Dependencies still determine when each action can start.
 
-**Capabilities:** local container execution through Struo's remote-execution
-interface. Docker does not provide shared caching; configure it separately.
+## Capabilities
+
+| Capability | Support |
+| --- | --- |
+| Shared cache | No; use a [cache provider](/guide/infrastructure/#available-providers) |
+| Remote execution | Local containers |
+| Artifact publication | No |
+| Project setup | Manual [configuration](#configuration) |
+| Authentication | Access to the local Docker daemon |
 
 ## Prerequisites
 

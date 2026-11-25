@@ -7,37 +7,30 @@ Each capability is configured independently in the repository root
 `struo.toml`. A repository can store results in one provider, run actions in
 another, or use only one of them.
 
-## Connect a project
-
-The shortest path to a shared cache creates a project with a provider and binds
-this repository to it:
-
-```sh
-struo connect --provider tuist --create
-```
-
-Struo signs you in when needed, creates the project, and records the binding in
-the root `struo.toml`. Read [Connect a Project](/guide/infrastructure/connect)
-for account selection, binding an existing project, and previewing the write.
+Each provider guide starts with a Capabilities table listing what the provider
+supports, how you set it up, and how it authenticates.
 
 ## Share results across machines
 
 A cache provider lets another developer, CI runner, or coding agent reuse an
-action result instead of running it again:
+action result instead of running it again. Name the provider and select it in
+the root `struo.toml`:
 
 ```toml
-[infrastructures.tuist]
-kind = "tuist"
-account = "acme"
-project = "app"
+[infrastructures.build_cache]
+kind = "http_cache"
+url = "https://cache.example.com"
+token_env = "BUILD_CACHE_TOKEN"
 
 [infrastructure.cache]
-provider = "tuist"
+provider = "build_cache"
 ```
 
-To use storage you already run, configure a
+Pick a provider that offers a shared cache from the
+[provider list](#available-providers): a
 [bucket](/guide/infrastructure/object-storage) or an
-[HTTP build cache](/guide/infrastructure/http-cache) instead.
+[HTTP build cache](/guide/infrastructure/http-cache) you already run, or a
+hosted service such as [Tuist](/guide/infrastructure/tuist).
 
 ## Run actions on another machine
 
@@ -114,8 +107,8 @@ provider for one invocation.
 
 ## Next steps
 
-- [Connect a Project](/guide/infrastructure/connect), to bind this repository
-  to a shared cache in one command.
+- [Available providers](#available-providers), to choose a shared cache or
+  execution environment and follow its guide.
 - [Remote Execution](/guide/infrastructure/remote-execution), to run scripts and
   graph actions in fresh environments.
 - [Become an Infrastructure Provider](/guide/infrastructure/providers), if you

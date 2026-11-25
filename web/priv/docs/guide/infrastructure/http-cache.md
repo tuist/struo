@@ -7,7 +7,16 @@ Every machine keeps its local cache, consults the server on a local miss, and
 publishes new results to it. Use a managed build cache your CI runners already
 reach, or a cache server you run yourself.
 
-**Capabilities:** shared caching. This provider does not execute actions.
+## Capabilities
+
+| Capability | Support |
+| --- | --- |
+| Shared cache | Yes |
+| Remote execution | No; use an [execution provider](/guide/infrastructure/#available-providers) |
+| Artifact publication | No |
+| Project setup | Manual [configuration](#configuration) |
+| Authentication | [Bearer or basic credentials](#authentication) |
+
 Automated checks cover local HTTP servers; hosted caches are unverified.
 
 ## Prerequisites

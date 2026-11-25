@@ -33,4 +33,11 @@ defmodule StruoSiteWeb.PageControllerTest do
     refute graph["BlogPosting"]
     assert response =~ ~s(<meta name="author" content="Tuist">)
   end
+
+  test "permanently redirects the removed Connect a Project guide", %{conn: conn} do
+    conn = get(conn, "/docs/guide/infrastructure/connect")
+
+    assert redirected_to(conn, 301) ==
+             "/docs/guide/infrastructure/tuist#create-and-connect-a-project"
+  end
 end

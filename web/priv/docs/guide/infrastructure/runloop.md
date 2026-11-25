@@ -7,9 +7,18 @@ your Blueprint, then shuts it down.
 Struo uploads declared inputs, runs the command, retrieves declared outputs
 after an accepted exit code, and shuts down the Devbox.
 
-**Capabilities:** remote execution. Configure shared caching separately. Local
-protocol tests cover this provider; live account access, execution and teardown
-are unverified.
+## Capabilities
+
+| Capability | Support |
+| --- | --- |
+| Shared cache | No; use a [cache provider](/guide/infrastructure/#available-providers) |
+| Remote execution | Hosted Devboxes from a Blueprint |
+| Artifact publication | No |
+| Project setup | Manual [configuration](#configuration) |
+| Authentication | `RUNLOOP_API_KEY` |
+
+Local protocol tests cover this provider; live account access, execution and
+teardown are unverified.
 
 ## Prerequisites
 

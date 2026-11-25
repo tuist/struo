@@ -7,7 +7,15 @@ image, then deletes it.
 Struo transfers declared inputs, runs the command, retrieves declared outputs,
 and deletes the sandbox.
 
-**Capabilities:** remote execution. Configure shared caching separately.
+## Capabilities
+
+| Capability | Support |
+| --- | --- |
+| Shared cache | No; use a [cache provider](/guide/infrastructure/#available-providers) |
+| Remote execution | Hosted sandboxes from a container image |
+| Artifact publication | No |
+| Project setup | Manual [configuration](#configuration) |
+| Authentication | `DAYTONA_API_KEY` |
 
 ## Prerequisites
 

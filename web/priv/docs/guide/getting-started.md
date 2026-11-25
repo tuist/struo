@@ -161,8 +161,7 @@ prerequisites, native dependency behavior, and limitations.
   with minimal changes.
 - [Typed Graph guide](/guide/graph/): add typed targets, dependencies, and
   capabilities that Struo and coding agents can query.
-- [Connect a project](/guide/infrastructure/connect): share cache entries with
-  your team, or see [Infrastructure](/guide/infrastructure/) to run actions on
-  another machine.
+- [Infrastructure](/guide/infrastructure/): share cache entries with your team
+  or run actions on another machine.
 - [Software development kits](/guide/sdk/): give application code direct
   access to Struo cache primitives.

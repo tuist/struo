@@ -7,7 +7,16 @@ Every machine keeps its local cache, consults the bucket on a local miss, and
 publishes new results to it. Use it for teams and CI fleets that already have a
 bucket, for a self-hosted cache, or to try shared caching without an account.
 
-**Capabilities:** shared caching. This provider does not execute actions.
+## Capabilities
+
+| Capability | Support |
+| --- | --- |
+| Shared cache | Yes |
+| Remote execution | No; use an [execution provider](/guide/infrastructure/#available-providers) |
+| Artifact publication | No |
+| Project setup | Manual [configuration](#configuration) |
+| Authentication | Each cloud's [credential chain](#authentication) |
+
 Automated checks use local emulators; live cloud services are unverified.
 
 ## Prerequisites

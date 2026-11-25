@@ -7,7 +7,15 @@ afterwards.
 Struo transfers declared inputs, runs the command, retrieves declared outputs,
 and deletes the sandbox.
 
-**Capabilities:** remote execution. Configure shared caching separately.
+## Capabilities
+
+| Capability | Support |
+| --- | --- |
+| Shared cache | No; use a [cache provider](/guide/infrastructure/#available-providers) |
+| Remote execution | Hosted sandboxes from a template |
+| Artifact publication | No |
+| Project setup | Manual [configuration](#configuration) |
+| Authentication | `E2B_API_KEY` |
 
 ## Prerequisites
 

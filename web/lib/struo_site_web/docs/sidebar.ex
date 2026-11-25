@@ -194,7 +194,6 @@ defmodule StruoSiteWeb.Docs.Sidebar do
         label: "Infrastructure",
         slug: "/docs/guide/infrastructure",
         items: [
-          %Item{label: "Connect a Project", slug: "/docs/guide/infrastructure/connect"},
           %Item{label: "Remote Execution", slug: "/docs/guide/infrastructure/remote-execution"},
           %Item{label: "Artifacts", slug: "/docs/guide/infrastructure/artifacts"},
           %Item{label: "Triggers (Experimental)", slug: "/docs/guide/infrastructure/triggers"},

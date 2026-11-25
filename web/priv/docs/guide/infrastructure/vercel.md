@@ -7,7 +7,15 @@ then deletes it.
 Struo uploads declared inputs, runs the command, restores declared outputs
 after an accepted exit code, and deletes the sandbox.
 
-**Capabilities:** remote execution. Configure shared caching separately.
+## Capabilities
+
+| Capability | Support |
+| --- | --- |
+| Shared cache | No; use a [cache provider](/guide/infrastructure/#available-providers) |
+| Remote execution | Hosted sandboxes on a Vercel runtime |
+| Artifact publication | No |
+| Project setup | Manual [configuration](#configuration) |
+| Authentication | `VERCEL_TOKEN` |
 
 ## Prerequisites
 

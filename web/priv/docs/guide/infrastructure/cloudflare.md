@@ -3,10 +3,19 @@
 Run Struo actions remotely in [Cloudflare Sandbox Containers](https://developers.cloudflare.com/sandbox/)
 through an authenticated Worker bridge that you deploy in your own account.
 
-**Capabilities:** remote execution through a self-deployed bridge. Configure
-shared caching separately, including when using Cloudflare R2 object storage.
-Regression tests cover the bridge and adapter; live account behavior is
-unverified.
+## Capabilities
+
+| Capability | Support |
+| --- | --- |
+| Shared cache | No; use a [cache provider](/guide/infrastructure/#available-providers) |
+| Remote execution | Containers behind a Worker bridge you deploy |
+| Artifact publication | No |
+| Project setup | Manual [configuration](#configuration) |
+| Authentication | `STRUO_CLOUDFLARE_BRIDGE_TOKEN` |
+
+Cloudflare R2 does not make this a cache provider; bind it separately through
+[object storage](/guide/infrastructure/object-storage). Regression tests cover
+the bridge and adapter; live account behavior is unverified.
 
 ## Prerequisites
 

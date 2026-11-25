@@ -7,8 +7,15 @@ with the same contract as hosted providers.
 It is useful for validating declared inputs and outputs locally before moving
 to a hosted executor such as E2B or Daytona.
 
-**Capabilities:** local micro-VM execution through Struo's remote-execution
-interface. Configure shared caching separately.
+## Capabilities
+
+| Capability | Support |
+| --- | --- |
+| Shared cache | No; use a [cache provider](/guide/infrastructure/#available-providers) |
+| Remote execution | Local micro-VMs |
+| Artifact publication | No |
+| Project setup | Manual [configuration](#configuration) |
+| Authentication | None |
 
 ## Prerequisites
 

@@ -7,7 +7,15 @@ it.
 Struo uploads declared inputs, runs the command, retrieves declared outputs,
 and deletes the Sprite.
 
-**Capabilities:** remote execution. Configure shared caching separately.
+## Capabilities
+
+| Capability | Support |
+| --- | --- |
+| Shared cache | No; use a [cache provider](/guide/infrastructure/#available-providers) |
+| Remote execution | Disposable Fly.io Linux environments |
+| Artifact publication | No |
+| Project setup | Manual [configuration](#configuration) |
+| Authentication | `SPRITES_TOKEN` |
 
 ## Prerequisites
 

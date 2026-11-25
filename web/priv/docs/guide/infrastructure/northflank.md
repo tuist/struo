@@ -7,7 +7,15 @@ Northflank service, then deletes it.
 Struo uploads declared inputs, captures stdout and stderr, retrieves declared
 outputs after an accepted exit code, and deletes the service.
 
-**Capabilities:** remote execution. Configure shared caching separately.
+## Capabilities
+
+| Capability | Support |
+| --- | --- |
+| Shared cache | No; use a [cache provider](/guide/infrastructure/#available-providers) |
+| Remote execution | Service-backed sandboxes from an image |
+| Artifact publication | No |
+| Project setup | Manual [configuration](#configuration) |
+| Authentication | `NORTHFLANK_TOKEN` |
 
 ## Prerequisites
 

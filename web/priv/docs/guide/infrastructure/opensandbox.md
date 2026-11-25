@@ -7,9 +7,18 @@ sandbox, then deletes it.
 Struo uploads declared inputs, runs the command, retrieves declared outputs,
 and deletes the sandbox.
 
-**Capabilities:** remote execution through a self-hosted service. Configure
-shared caching separately. Local protocol tests do not establish compatibility
-with a particular deployment.
+## Capabilities
+
+| Capability | Support |
+| --- | --- |
+| Shared cache | No; use a [cache provider](/guide/infrastructure/#available-providers) |
+| Remote execution | Your self-hosted OpenSandbox service |
+| Artifact publication | No |
+| Project setup | Manual [configuration](#configuration) |
+| Authentication | [Service URL and API key](#authentication) |
+
+Local protocol tests do not establish compatibility with a particular
+deployment.
 
 ## Prerequisites
 

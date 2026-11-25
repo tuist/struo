@@ -10,6 +10,7 @@ This is a Phoenix application that serves the Struo marketing site and the docum
 ## Infrastructure Providers
 
 - Ship each new provider with its guide and an entry in the Infrastructure Providers sidebar: Tuist first, then the other providers in alphabetical order. Follow the guide's Capabilities, Prerequisites, Configuration, Usage, and Limits and cleanup structure; distinguish execution from cache support and unverified live behavior.
+- Start each provider guide's Capabilities section with a table covering at least shared cache, remote execution, artifact publication, project setup, and authentication. Provider-specific flows such as `struo connect` belong in that provider's guide, not in provider-neutral pages.
 - Give a provider's sidebar entry no icon, and do not vendor its official logo or favicon. Sidebar icons are single-color Noora or Tabler outline icons, and a provider gets one only when an icon in that style has been designed for it.
 
 ## Changelog
