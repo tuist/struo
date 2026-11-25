@@ -1,0 +1,80 @@
+<!doctype html>
+<!--
+  Struo infrastructure provider card for X (2000×1124, 16:9): the Struo mark and
+  the provider's logo, joined, over "struo × <provider>", under scanlines. Colors and radii
+  come from Noora's tokens in dark mode; Struo keeps its Geist Mono font, spiral
+  mark and struo.run orange. See ../AGENTS.md and AGENTS.md.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../.cache/noora-tokens.css">
+<style>
+  @font-face { font-family: "Geist Mono"; src: url("../../web/priv/static/fonts/GeistMono-latin.woff2") format("woff2"); font-weight: 100 900; }
+  :root {
+    color-scheme: dark;
+    --struo-brand: oklch(0.665 0.181 48); /* struo.run link orange */
+    --bg: var(--noora-surface-background-primary);
+    --border: var(--noora-surface-border-primary);
+    --label: var(--noora-surface-label-primary);
+    --label-2: var(--noora-surface-label-secondary);
+    --label-3: var(--noora-surface-label-tertiary);
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1000px; height: 562px; overflow: hidden; }
+  body {
+    position: relative; background: var(--bg); color: var(--label);
+    font-family: "Geist Mono", ui-monospace, monospace;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 48px;
+  }
+  /* Scanlines over the whole card, the same 3px pitch as the docs and blog
+     OG images (web/lib/struo_site_web/docs/og_image.ex) at 2x. */
+  body::after {
+    content: ""; position: absolute; inset: 0; z-index: 1;
+    background: repeating-linear-gradient(to bottom, transparent 0 1.5px, oklch(0% 0 0 / 0.16) 1.5px 3px);
+  }
+
+  .pair { position: relative; display: flex; justify-content: center; align-items: center; }
+  .tile {
+    width: 156px; height: 156px; border-radius: 36px; display: grid; place-items: center;
+    background: var(--noora-surface-background-primary);
+    border: 1px solid color-mix(in oklch, var(--label) 16%, transparent);
+    box-shadow: 0 1px 0 color-mix(in oklch, var(--label) 18%, transparent) inset, 0 24px 60px -18px #000;
+  }
+  .tile img { width: 86px; height: 86px; object-fit: contain; }
+  /* Single-color marks are painted white; CSS masks don't load over file://. */
+  .tile img.mono { width: 76px; height: 76px; filter: brightness(0) invert(0.97); }
+  .tile.struo { border-color: color-mix(in oklch, var(--struo-brand) 45%, transparent); }
+  .link { position: relative; width: 180px; height: 2px; background: linear-gradient(90deg, var(--struo-brand), color-mix(in oklch, var(--label) 45%, transparent)); }
+  .link::before, .link::after { content: ""; position: absolute; top: -3px; width: 8px; height: 8px; border-radius: 99px; }
+  .link::before { left: -4px; background: var(--struo-brand); }
+  .link::after { right: -4px; background: var(--label-2); }
+  .link .x {
+    position: absolute; left: 50%; top: 50%; translate: -50% -50%; width: 36px; height: 36px; border-radius: 99px;
+    display: grid; place-items: center; font-size: 17px; color: var(--label); background: var(--bg);
+    border: 1px solid var(--border);
+  }
+
+  h1 { position: relative; font-size: 56px; font-weight: 600; letter-spacing: -0.04em; line-height: 1.05; }
+  h1 span { color: var(--label-3); font-weight: 400; }
+  h1 b { font-weight: inherit; }
+</style>
+</head>
+<body>
+<div class="pair">
+  <div class="tile struo"><img src="../../web/priv/static/images/struo-mark.webp" alt=""></div>
+  <div class="link"><span class="x">×</span></div>
+  <div class="tile" id="provider-tile"></div>
+</div>
+<h1>struo <span>×</span> <b id="provider"></b></h1>
+<script>
+  // ../render.sh injects window.CARD from the JSON file.
+  const d = window.CARD;
+  document.getElementById("provider").textContent = d.provider;
+  const img = document.createElement("img");
+  img.src = d.logo; img.alt = "";
+  if (d.logo_mode === "mono") img.className = "mono";
+  document.getElementById("provider-tile").append(img);
+</script>
+</body>
+</html>

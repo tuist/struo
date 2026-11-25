@@ -1,0 +1,19 @@
+{
+  "version": "2.17.2",
+  "date": "November 24, 2026",
+  "category": "CLI",
+  "highlights": [
+    [
+      "Remote sandboxes",
+      "11 new providers, from Vercel to Fly.io"
+    ],
+    [
+      "Your own cache",
+      "S3, GCS, Azure buckets or any HTTP cache"
+    ],
+    [
+      "Fewer tests",
+      "opt-in coverage-based selection with Tuist"
+    ]
+  ]
+}

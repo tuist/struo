@@ -1,0 +1,74 @@
+<!doctype html>
+<!--
+  Struo release card for X (2000×1125, 16:9).
+  Layout follows the Tuist release cards on @tuistdev; colors and radii come from
+  Noora's tokens in dark mode, with Struo's Geist Mono font and spiral mark.
+  See ../AGENTS.md and AGENTS.md.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../.cache/noora-tokens.css">
+<style>
+  @font-face { font-family: "Geist Mono"; src: url("../../web/priv/static/fonts/GeistMono-latin.woff2") format("woff2"); font-weight: 100 900; }
+  :root {
+    color-scheme: dark;
+    --struo-brand: oklch(0.665 0.181 48); /* struo.run link orange */
+    --bg: var(--noora-surface-background-primary);
+    --border: var(--noora-surface-border-primary);
+    --label: var(--noora-surface-label-primary);
+    --label-2: var(--noora-surface-label-secondary);
+    --label-3: var(--noora-surface-label-tertiary);
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1000px; height: 562px; overflow: hidden; }
+  body { background: var(--bg); color: var(--label); font-family: "Geist Mono", ui-monospace, monospace; }
+  header { height: 52px; padding: 0 60px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); }
+  .brand { display: flex; align-items: center; gap: 9px; font-size: 21px; font-weight: 500; letter-spacing: -0.02em; }
+  .brand img { width: 22px; height: 22px; }
+  .crumbs { font-size: 12.5px; color: var(--label-3); }
+  main { margin: 16px 60px 0; height: 494px; display: grid; grid-template-columns: 186px 1fr; }
+  aside { border-right: 1px solid var(--border); padding: 50px 24px 0 0; text-align: right; position: relative; }
+  aside .date { font-size: 12px; color: var(--label-3); }
+  aside .dot { position: absolute; right: -5px; top: 53px; width: 9px; height: 9px; border-radius: 99px; background: var(--struo-brand); }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 3px 8px; border-radius: var(--noora-radius-3); border: 1px solid var(--border); color: var(--label-2); }
+  aside .chip { margin-top: 10px; }
+  section { padding: 36px 36px 0 34px; }
+  h1 { font-size: 64px; font-weight: 600; letter-spacing: -0.05em; line-height: 1; }
+  h1 span { color: var(--label-3); font-weight: 400; }
+  .rows { margin-top: 30px; }
+  .rows > div { display: grid; grid-template-columns: 228px 1fr; align-items: center; height: 46px; border-top: 1px solid var(--border); font-size: 15px; }
+  .rows > div:last-child { border-bottom: 1px solid var(--border); }
+  .rows dt { font-weight: 600; }
+  .rows dd { color: var(--label-2); font-size: 13px; }
+  .code { margin-top: 22px; border: 1px solid var(--border); border-radius: var(--noora-radius-4); overflow: hidden; }
+  .code .title { font-size: 11.5px; color: var(--label-3); padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  .code pre { font: inherit; font-size: 14px; padding: 13px 12px; background: var(--bg); }
+  .code .p { color: var(--label-3); }
+  .code .v { color: var(--struo-brand); }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><img src="../../web/priv/static/images/struo-mark.webp" alt="">struo</div>
+  <div class="crumbs">Changelog</div>
+</header>
+<main>
+  <aside><div class="date" id="date"></div><span class="dot"></span><span class="chip" id="category"></span></aside>
+  <section>
+    <h1>struo <span id="version"></span></h1>
+    <dl class="rows" id="rows"></dl>
+    <div class="code"><div class="title">terminal</div><pre><span class="p">$ </span>mise use -g github:tuist/struo@<span class="v" id="install"></span></pre></div>
+  </section>
+</main>
+<script>
+  // ../render.sh injects window.CARD from the JSON file.
+  const r = window.CARD;
+  const set = (id, text) => (document.getElementById(id).textContent = text);
+  set("date", r.date); set("category", r.category);
+  set("version", r.version); set("install", r.version);
+  document.getElementById("rows").innerHTML = r.highlights
+    .map(([t, d]) => `<div><dt>${t}</dt><dd>${d}</dd></div>`).join("");
+</script>
+</body>
+</html>
