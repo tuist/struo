@@ -155,13 +155,13 @@ def _filter_by_extensions(paths, extensions):
                 break
     return out
 
-def _file_globs(patterns):
+def _file_globs(patterns, exclude = []):
     expanded = []
     for pattern in patterns:
         expanded.append(pattern)
         if _ends_with(pattern, "/**"):
             expanded.append(pattern + "/*")
-    return glob(expanded)
+    return glob(expanded, exclude = exclude)
 
 def _package_relative(ctx, path):
     if not path:

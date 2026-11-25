@@ -257,6 +257,56 @@ fn default_selection_resolves_reported_test_names_inside_the_seed_package() {
     assert_eq!(report.tests[0].id, "packages/tool/ToolTests");
 }
 
+#[test]
+fn root_package_owns_its_tree_except_the_paths_it_excludes() {
+    let workspace = TempDir::new().unwrap();
+    let mut root_library = target("app", "library", &["./**/*"], &["util"], false);
+    root_library.attrs.insert(
+        "srcs_exclude".to_string(),
+        AttrValue::List(vec![
+            AttrValue::String("crates/util/**".to_string()),
+            AttrValue::String("target/**".to_string()),
+        ]),
+    );
+    let graph = vec![
+        target("util", "library", &["crates/util/**/*"], &[], false),
+        target("util_tests", "test", &["crates/util/**/*"], &["util"], true),
+        root_library,
+        target("app_tests", "test", &[], &["app"], true),
+    ];
+    let selected = |path: &str| {
+        let report = selection_report(workspace.path(), &graph, &[path.to_string()]).unwrap();
+        (
+            report
+                .tests
+                .iter()
+                .map(|test| test.id.clone())
+                .collect::<Vec<_>>(),
+            report.unmatched_paths,
+        )
+    };
+
+    assert_eq!(
+        selected("src/lib.rs"),
+        (vec!["app_tests".to_string()], vec![])
+    );
+    assert_eq!(
+        selected("docs/guide.md"),
+        (vec!["app_tests".to_string()], vec![])
+    );
+    assert_eq!(
+        selected("crates/util/src/lib.rs"),
+        (
+            vec!["util_tests".to_string(), "app_tests".to_string()],
+            vec![]
+        )
+    );
+    assert_eq!(
+        selected("target/debug/app").1,
+        vec!["target/debug/app".to_string()]
+    );
+}
+
 fn target(id: &str, kind: &str, srcs: &[&str], deps: &[&str], test: bool) -> GraphTarget {
     let (package, name) = id.rsplit_once('/').unwrap_or(("", id));
     GraphTarget {

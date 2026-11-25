@@ -18,6 +18,28 @@ mise exec -- struo --version
 Use `mise use github:tuist/struo@...` without `-g` when a repository should
 pin its own Struo version in `mise.toml`.
 
+### Build From Source
+
+Building from source is how you try unreleased changes, such as when testing
+Struo on your own project to find gaps. It needs Rust 1.99.0, the version the
+repository pins in `mise.toml`, and on Linux `pkg-config` plus the development
+files for `libcap-ng` and ALSA:
+
+```sh
+sudo apt-get update && sudo apt-get install -y pkg-config libcap-ng-dev libasound2-dev
+git clone https://github.com/tuist/struo.git
+cd struo
+mise trust
+mise install rust
+mise exec -- cargo build --locked --release --package struo-cli
+./target/release/struo --version
+```
+
+The binary lands at `target/release/struo`. A source build reports version
+`0.0.0`. The release build takes several minutes; on 4 vCPU it took about seven
+and a half. `libasound2` must also be present on any Linux machine that runs
+the resulting binary.
+
 The remaining examples assume that mise is active in your shell. If it is
 not, prefix each `struo` command with `mise exec --`.
 

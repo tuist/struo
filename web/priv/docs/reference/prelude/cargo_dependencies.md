@@ -10,6 +10,11 @@ Every resolved registry or Git package becomes a synthetic
 `rust_crate` or `rust_proc_macro` target. Normal dependencies remain `deps`,
 while packages needed by Cargo build scripts use the `build_deps` role.
 
+Each generated package is compiled with Cargo's `dev` profile from the root
+manifest and Cargo configuration, including `build-override`,
+`[profile.dev.package."*"]`, and per-package overrides, as
+[`cargo_workspace`](/reference/prelude/cargo_workspace) describes.
+
 The `cargo_dependencies` target does not compile those packages itself. It
 aggregates the providers from the generated target graph, so independent
 packages can compile concurrently and Cargo's dependency topology remains
@@ -56,6 +61,7 @@ package without synthetic target collisions.
 | `no_default_features` | bool | no | `false` | Pass `--no-default-features` to Cargo metadata |
 | `target` | string | no | host target | Rust target triple passed to Cargo as `--filter-platform` |
 | `dep_rustc_flags` | list&lt;string&gt; | no | `[]` | Additional rustc flags applied to resolved crate builds. Panic strategy flags are stripped for procedural macro and host-tool crates so they keep the compiler's unwind strategy |
+| `build_script_jobs` | int | no | `4` | `NUM_JOBS` for package build scripts that depend on `cc`, `cmake`, or `autotools`, reserved as CPU slots for their runs; other build scripts get one |
 | `build_script_tools` | list&lt;string&gt; | no | `cmake`, `nasm`, `perl`, `pkg-config`, `protoc`, `python3` | Host tool names package build scripts may invoke; each is resolved on the search path during graph loading |
 | `_cargo_resolved` | bool | resolver-owned | `false` | Marks an owner whose locked packages were expanded into graph targets |
 | `_cargo_workspace_deps` | map&lt;string, list&lt;string&gt;&gt; | resolver-owned | `{}` | Records generated direct dependency target names by workspace package |

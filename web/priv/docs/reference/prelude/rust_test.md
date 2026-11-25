@@ -78,6 +78,9 @@ isolated coverage.
 | `linker_script` | string | no | empty | Package-relative linker script passed to the linker and included in the compile action inputs |
 | `data` | list&lt;string&gt; | no | `[]` | Runtime data file globs available to the test runner and propagated from Rust dependencies |
 | `compile_data` | list&lt;string&gt; | no | `[]` | Bazel-compatible compile-time data file globs included in the rustc action inputs |
+| `srcs_exclude` | list&lt;string&gt; | no | `[]` | Package-relative globs removed from `srcs`, `compile_data`, and build-script inputs; changed paths that match one do not select this target's tests |
+| `build_script_data` | list&lt;string&gt; | no | `[]` | Package-relative globs of files outside `srcs` that the build script reads; a change reruns it |
+| `build_script_jobs` | int | no | `4` | `NUM_JOBS` passed to a build script that depends on `cc`, `cmake`, or `autotools`, reserved as CPU slots for its run; other build scripts get one |
 | `crate_aliases` | map&lt;string, string&gt; | no | `{}` | Map dependency label, package name, or crate name to the local extern crate name |
 | `aliases` | map&lt;string, string&gt; | no | `{}` | Bazel-compatible alias map from dependency label or crate name to local extern crate name |
 | `named_deps` | map&lt;string, string&gt; | no | `{}` | Buck-compatible alias map from local extern crate name to dependency label or crate name |

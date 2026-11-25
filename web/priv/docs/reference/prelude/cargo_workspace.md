@@ -30,6 +30,22 @@ matching what Cargo gives an integration test. Entries in the `[env]` table of
 Cargo configuration reach the compiler, the build scripts, the test processes,
 and `struo run`.
 
+Each package's sources are its directory without the local packages Cargo
+resolved inside it, its `target` directory, Cargo's configured target
+directory, and, for a package at the workspace root, `.git`. A crate inside the
+package that no manifest refers to, such as a test fixture, stays a source.
+
+Packages are compiled with Cargo's `dev` profile, and test targets with the
+`test` profile, read from the root manifest and Cargo configuration. Overrides
+apply as in Cargo: `build-override` for procedural macros and the crates built
+for the execution host, then `[profile.dev.package."*"]` for packages outside
+the workspace, then `[profile.dev.package.<name>]` and
+`[profile.dev.package."<name>@<version>"]`. The `opt-level`, `debug`,
+`debug-assertions`, `overflow-checks`, and `codegen-units` settings become
+compiler flags. Build scripts see the matching `OPT_LEVEL`, `DEBUG`, and
+`CARGO_CFG_DEBUG_ASSERTIONS`, and, as in Cargo, profile settings stay out of
+`CARGO_ENCODED_RUSTFLAGS`.
+
 Packages are compiled once for the execution host. A second, host-only build
 of a package appears only when it would differ: when `target` names something
 other than the host, or when `dep_rustc_flags` carries a panic strategy that
@@ -50,11 +66,13 @@ dependencies outside that list remain ordinary dependency targets.
 | `host_metadata_file` | string | no |  | Optional host metadata snapshot for cross-compilation |
 | `vendor_dir` | string | no | Struo-managed | Optional package-relative pre-vendored external sources |
 | `build_script_sources` | map&lt;string, map&lt;string, string&gt;&gt; | no | `{}` | External consumer selector to sibling destination to locked package source file; see [sibling sources](/guide/graph/rust/#build-scripts-that-read-sibling-packages) |
+| `build_script_data` | map&lt;string, list&lt;string&gt;&gt; | no | `{}` | Workspace package name to globs, relative to the Cargo workspace root, of files outside the package that its build script reads; see [build scripts that read files outside their package](/guide/graph/rust/#build-scripts-that-read-files-outside-their-package) |
 | `features` | list&lt;string&gt; | no | `[]` | Selected Cargo features |
 | `all_features` | bool | no | `false` | Select every Cargo feature |
 | `no_default_features` | bool | no | `false` | Disable default Cargo features |
 | `target` | string | no | host | Destination Rust target triple |
 | `dep_rustc_flags` | list&lt;string&gt; | no | `[]` | Additional flags for external packages |
+| `build_script_jobs` | int | no | `4` | `NUM_JOBS` for package build scripts that depend on `cc`, `cmake`, or `autotools`, reserved as CPU slots for their runs; other build scripts get one |
 | `build_script_tools` | list&lt;string&gt; | no | `cmake`, `nasm`, `perl`, `pkg-config`, `protoc`, `python3` | Host tool names package build scripts may invoke; each is resolved on the search path during graph loading |
 | `test_env` | map&lt;string, string&gt; | no | `{}` | Environment variables applied to generated tests after inherited variables |
 | `test_env_inherit` | list&lt;string&gt; | no | `[]` | Host environment variable names explicitly inherited by generated tests |

@@ -287,3 +287,34 @@ result = repr("ok")
     assert!(output.status.success(), "{compile:?}: {output:?}");
     assert_eq!(std::fs::read_to_string(&seen).unwrap(), expected);
 }
+
+#[test]
+fn only_native_build_scripts_reserve_extra_jobs() {
+    let source = format!(
+        r#"{prelude}
+def jobs(build_deps, attrs = {{}}):
+    attr = {{"build_script": "build.rs"}}
+    attr.update(attrs)
+    ctx = {{
+        "label": {{"package": "", "name": "app", "id": "app"}},
+        "attr": attr,
+        "deps_by_role": {{"build_deps": [{{"label_id": name, "package_name": name}} for name in build_deps]}},
+    }}
+    return _rust_build_script_jobs(ctx)
+result = repr([
+    jobs([]),
+    jobs(["serde", "version_check"]),
+    jobs(["cc"]),
+    jobs(["cmake"]),
+    jobs(["autotools"]),
+    jobs(["cc"], {{"build_script_jobs": 2}}),
+    jobs(["serde"], {{"build_script_jobs": 2}}),
+])
+"#,
+        prelude = all_prelude_source()
+    );
+    assert_eq!(
+        eval_prelude_source_to_repr(source).unwrap(),
+        "[1, 1, 4, 4, 4, 2, 1]"
+    );
+}

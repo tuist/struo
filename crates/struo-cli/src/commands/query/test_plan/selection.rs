@@ -50,12 +50,7 @@ pub(super) fn selection_report(
 
         let mut owners = target_patterns
             .iter()
-            .filter_map(|(target_id, patterns)| {
-                patterns
-                    .iter()
-                    .any(|pattern| pattern.matches(path))
-                    .then_some(target_id.as_str())
-            })
+            .filter_map(|(target_id, inputs)| inputs.matches(path).then_some(target_id.as_str()))
             .collect::<Vec<_>>();
         if owners.is_empty() {
             owners = nearest_package_owners(path, graph);

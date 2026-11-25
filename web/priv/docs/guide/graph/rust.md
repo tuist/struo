@@ -211,6 +211,44 @@ even on a warm build. These declarations do not change features, dependency
 aliases, or linking edges, and neither Cargo's source cache nor a vendor tree
 is modified.
 
+### Build scripts that read files outside their package
+
+A workspace member's build script sometimes reads files outside its package,
+such as protobuf definitions shared by several crates. Struo reruns a build
+script when its package changes, so declare those files on the seed, with
+paths relative to the Cargo workspace root:
+
+```toml
+[[target]]
+name = "cargo"
+kind = "cargo_workspace"
+
+[target.attrs]
+build_script_data = { "api-types" = ["proto/**"] }
+```
+
+A build script that prints `rerun-if-changed` for an undeclared path inside
+the workspace that is not one of its package's inputs fails and prints the
+`struo.toml` to add, so a change to that file cannot leave stale generated code
+in the cache. That includes `.git`, which is not an input of a package at the
+workspace root, and the directories of other local packages nested inside it.
+
+### Profiles and native build parallelism
+
+Struo reads Cargo's `dev` profile, and the `test` profile for test targets,
+including per-package overrides and `build-override`, and passes the
+optimization level, debug info, debug assertions, overflow checks, and codegen
+units to the compiler. A package built with `opt-level = 3` gets the same
+setting under Struo, and its build script sees `OPT_LEVEL=3`. Procedural macros
+stay unoptimized unless `build-override` or a per-package override says
+otherwise, as in Cargo.
+
+A build script that depends on `cc`, `cmake`, or `autotools` receives
+`NUM_JOBS=4`, which those crates use for parallel native compiles, and its run
+reserves four CPU slots. Other build scripts get one job and one slot. Set
+`build_script_jobs` on the seed to change the count, for example when remote
+workers have fewer CPUs.
+
 ## Choose how much configuration to own
 
 Native discovery, manifests, and Starlark modules are composable layers. A
@@ -518,8 +556,16 @@ requests.
 - Rust tests run only host-target executables. A cross-target test can be
   built, but running it needs a platform runner that the target kinds do not
   provide.
-- Build scripts track inputs for their whole package. Struo does not narrow
-  them using `rerun-if-changed` directives.
+- Build scripts track inputs for their whole package plus the files declared
+  in `build_script_data`. Struo does not narrow them using `rerun-if-changed`
+  directives.
+- Only the `dev` and `test` profiles are read. `--release` and custom
+  profiles, `panic`, `lto`, and `strip` settings are not applied.
+- A `debug` setting is applied only when a profile names it. Without one,
+  crates compile without debug info, while Cargo's `dev` profile includes it.
+- Build scripts themselves compile without profile settings, so
+  `build-override` reaches procedural macros and host crates but not the
+  build script binaries.
 - Compatibility attributes listed as unsupported in a target kind reference
   fail validation when set to a non-empty value.
 

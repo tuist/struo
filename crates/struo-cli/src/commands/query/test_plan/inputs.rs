@@ -3,33 +3,73 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use struo_core::WorkspacePath;
-use struo_frontend::GraphTarget;
+use struo_frontend::{AttrValue, GraphTarget};
 
 pub(super) fn target_input_patterns(
     workspace: &Path,
     graph: &[GraphTarget],
-) -> BTreeMap<String, Vec<InputPattern>> {
+) -> BTreeMap<String, TargetInputs> {
     let analyzer = struo_frontend::analysis::AnalysisEngine::for_workspace(workspace).ok();
     graph
         .iter()
         .map(|target| {
-            let mut patterns = target
-                .srcs
-                .iter()
-                .filter_map(|pattern| {
-                    InputPattern::package_relative(&target.label.package, pattern)
-                })
-                .collect::<Vec<_>>();
-            if let Some(provider) = metadata_provider(analyzer.as_ref(), workspace, target) {
-                patterns.extend(
+            let package_patterns = |patterns: &[String]| {
+                patterns
+                    .iter()
+                    .filter_map(|pattern| {
+                        InputPattern::package_relative(&target.label.package, pattern)
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let srcs_exclude = match target.attrs.get("srcs_exclude") {
+                Some(AttrValue::List(values)) => values
+                    .iter()
+                    .filter_map(AttrValue::as_str)
+                    .map(str::to_string)
+                    .collect(),
+                _ => Vec::new(),
+            };
+            let provider_inputs = metadata_provider(analyzer.as_ref(), workspace, target)
+                .map(|provider| {
                     provider_string_list(&provider, "affected_inputs")
                         .into_iter()
-                        .filter_map(|pattern| InputPattern::workspace_relative(&pattern)),
-                );
-            }
-            (target.label.id.clone(), patterns)
+                        .filter_map(|pattern| InputPattern::workspace_relative(&pattern))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let inputs = TargetInputs {
+                srcs: package_patterns(&target.srcs),
+                srcs_exclude: package_patterns(&srcs_exclude),
+                provider_inputs,
+            };
+            (target.label.id.clone(), inputs)
         })
         .collect()
+}
+
+/// The paths a target declares as its inputs: its `srcs` without the paths its
+/// `srcs_exclude` attribute removes, plus the `affected_inputs` its metadata
+/// provider reports.
+#[derive(Debug)]
+pub(super) struct TargetInputs {
+    srcs: Vec<InputPattern>,
+    srcs_exclude: Vec<InputPattern>,
+    provider_inputs: Vec<InputPattern>,
+}
+
+impl TargetInputs {
+    pub(super) fn matches(&self, path: &str) -> bool {
+        let in_srcs = self.srcs.iter().any(|pattern| pattern.matches(path))
+            && !self
+                .srcs_exclude
+                .iter()
+                .any(|pattern| pattern.matches(path));
+        in_srcs
+            || self
+                .provider_inputs
+                .iter()
+                .any(|pattern| pattern.matches(path))
+    }
 }
 
 pub(super) fn workspace_graph_input_patterns(workspace: &Path) -> Result<Vec<InputPattern>> {
@@ -70,6 +110,9 @@ pub(super) enum InputPattern {
 
 impl InputPattern {
     fn package_relative(package: &str, pattern: &str) -> Option<Self> {
+        // `./**/*` names the package directory itself, but `glob::Pattern`
+        // compares it literally, so it would never match `src/lib.rs`.
+        let pattern = pattern.trim_start_matches("./");
         let path = if package.is_empty() {
             pattern.to_string()
         } else {

@@ -28,6 +28,14 @@ impl WorkspaceStore {
             tokio::fs::create_dir_all(parent).await.with_context(|| {
                 format!("creating Struo state directory `{}`", parent.display())
             })?;
+            // The state directory is local cache, so keep it out of version
+            // control in projects that never mention Struo in their ignores.
+            let ignore = parent.join(".gitignore");
+            if !ignore.exists() {
+                tokio::fs::write(&ignore, "*\n").await.with_context(|| {
+                    format!("writing Struo state ignore file `{}`", ignore.display())
+                })?;
+            }
         }
         let mut options = ConnectOptions::new(sqlite_url(&self.path)?);
         // A build appends evidence as each target finishes, so a commit that
