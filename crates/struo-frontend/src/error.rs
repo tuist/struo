@@ -114,6 +114,8 @@ pub enum ManifestSchemaError {
     ModulePathsInPackage,
     #[error("reporting settings are only loaded from the root struo.toml")]
     ReportingInPackage,
+    #[error("local cache settings are only loaded from the root struo.toml")]
+    LocalCacheInPackage,
     #[error("use either [modules] or [rules], not both")]
     ModulesAndRulesBothSet,
     #[error("target name is required")]

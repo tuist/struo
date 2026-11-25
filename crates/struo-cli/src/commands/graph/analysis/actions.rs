@@ -247,6 +247,7 @@ impl DeclaredActionsState {
         BuildOutcome {
             provider: Arc::new(provider),
             action_digest: compose_target_action_digest(target_id, &self.action_digests),
+            cache_keys: self.action_digests,
             input_digest,
             input_fingerprint,
             available_inputs: self.available_inputs,

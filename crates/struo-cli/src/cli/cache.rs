@@ -23,7 +23,7 @@ impl FromStr for CacheSize {
     type Err = String;
 
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        parse_size(raw).map(Self)
+        struo_frontend::parse_size(raw).map(Self)
     }
 }
 
@@ -57,16 +57,24 @@ pub enum CacheCmd {
 
     /// Reclaim local cache space down to a size budget.
     ///
-    /// Removes the oldest blobs and action results until the local
-    /// store fits within `--max-size`, defaulting to 20 GB when the
-    /// flag is omitted. Safe to run at any time: an action whose
-    /// outputs get evicted simply re-executes on its next build. Only
-    /// the local tier is collected; a remote cache is never touched.
+    /// Removes the least recently used blobs and action results until
+    /// the local store fits within `--max-size`, defaulting to
+    /// `STRUO_CACHE_MAX_SIZE`, then `[local_cache] max_size` in the root
+    /// `struo.toml`, then 20 GB when the flag is omitted or that cap is 0.
+    /// Build,
+    /// test, run, lint, and exec already collect over that cap in the
+    /// background at most once an hour, sparing anything used in the last
+    /// hour; this command reclaims on demand and spares only entries used
+    /// while it runs. An action whose outputs get evicted re-executes on
+    /// its next build. Only the local tier is collected; a remote cache is
+    /// never touched.
     Gc {
         /// Maximum local cache size to keep. Plain bytes or a human
         /// suffix: `500MB`, `2GiB`, `750k`. Decimal suffixes (KB/MB/GB/
         /// TB) are powers of 1000; binary suffixes (KiB/MiB/GiB/TiB) are
-        /// powers of 1024. Defaults to 20 GB when omitted.
+        /// powers of 1024. Defaults to `STRUO_CACHE_MAX_SIZE`, then
+        /// `[local_cache] max_size` in `struo.toml`, then 20 GB; a cap of 0
+        /// also means 20 GB here.
         #[usage(long = "max-size", value_name = "SIZE")]
         max_size: Option<CacheSize>,
 
@@ -219,42 +227,6 @@ impl CacheActionCmd {
             Self::Forget { .. } => vec!["forget"],
         }
     }
-}
-
-/// Parse a byte size with an optional decimal (KB/MB/GB/TB, powers of
-/// 1000) or binary (KiB/MiB/GiB/TiB, powers of 1024) suffix. A bare
-/// number, or a `B` suffix, is bytes. Case-insensitive; surrounding
-/// whitespace and a space before the unit are allowed.
-fn parse_size(raw: &str) -> std::result::Result<u64, String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err("expected a size such as `500MB`, `2GiB`, or a byte count".into());
-    }
-    let digits_end = trimmed
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(trimmed.len());
-    let (number, unit) = trimmed.split_at(digits_end);
-    if number.is_empty() {
-        return Err(format!("`{raw}` must start with a number"));
-    }
-    let value: u64 = number
-        .parse()
-        .map_err(|_| format!("`{number}` is not a valid whole number of units"))?;
-    let multiplier = match unit.trim().to_ascii_lowercase().as_str() {
-        "" | "b" => 1_u64,
-        "kb" => 1_000,
-        "mb" => 1_000_000,
-        "gb" => 1_000_000_000,
-        "tb" => 1_000_000_000_000,
-        "kib" | "k" => 1_024,
-        "mib" | "m" => 1_024 * 1_024,
-        "gib" | "g" => 1_024 * 1_024 * 1_024,
-        "tib" | "t" => 1_024 * 1_024 * 1_024 * 1_024,
-        other => return Err(format!("unknown size unit `{other}`")),
-    };
-    value
-        .checked_mul(multiplier)
-        .ok_or_else(|| format!("`{raw}` overflows a 64-bit byte count"))
 }
 
 #[cfg(test)]

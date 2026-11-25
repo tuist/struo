@@ -37,6 +37,60 @@ Describe 'struo cache gc'
     The stdout should not include 'blobs:   0'
   End
 
+  trim_in_background() {
+    env STRUO_CACHE_MAX_SIZE=0 "$STRUO_BIN" -C "$WORKSPACE" exec -e PATH=/usr/bin:/bin -- /bin/sh -c 'printf old' >/dev/null 2>&1
+    find "$XDG_CACHE_HOME/struo/cas" -type f -exec touch -d '3 days ago' {} +
+    env STRUO_CACHE_MAX_SIZE=1 "$STRUO_BIN" -C "$WORKSPACE" exec -e PATH=/usr/bin:/bin -- /bin/sh -c 'printf new' >/dev/null 2>&1
+    # The command returns before its detached collection finishes.
+    for _ in $(seq 1 100); do
+      struo cache stats | grep -q 'actions: 1 ' && break
+      sleep 0.1
+    done
+    struo cache stats
+  }
+
+  It 'trims entries unused for longer than the grace period once the cache exceeds STRUO_CACHE_MAX_SIZE'
+    When call trim_in_background
+    The status should be success
+    The stdout should include 'actions: 1 '
+  End
+
+  It 'defaults to [local_cache] max_size from struo.toml'
+    printf '[local_cache]\nmax_size = "3GB"\n' > "$WORKSPACE/struo.toml"
+    When call "$STRUO_BIN" --format json -C "$WORKSPACE" cache gc --dry-run
+    The status should be success
+    The stdout should include '"max_size":3000000000'
+  End
+
+  It 'lets STRUO_CACHE_MAX_SIZE override struo.toml'
+    printf '[local_cache]\nmax_size = "3GB"\n' > "$WORKSPACE/struo.toml"
+    When call env STRUO_CACHE_MAX_SIZE=5GB "$STRUO_BIN" --format json -C "$WORKSPACE" cache gc --dry-run
+    The status should be success
+    The stdout should include '"max_size":5000000000'
+  End
+
+  It 'rejects a malformed [local_cache] max_size when the manifest loads'
+    printf '[local_cache]\nmax_size = "lots"\n' > "$WORKSPACE/struo.toml"
+    When call struo exec -e PATH=/usr/bin:/bin -- /bin/sh -c 'printf hi'
+    The status should not equal 0
+    The stderr should include 'invalid size `lots`'
+  End
+
+  warn_twice_about_a_malformed_environment_cap() {
+    env STRUO_CACHE_MAX_SIZE=0 "$STRUO_BIN" -C "$WORKSPACE" exec -e PATH=/usr/bin:/bin -- /bin/sh -c 'printf a' >/dev/null 2>&1
+    touch -d '2 hours ago' "$XDG_CACHE_HOME/struo/cas/gc.lock"
+    for _ in 1 2; do
+      env STRUO_CACHE_MAX_SIZE=lots "$STRUO_BIN" -C "$WORKSPACE" exec -e PATH=/usr/bin:/bin -- /bin/sh -c 'printf b' 2>&1 >/dev/null |
+        grep -c 'skipped automatic cache cleanup' || true
+    done
+  }
+
+  It 'warns about a malformed STRUO_CACHE_MAX_SIZE once per check, without failing the command'
+    When call warn_twice_about_a_malformed_environment_cap
+    The status should be success
+    The stdout should equal "$(printf '1\n0')"
+  End
+
   It 'rejects a malformed size'
     When call struo cache gc --max-size not-a-size
     The status should not equal 0

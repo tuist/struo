@@ -1,6 +1,7 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime};
 
 use tokio::fs::{self, File};
 use tokio::io::AsyncWriteExt;
@@ -8,6 +9,39 @@ use tokio::io::AsyncWriteExt;
 use crate::{Error, Result};
 
 pub(crate) static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// How stale an entry's modification time may be before a use refreshes it.
+/// Garbage collection reads the time as last use, so this only has to be
+/// much finer than its grace period; skipping fresher entries keeps a build
+/// that reuses thousands of entries from writing each one every time.
+const USE_RESOLUTION: Duration = Duration::from_mins(1);
+
+/// Record a use of the entry at `path` for garbage collection. Best effort:
+/// a missing entry or a store this process cannot write is left alone.
+pub(crate) fn mark_used_blocking(path: &Path) {
+    let now = SystemTime::now();
+    let stale = std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .is_ok_and(|modified| {
+            now.duration_since(modified)
+                .is_ok_and(|age| age >= USE_RESOLUTION)
+        });
+    if stale {
+        // Windows sets file times only through a handle opened for writing.
+        if let Ok(file) = std::fs::OpenOptions::new().write(true).open(path) {
+            let _ = file.set_modified(now);
+        }
+    }
+}
+
+pub(crate) async fn mark_used(paths: Vec<PathBuf>) {
+    let _ = tokio::task::spawn_blocking(move || {
+        for path in &paths {
+            mark_used_blocking(path);
+        }
+    })
+    .await;
+}
 
 #[derive(Clone, Copy)]
 enum Durability {

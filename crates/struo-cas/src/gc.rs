@@ -1,11 +1,15 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use tokio::fs;
 
 use crate::{ActionResult, Cas, Digest, Error, Result};
+
+/// How long automatic collection leaves anything used alone. A build that
+/// runs alongside a collection finishes well within it.
+pub const AUTOMATIC_GC_GRACE: Duration = Duration::from_hours(1);
 
 impl Cas {
     /// Reclaim disk space until the store fits within `max_bytes`.
@@ -13,29 +17,32 @@ impl Cas {
     /// Eviction is reference-aware and runs in priority order:
     /// 1. Orphan blobs - content no surviving action result points at,
     ///    oldest first. These are pure waste, so they always go first.
-    /// 2. Action results, oldest first. Evicting an action releases the
-    ///    blobs that only it referenced, which then become collectable.
+    /// 2. Action results, least recently used first. Evicting an action
+    ///    releases the blobs that only it referenced, which then become
+    ///    collectable.
     ///
-    /// Blobs referenced by action results in this pass's snapshot survive
-    /// until those results are evicted. A large, stable input shared by a
-    /// recent action therefore stays cached even when it is the oldest thing
-    /// on disk, unlike a plain oldest-first sweep of hot toolchain blobs.
-    /// Concurrent publication is not part of that snapshot and may race
-    /// eviction, producing a recoverable cache miss rather than a restorable result.
+    /// Recency is a file's modification time. Writing an action result,
+    /// looking it up, or reusing it through
+    /// [`mark_actions_used`](Self::mark_actions_used) refreshes it, and so
+    /// does putting content a blob already holds. Blobs referenced by a
+    /// surviving action survive with it, so a large, stable input shared by a
+    /// recent action stays cached even when it was written long ago.
     ///
-    /// Recency is a file's modification time. Because content-addressed
-    /// blobs are immutable, a blob's own mtime is its first-seen time,
-    /// which is why blobs are ranked by reachability rather than their
-    /// own age; action-result files carry the recency signal.
+    /// Nothing used within `grace` of the pass is deleted. That protects the
+    /// work of a build running alongside it: outputs it wrote but has not
+    /// recorded in an action result yet, and results it is about to restore.
+    /// Each file is checked again just before it is deleted, so a use that
+    /// lands after the store was scanned keeps the entry, and an action kept
+    /// that way keeps its blobs. A use refreshes an entry at most once a
+    /// minute, so with a zero grace an entry used in the minute before the
+    /// scan can still be deleted even if it is used again during the pass;
+    /// its next lookup then misses and the action runs again.
     ///
     /// With `dry_run`, nothing is deleted and the report describes what a
     /// real pass would reclaim.
-    ///
-    /// Safe to run against a store an in-flight build shares: a racing
-    /// writer may push the store back over budget, and the next lookup of
-    /// a just-evicted entry re-executes (restore stages every blob before
-    /// touching the workspace, so nothing is left partially applied).
-    pub async fn gc(&self, max_bytes: u64, dry_run: bool) -> Result<GcReport> {
+    pub async fn gc(&self, max_bytes: u64, grace: Duration, dry_run: bool) -> Result<GcReport> {
+        let started = SystemTime::now();
+        let cutoff = started.checked_sub(grace).unwrap_or(SystemTime::UNIX_EPOCH);
         let blobs_dir = self.blobs_dir();
         let actions_dir = self.actions_dir();
         let (blobs, actions) = tokio::try_join!(
@@ -53,6 +60,7 @@ impl Cas {
                 dry_run,
             });
         }
+        let expired = |modified: SystemTime| modified < cutoff;
 
         // How many surviving action results reference each blob digest.
         let mut refcount: HashMap<Digest, usize> = HashMap::new();
@@ -77,6 +85,7 @@ impl Cas {
         let mut orphans: Vec<usize> = blobs
             .iter()
             .enumerate()
+            .filter(|(_, b)| expired(b.modified))
             .filter(|(_, b)| match b.digest {
                 Some(d) => refcount.get(&d).copied().unwrap_or(0) == 0,
                 None => true,
@@ -92,10 +101,12 @@ impl Cas {
             bytes_after = bytes_after.saturating_sub(blobs[i].size);
         }
 
-        // Tier 2: action results, oldest first, cascading the blobs they
-        // release once no surviving action references them.
+        // Tier 2: action results, least recently used first, cascading the
+        // blobs they release once no surviving action references them.
         if bytes_after > max_bytes {
-            let mut order: Vec<usize> = (0..actions.len()).collect();
+            let mut order: Vec<usize> = (0..actions.len())
+                .filter(|&i| expired(actions[i].modified))
+                .collect();
             order.sort_by_key(|&i| actions[i].modified);
             for ai in order {
                 if bytes_after <= max_bytes {
@@ -109,13 +120,13 @@ impl Cas {
                     };
                     *count = count.saturating_sub(1);
                     // A blob whose last surviving action just went away is
-                    // now unreachable garbage; collect it unconditionally
-                    // rather than gating on the byte budget, so evicting an
-                    // action never leaves its private blobs (including
-                    // zero-byte ones) stranded.
+                    // unreachable garbage once it is outside the grace period;
+                    // collect it unconditionally rather than gating on the
+                    // byte budget, so evicting an action never leaves its
+                    // private blobs (including zero-byte ones) stranded.
                     if *count == 0 {
                         if let Some(&bi) = blob_index.get(digest) {
-                            if !blob_removed[bi] {
+                            if !blob_removed[bi] && expired(blobs[bi].modified) {
                                 blob_removed[bi] = true;
                                 bytes_after = bytes_after.saturating_sub(blobs[bi].size);
                             }
@@ -125,26 +136,18 @@ impl Cas {
             }
         }
 
-        // Remove owners first so interruption cannot leave an evicted owner's
-        // result pointing at blobs already removed by this pass.
-        let victims: Vec<PathBuf> = action_removed
-            .iter()
-            .enumerate()
-            .filter(|(_, &removed)| removed)
-            .map(|(i, _)| actions[i].path.clone())
-            .chain(
-                blob_removed
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, &removed)| removed)
-                    .map(|(i, _)| blobs[i].path.clone()),
-            )
-            .collect();
-        let removed = victims.len() as u64;
-
-        if !dry_run {
-            remove_files(victims).await?;
-        }
+        let removed = if dry_run {
+            (action_removed.iter().filter(|&&r| r).count()
+                + blob_removed.iter().filter(|&&r| r).count()) as u64
+        } else {
+            let plan = Plan {
+                actions: &actions,
+                action_removed: &action_removed,
+                blobs: &blobs,
+                blob_removed: &blob_removed,
+            };
+            plan.delete(cutoff, &mut refcount, &mut bytes_after).await?
+        };
 
         Ok(GcReport {
             bytes_before,
@@ -155,15 +158,72 @@ impl Cas {
     }
 }
 
-async fn remove_files(paths: Vec<PathBuf>) -> Result<()> {
-    for path in paths {
-        match fs::remove_file(&path).await {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(source) => return Err(Error::Io { path, source }),
+/// What one pass decided to evict.
+struct Plan<'a> {
+    actions: &'a [ActionFile],
+    action_removed: &'a [bool],
+    blobs: &'a [BlobFile],
+    blob_removed: &'a [bool],
+}
+
+impl Plan<'_> {
+    /// Delete the planned entries, keeping any used since the scan and the
+    /// blobs of an action kept that way. Returns how many were removed and
+    /// adds what was kept back to `bytes_after`.
+    async fn delete(
+        &self,
+        cutoff: SystemTime,
+        refcount: &mut HashMap<Digest, usize>,
+        bytes_after: &mut u64,
+    ) -> Result<u64> {
+        let mut removed = 0u64;
+        // Remove owners first so interruption cannot leave an evicted
+        // owner's result pointing at blobs already removed by this pass.
+        for (action, _) in self
+            .actions
+            .iter()
+            .zip(self.action_removed)
+            .filter(|(_, &r)| r)
+        {
+            if remove_if_expired(&action.path, cutoff).await? {
+                removed += 1;
+            } else {
+                *bytes_after += action.size;
+                for digest in &action.refs {
+                    *refcount.entry(*digest).or_insert(0) += 1;
+                }
+            }
         }
+        for (blob, _) in self.blobs.iter().zip(self.blob_removed).filter(|(_, &r)| r) {
+            let kept_by_action = blob
+                .digest
+                .is_some_and(|d| refcount.get(&d).copied().unwrap_or(0) > 0);
+            if !kept_by_action && remove_if_expired(&blob.path, cutoff).await? {
+                removed += 1;
+            } else {
+                *bytes_after += blob.size;
+            }
+        }
+        Ok(removed)
     }
-    Ok(())
+}
+
+/// Delete `path` unless it was used at or after `cutoff` since the scan.
+/// Returns whether it is gone.
+async fn remove_if_expired(path: &Path, cutoff: SystemTime) -> Result<bool> {
+    match fs::metadata(path).await.and_then(|m| m.modified()) {
+        Ok(modified) if modified >= cutoff => return Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
+        _ => {}
+    }
+    match fs::remove_file(path).await {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(source) => Err(Error::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
 }
 
 /// Outcome of a [`Cas::gc`] pass.
@@ -339,7 +399,7 @@ mod tests {
     async fn gc_on_empty_cas_reports_nothing_removed() {
         let tmp = TempDir::new().unwrap();
         let cas = Cas::open(tmp.path());
-        let report = cas.gc(0, false).await.unwrap();
+        let report = cas.gc(0, Duration::ZERO, false).await.unwrap();
         assert_eq!(report.bytes_before, 0);
         assert_eq!(report.bytes_after, 0);
         assert_eq!(report.removed, 0);
@@ -352,7 +412,7 @@ mod tests {
         cas.put_blob(b"keep me").await.unwrap();
         let before = cas.stats().await.unwrap().blob_bytes;
 
-        let report = cas.gc(u64::MAX, false).await.unwrap();
+        let report = cas.gc(u64::MAX, Duration::ZERO, false).await.unwrap();
 
         assert_eq!(report.removed, 0);
         assert_eq!(report.bytes_before, before);
@@ -380,7 +440,10 @@ mod tests {
         let total = cas.stats().await.unwrap().blob_bytes;
         let per_blob = total / 3;
 
-        let report = cas.gc(per_blob * 2 + 1, false).await.unwrap();
+        let report = cas
+            .gc(per_blob * 2 + 1, Duration::ZERO, false)
+            .await
+            .unwrap();
 
         assert_eq!(report.bytes_before, total);
         assert!(report.bytes_after <= per_blob * 2 + 1);
@@ -427,7 +490,9 @@ mod tests {
         // sweep would evict the referenced (older) blob; reference-aware
         // GC must evict the orphan instead.
         let per_blob = cas.blob_size(&orphan).await.unwrap();
-        cas.gc(total - per_blob, false).await.unwrap();
+        cas.gc(total - per_blob, Duration::ZERO, false)
+            .await
+            .unwrap();
 
         assert!(
             cas.has_blob(&referenced).await.unwrap(),
@@ -436,6 +501,147 @@ mod tests {
         assert!(
             !cas.has_blob(&orphan).await.unwrap(),
             "the unreferenced orphan should be evicted first"
+        );
+    }
+
+    #[tokio::test]
+    async fn gc_keeps_an_old_action_that_was_just_looked_up() {
+        let tmp = TempDir::new().unwrap();
+        let cas = Cas::open(tmp.path());
+        let result = ActionResult {
+            exit_code: 0,
+            stdout: None,
+            stderr: None,
+            outputs: std::collections::BTreeMap::new(),
+        };
+        let hit = Digest::of_bytes(b"used-every-build");
+        let idle = Digest::of_bytes(b"written-once");
+        cas.put_action_result(&hit, &result).await.unwrap();
+        cas.put_action_result(&idle, &result).await.unwrap();
+        filetime_set(
+            &cas.action_path(&hit),
+            SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000),
+        );
+        filetime_set(
+            &cas.action_path(&idle),
+            SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(5000),
+        );
+
+        assert!(cas.get_action_result(&hit).await.unwrap().is_some());
+        let stats = cas.stats().await.unwrap();
+        cas.gc(stats.action_bytes - 1, Duration::ZERO, false)
+            .await
+            .unwrap();
+
+        assert!(cas.get_action_result(&hit).await.unwrap().is_some());
+        assert_eq!(cas.get_action_result(&idle).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn gc_keeps_everything_used_within_the_grace_period() {
+        let tmp = TempDir::new().unwrap();
+        let cas = Cas::open(tmp.path());
+        let long_ago = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+        let idle = cas.put_blob(b"nobody-wants-this-anymore").await.unwrap();
+        let rewritten = cas.put_blob(b"another-build-just-produced").await.unwrap();
+        let in_flight = cas.put_blob(b"output-not-recorded-yet").await.unwrap();
+        let action = Digest::of_bytes(b"recent-action");
+        cas.put_action_result(
+            &action,
+            &ActionResult {
+                exit_code: 0,
+                stdout: None,
+                stderr: None,
+                outputs: std::collections::BTreeMap::from([("out".to_string(), idle)]),
+            },
+        )
+        .await
+        .unwrap();
+        for digest in [idle, rewritten] {
+            filetime_set(&cas.blob_path(&digest), long_ago);
+        }
+        filetime_set(&cas.action_path(&action), long_ago);
+        cas.put_blob(b"another-build-just-produced").await.unwrap();
+        cas.mark_actions_used([action]).await;
+
+        let report = cas.gc(0, Duration::from_hours(1), false).await.unwrap();
+
+        assert_eq!(report.removed, 0, "{report:?}");
+        assert!(cas.has_blob(&idle).await.unwrap(), "kept by a used action");
+        assert!(
+            cas.has_blob(&rewritten).await.unwrap(),
+            "a repeated put is a use"
+        );
+        assert!(
+            cas.has_blob(&in_flight).await.unwrap(),
+            "fresh output is never an orphan"
+        );
+
+        filetime_set(&cas.action_path(&action), long_ago);
+        cas.gc(0, Duration::from_hours(1), false).await.unwrap();
+        assert_eq!(cas.get_action_result(&action).await.unwrap(), None);
+        assert!(!cas.has_blob(&idle).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_use_between_the_scan_and_the_delete_keeps_the_action_and_its_blobs() {
+        let tmp = TempDir::new().unwrap();
+        let cas = Cas::open(tmp.path());
+        let long_ago = SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
+        let output = cas.put_blob(b"output-of-the-action").await.unwrap();
+        let orphan = cas.put_blob(b"nothing-points-here").await.unwrap();
+        let action = Digest::of_bytes(b"used-mid-pass");
+        cas.put_action_result(
+            &action,
+            &ActionResult {
+                exit_code: 0,
+                stdout: None,
+                stderr: None,
+                outputs: std::collections::BTreeMap::from([("out".to_string(), output)]),
+            },
+        )
+        .await
+        .unwrap();
+        for path in [
+            cas.blob_path(&output),
+            cas.blob_path(&orphan),
+            cas.action_path(&action),
+        ] {
+            filetime_set(&path, long_ago);
+        }
+        let blobs = collect_blob_files(&cas.blobs_dir()).await.unwrap();
+        let actions = collect_action_files(&cas.actions_dir()).await.unwrap();
+        let mut refcount = HashMap::from([(output, 0)]);
+        let plan = Plan {
+            actions: &actions,
+            action_removed: &vec![true; actions.len()],
+            blobs: &blobs,
+            blob_removed: &vec![true; blobs.len()],
+        };
+        let cutoff = SystemTime::now() - Duration::from_hours(1);
+
+        cas.mark_actions_used([action]).await;
+        let mut bytes_after = 0;
+        let removed = plan
+            .delete(cutoff, &mut refcount, &mut bytes_after)
+            .await
+            .unwrap();
+
+        assert_eq!(removed, 1, "only the orphan goes");
+        assert!(cas.get_action_result(&action).await.unwrap().is_some());
+        assert!(
+            cas.has_blob(&output).await.unwrap(),
+            "kept by its kept action"
+        );
+        assert!(!cas.has_blob(&orphan).await.unwrap());
+        assert_eq!(
+            bytes_after,
+            actions[0].size
+                + blobs
+                    .iter()
+                    .find(|b| b.digest == Some(output))
+                    .unwrap()
+                    .size
         );
     }
 
@@ -463,7 +669,7 @@ mod tests {
 
         // A zero budget evicts the action and, with it, every blob only
         // it referenced - leaving nothing stranded.
-        let report = cas.gc(0, false).await.unwrap();
+        let report = cas.gc(0, Duration::ZERO, false).await.unwrap();
 
         assert_eq!(report.bytes_after, 0);
         assert!(!cas.has_blob(&blob).await.unwrap());
@@ -478,7 +684,7 @@ mod tests {
         let cas = Cas::open(tmp.path());
         let blob = cas.put_blob(b"still here after dry run").await.unwrap();
 
-        let report = cas.gc(0, true).await.unwrap();
+        let report = cas.gc(0, Duration::ZERO, true).await.unwrap();
 
         assert!(report.dry_run);
         assert!(report.removed >= 1);
@@ -499,7 +705,7 @@ mod tests {
 
         // A zero budget removes the real blob but must leave the tmp
         // file alone - it is not durable cache state.
-        cas.gc(0, false).await.unwrap();
+        cas.gc(0, Duration::ZERO, false).await.unwrap();
 
         assert!(orphan.exists());
     }

@@ -121,6 +121,10 @@ pub(super) struct BuildOutcome {
     /// One entry per declared action, retained with memoized target outcomes
     /// so subsequent runs can report each reused action as a cache hit.
     pub per_action_outcomes: Vec<PerActionOutcome>,
+    /// Cache keys of every action behind the outcome, including Struo's own
+    /// file plumbing that `per_action_outcomes` leaves out, so reusing the
+    /// outcome can count each of them as used.
+    pub cache_keys: Vec<Digest>,
 }
 
 /// A single declared action's terminal state, as observed by the runner.
@@ -496,6 +500,12 @@ impl BuildSession {
 
     /// Write back what building this graph produced, against the position it
     /// describes, so the next invocation can skip the targets nothing touched.
+    /// Cache keys of the actions behind every target this session built or
+    /// reused.
+    pub(super) fn used_action_digests(&self) -> Vec<Digest> {
+        self.target_outcomes.used_actions()
+    }
+
     pub(super) fn record_target_outcomes(&self, position: Option<&ChangePosition>) {
         self.target_outcomes.save(position);
     }
@@ -1213,6 +1223,11 @@ async fn build_one(
             _ => None,
         };
         if let Some(outcome) = reused {
+            if target_outcomes.marks_use() {
+                cache
+                    .mark_actions_used(outcome.cache_keys.iter().copied())
+                    .await;
+            }
             target_outcomes.carry_forward(&target_id);
             if let Some(bus) = &event_bus {
                 let duration_ms =
@@ -1319,6 +1334,7 @@ async fn build_one(
         &producers,
     )
     .await?;
+    target_outcomes.note_used(&outcome);
     if let Some(key) = analysis_key
         .as_deref()
         .map(|key| target_outcomes::key(key, &action_digests, &available_inputs))

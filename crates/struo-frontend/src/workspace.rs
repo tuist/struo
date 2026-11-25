@@ -10,8 +10,8 @@ use walkdir::WalkDir;
 use crate::cache_provider::{CacheProviderConfig, InfrastructureConfig};
 use crate::error::{Error, Result};
 use crate::manifest::{
-    load_cache_provider_toml_str, load_infrastructure_toml_str, load_toml_with,
-    load_toml_with_configuration, load_workspace_toml_str, BuildConfiguration,
+    load_cache_provider_toml_str, load_infrastructure_toml_str, load_local_cache_max_size_toml_str,
+    load_toml_with, load_toml_with_configuration, load_workspace_toml_str, BuildConfiguration,
 };
 use crate::target::Target;
 use crate::TOML_BUILD_FILE_NAME;
@@ -285,6 +285,20 @@ pub fn load_infrastructure_config(root: &Path) -> Result<InfrastructureConfig> {
         }
     };
     load_infrastructure_toml_str(TOML_BUILD_FILE_NAME, &src)
+}
+
+/// `[local_cache] max_size` from the root `struo.toml` in bytes, or `None`
+/// when the file or setting is absent.
+pub fn load_local_cache_max_size(root: &Path) -> Result<Option<u64>> {
+    let path = root.join(TOML_BUILD_FILE_NAME);
+    match std::fs::read_to_string(&path) {
+        Ok(src) => load_local_cache_max_size_toml_str(TOML_BUILD_FILE_NAME, &src),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(Error::Read {
+            path: path.display().to_string(),
+            source,
+        }),
+    }
 }
 
 /// Load the workspace-level cache provider config from the root

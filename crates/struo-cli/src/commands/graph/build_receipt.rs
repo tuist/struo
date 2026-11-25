@@ -2,9 +2,10 @@ mod path_fingerprint;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
-use struo_cas::Digest;
+use struo_cas::{CacheProvider, Digest};
 use struo_core::SandboxMode;
 
 use super::capability::CapabilityRunRecord;
@@ -12,7 +13,7 @@ use crate::commands::change_tracker::{ChangePosition, ChangeSnapshot};
 
 use self::path_fingerprint::PathFingerprint;
 
-const SCHEMA: &str = "struo.build-receipt.v7";
+const SCHEMA: &str = "struo.build-receipt.v8";
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(super) struct BuildReceipt {
@@ -40,6 +41,15 @@ pub(super) struct BuildReceipt {
     /// later actions of the same target read them.
     #[serde(default)]
     deferred: BTreeSet<String>,
+    /// Cache keys of the actions behind the build, so a hit can count them as
+    /// used and the cache does not evict work every invocation relies on.
+    #[serde(default)]
+    actions: Vec<Digest>,
+    /// When a hit last counted `actions` as used, in milliseconds since the
+    /// Unix epoch. Kept in the receipt rather than read from its modification
+    /// time, which every reconciling rewrite resets.
+    #[serde(default)]
+    actions_marked_unix_ms: u64,
     executable_fingerprint: PathFingerprint,
     position: ChangePosition,
     record: CapabilityRunRecord,
@@ -51,6 +61,7 @@ pub(super) struct Observations<'a> {
     pub source_digests: &'a BTreeMap<String, Digest>,
     pub produced: &'a BTreeMap<String, Digest>,
     pub deferred: &'a BTreeSet<String>,
+    pub actions: Vec<Digest>,
 }
 
 pub(super) async fn read(
@@ -69,6 +80,7 @@ pub(super) fn position(receipt: &BuildReceipt) -> &ChangePosition {
 }
 
 pub(super) async fn load(
+    cache: &CacheProvider,
     workspace: &Path,
     target: &str,
     sandbox: SandboxMode,
@@ -140,15 +152,23 @@ pub(super) async fn load(
         );
         return None;
     }
+    let path = receipt_path(workspace, target, sandbox, configuration_path_suffix);
+    let mut changed = false;
     if receipt.position != snapshot.position {
         receipt.position = snapshot.position.clone();
         receipt.source_digests.clear();
-        if let Err(error) = write_receipt(
-            &receipt_path(workspace, target, sandbox, configuration_path_suffix),
-            &receipt,
-        )
-        .await
-        {
+        changed = true;
+    }
+    let now = unix_ms(SystemTime::now());
+    if marking_due(receipt.actions_marked_unix_ms, now) {
+        cache
+            .mark_actions_used(receipt.actions.iter().copied())
+            .await;
+        receipt.actions_marked_unix_ms = now;
+        changed = true;
+    }
+    if changed {
+        if let Err(error) = write_receipt(&path, &receipt).await {
             tracing::debug!(%error, target, "failed to advance reconciled build receipt");
         }
     }
@@ -198,6 +218,9 @@ pub(super) async fn store(
         source_digests: observations.source_digests.clone(),
         produced: observations.produced.clone(),
         deferred: observations.deferred.clone(),
+        actions: observations.actions,
+        // The build that writes the receipt just looked its actions up.
+        actions_marked_unix_ms: unix_ms(SystemTime::now()),
         executable_fingerprint,
         position: snapshot.position.clone(),
         record: record.clone(),
@@ -210,6 +233,26 @@ pub(super) async fn store(
     {
         tracing::debug!(%error, target, "failed to persist build receipt");
     }
+}
+
+/// How often a receipt hit records its actions as used. Far finer than the
+/// grace period of automatic cache collection, and coarse enough that a
+/// no-op build does not stat every action of the graph each time.
+const MARK_USED_INTERVAL: Duration = Duration::from_mins(10);
+
+/// Whether a hit should count the receipt's actions as used again. A mark
+/// from the future means the clock moved back, so mark rather than wait.
+fn marking_due(marked_unix_ms: u64, now_unix_ms: u64) -> bool {
+    now_unix_ms
+        .checked_sub(marked_unix_ms)
+        .is_none_or(|age| u128::from(age) >= MARK_USED_INTERVAL.as_millis())
+}
+
+fn unix_ms(time: SystemTime) -> u64 {
+    time.duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 pub(super) async fn clear(
@@ -429,6 +472,7 @@ mod tests {
                         source_digests: &source_digests,
                         produced: &BTreeMap::new(),
                         deferred: &deferred,
+                        actions: Vec::new(),
                     },
                     &record,
                 )
@@ -441,6 +485,7 @@ mod tests {
                 )
                 .await;
                 load(
+                    &CacheProvider::open_local(workspace.join("cas")),
                     &workspace,
                     "app",
                     SandboxMode::Off,
@@ -487,6 +532,7 @@ mod tests {
                 source_digests: &source_digests,
                 produced: &BTreeMap::new(),
                 deferred: &BTreeSet::new(),
+                actions: Vec::new(),
             },
             &record(),
         )
@@ -509,6 +555,7 @@ mod tests {
         .unwrap();
         legacy.schema = "struo.build-receipt.v5".to_owned();
         assert!(load(
+            &CacheProvider::open_local(temporary.path().join("cas")),
             temporary.path(),
             "app",
             SandboxMode::Off,
@@ -519,6 +566,7 @@ mod tests {
         .await
         .is_none());
         let loaded = load(
+            &CacheProvider::open_local(temporary.path().join("cas")),
             temporary.path(),
             "app",
             SandboxMode::Off,
@@ -540,6 +588,7 @@ mod tests {
         .unwrap();
         changed_environment.inherited_environment_sha256 = "previous environment".to_owned();
         assert!(load(
+            &CacheProvider::open_local(temporary.path().join("cas")),
             temporary.path(),
             "app",
             SandboxMode::Off,
@@ -566,6 +615,7 @@ mod tests {
         )
         .await;
         assert!(load(
+            &CacheProvider::open_local(temporary.path().join("cas")),
             temporary.path(),
             "app",
             SandboxMode::Off,
@@ -593,6 +643,7 @@ mod tests {
                 source_digests: &source_digests,
                 produced: &BTreeMap::new(),
                 deferred: &BTreeSet::new(),
+                actions: Vec::new(),
             },
             &record(),
         )
@@ -605,6 +656,7 @@ mod tests {
         )
         .await;
         assert!(load(
+            &CacheProvider::open_local(temporary.path().join("cas")),
             temporary.path(),
             "app",
             SandboxMode::Off,
@@ -624,6 +676,7 @@ mod tests {
         )
         .await;
         assert!(load(
+            &CacheProvider::open_local(temporary.path().join("cas")),
             temporary.path(),
             "app",
             SandboxMode::Off,
@@ -657,6 +710,7 @@ mod tests {
                 source_digests: &source_digests,
                 produced: &BTreeMap::new(),
                 deferred: &BTreeSet::new(),
+                actions: Vec::new(),
             },
             &empty_output_record,
         )
@@ -670,6 +724,7 @@ mod tests {
         )
         .await;
         assert!(load(
+            &CacheProvider::open_local(temporary.path().join("cas")),
             temporary.path(),
             "app",
             SandboxMode::Off,
@@ -679,6 +734,121 @@ mod tests {
         )
         .await
         .is_none());
+    }
+
+    /// A hit counts the build's actions as used so the cache keeps them,
+    /// even when the watcher moved since the receipt was written, and at most
+    /// once per interval across invocations.
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn a_receipt_hit_counts_its_actions_as_used_once_per_interval() {
+        let temporary = TempDir::new().unwrap();
+        let source = temporary.path().join("src/main.rs");
+        let output = temporary.path().join(".struo/out/app/app");
+        tokio::fs::create_dir_all(source.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(output.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&source, b"source").await.unwrap();
+        tokio::fs::write(&output, b"binary").await.unwrap();
+        let cache = CacheProvider::open_local(temporary.path().join("cas"));
+        let action = Digest::of_bytes(b"compile");
+        cache
+            .put_action_result(&action, &record().result)
+            .await
+            .unwrap();
+        let action_file = temporary
+            .path()
+            .join("cas/actions")
+            .join(&action.to_hex()[..2])
+            .join(format!("{}.json", &action.to_hex()[2..]));
+        let long_ago = SystemTime::now() - Duration::from_hours(72);
+        let age = || {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&action_file)
+                .unwrap()
+                .set_modified(long_ago)
+                .unwrap();
+        };
+        let last_used = || std::fs::metadata(&action_file).unwrap().modified().unwrap();
+        let initial = snapshot(3, 5);
+        let source_digests = BTreeMap::from([(
+            "src/main.rs".to_string(),
+            struo_core::digest_source_path(temporary.path(), "src/main.rs").unwrap(),
+        )]);
+        store(
+            temporary.path(),
+            "app",
+            SandboxMode::Off,
+            TEST_CONFIGURATION_PATH_SUFFIX,
+            test_configuration_digest(),
+            &initial,
+            Observations {
+                environment: &BTreeMap::new(),
+                host_paths: &BTreeSet::new(),
+                source_digests: &source_digests,
+                produced: &BTreeMap::new(),
+                deferred: &BTreeSet::new(),
+                actions: vec![action],
+            },
+            &record(),
+        )
+        .await;
+        let moved = |generation| ChangeSnapshot {
+            position: ChangePosition {
+                source_generation: generation,
+                ..initial.position.clone()
+            },
+            source_changes: Some(vec!["src/main.rs".to_string()]),
+            ..initial.clone()
+        };
+        let hit = |snapshot: ChangeSnapshot, marked_minutes_ago: Option<u64>| {
+            let cache = cache.clone();
+            let workspace = temporary.path().to_path_buf();
+            async move {
+                let mut receipt = read(
+                    &workspace,
+                    "app",
+                    SandboxMode::Off,
+                    TEST_CONFIGURATION_PATH_SUFFIX,
+                )
+                .await
+                .unwrap();
+                if let Some(minutes) = marked_minutes_ago {
+                    receipt.actions_marked_unix_ms =
+                        unix_ms(SystemTime::now() - Duration::from_mins(minutes));
+                }
+                load(
+                    &cache,
+                    &workspace,
+                    "app",
+                    SandboxMode::Off,
+                    TEST_CONFIGURATION_PATH_SUFFIX,
+                    Some(&snapshot),
+                    Some(receipt),
+                )
+                .await
+                .is_some()
+            }
+        };
+
+        age();
+        assert!(hit(moved(4), Some(20)).await);
+        assert!(
+            last_used() > long_ago + Duration::from_hours(71),
+            "a hit after an edit still counts the action as used"
+        );
+
+        age();
+        assert!(hit(moved(4), None).await);
+        assert_eq!(
+            last_used(),
+            long_ago,
+            "the previous hit recorded its mark in the receipt, which throttles this one"
+        );
     }
 
     #[tokio::test]
@@ -714,6 +884,7 @@ mod tests {
                 source_digests: &source_digests,
                 produced: &BTreeMap::new(),
                 deferred: &BTreeSet::new(),
+                actions: Vec::new(),
             },
             &record(),
         )
@@ -735,6 +906,7 @@ mod tests {
         )
         .await;
         assert!(load(
+            &CacheProvider::open_local(temporary.path().join("cas")),
             temporary.path(),
             "app",
             SandboxMode::Off,
@@ -762,6 +934,7 @@ mod tests {
         )
         .await;
         assert!(load(
+            &CacheProvider::open_local(temporary.path().join("cas")),
             temporary.path(),
             "app",
             SandboxMode::Off,

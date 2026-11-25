@@ -64,7 +64,7 @@ pub use graph::{
 pub use infrastructure_editor::{apply_infrastructure_binding, InfrastructureBinding};
 pub use manifest::{
     load_cache_provider_toml_str, load_infrastructure_toml_str, load_toml_str,
-    load_workspace_configuration, BuildConfiguration, ConfigurationOverrides,
+    load_workspace_configuration, parse_size, BuildConfiguration, ConfigurationOverrides,
 };
 pub use manifest_editor::{
     apply_operations, apply_operations_with_schemas, EditOperation, TargetSpec, TargetUpdate,
@@ -83,6 +83,6 @@ pub use triggers::{
 };
 pub use workspace::{
     load_cache_provider, load_cache_provider_override, load_file, load_infrastructure_config,
-    load_workspace, load_workspace_with_configuration,
+    load_local_cache_max_size, load_workspace, load_workspace_with_configuration,
 };
 pub use workspace_validator::{validate_workspace, validate_workspace_graph};

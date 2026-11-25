@@ -247,6 +247,43 @@ malformed cache records, and local filesystem errors. Explicit cache reads,
 including SDK reads, report availability errors rather than returning missing
 data.
 
+## Keep the local cache bounded
+
+The local cache is shared by every workspace on the machine, and Struo keeps it
+within a size cap of 20 GB without any action from you. At most once an hour,
+a command that runs actions, such as `struo build`, `struo test`, or
+`struo exec`, starts a cleanup in the background and exits without waiting for
+it. When the cache is over the cap, the cleanup removes the least recently used
+results until the cache is back under 80% of the cap. The first check runs an
+hour after Struo first uses the cache on a machine.
+
+Struo counts a result as used whenever a build relies on it, including builds
+that skip their actions entirely because nothing changed, so results you reuse
+every day stay cached. Nothing used within the last hour is removed, so builds
+running at the same time keep their work. A removed result runs again the next
+time it is needed.
+
+Set the cap for a workspace in its root `struo.toml`:
+
+```toml
+[local_cache]
+max_size = "50GB"
+```
+
+The value is a byte count or a size such as `"50GB"` or `"8GiB"`, and `0`
+turns automatic cleanup off. A value that is not a size fails every command
+that loads the manifest. The `STRUO_CACHE_MAX_SIZE` environment variable takes
+the same values and overrides the workspace setting, which suits a cap for
+the whole machine; when it is not a size, commands still run and warn that
+they skipped the cleanup. Because the cache is shared, a cleanup applies the
+cap of the workspace whose command started it.
+
+Run `struo cache stats` to see usage against the cap, and
+`struo cache gc --max-size <size>` to reclaim space right away; it removes
+recently used results too. Without `--max-size`, `struo cache gc` uses the
+cap, or 20 GB when automatic cleanup is off. Cleanup affects only the local
+cache; remote caches keep their own retention.
+
 ## Next steps
 
 - [Infrastructure](/guide/infrastructure/): share these cached results across

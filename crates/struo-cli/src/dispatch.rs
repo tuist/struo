@@ -1,4 +1,5 @@
 mod cache_budget;
+mod cache_retention;
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -60,7 +61,8 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<ExitCode> {
         cpu_slots = resource_limits.cpu_slots,
         "resolved local resource limits"
     );
-    struo_frontend::analysis::with_analysis_resources(
+    let runs_actions = command_runs_actions(&command);
+    let result = struo_frontend::analysis::with_analysis_resources(
         Arc::new(ResourcePool::new(resource_limits.clone())),
         Box::pin(run_command(
             workspace,
@@ -71,13 +73,18 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<ExitCode> {
             native.as_ref(),
         )),
     )
-    .await
+    .await;
+    if runs_actions {
+        cache_retention::spawn_if_due(&xdg, workspace, output);
+    }
+    result
 }
 
-/// Whether this command produces action-shaped work worth marking with the
-/// `--sound` opening and closing tones. Informational verbs (query, cache
+/// Whether this command runs actions, and so writes their results to the
+/// local cache. These are also the commands worth marking with the
+/// `--sound` opening and closing tones; informational verbs (query, cache
 /// stats, help-style paths) are left silent.
-fn command_makes_sound(command: &Cmd) -> bool {
+fn command_runs_actions(command: &Cmd) -> bool {
     matches!(
         command,
         Cmd::Build { .. }
@@ -132,7 +139,7 @@ async fn run_command(
             resolved.native_targets = native.map(|invocation| invocation.targets.clone());
             Ok(resolved)
         };
-    if command_makes_sound(&command) {
+    if command_runs_actions(&command) {
         crate::sound::seed(commands::sound_seed::for_command(&command));
         crate::sound::emit(crate::sound::Event::Started);
     }
@@ -428,6 +435,10 @@ async fn run_command(
         }
         Cmd::Reference { out } => crate::reference::generate(&out),
         Cmd::ChangeTracker => commands::change_tracker::serve(workspace, xdg).await,
+        Cmd::CacheRetention => {
+            cache_retention::collect(xdg, workspace).await;
+            Ok(ExitCode::SUCCESS)
+        }
         Cmd::Compatibility { .. }
         | Cmd::PackageCompatibility { .. }
         | Cmd::BazelCompatibility { .. }
@@ -1021,13 +1032,19 @@ async fn run_cache_command(
     match command {
         Some(cli::CacheCmd::Stats) => {
             let cache = crate::cache_provider::resolve(workspace, xdg)?;
-            commands::cache::print_stats(&cache, cli::DEFAULT_CACHE_SIZE_CAP_BYTES, output)
+            commands::cache::print_stats(&cache, cache_retention::cap_bytes(workspace)?, output)
                 .await
                 .map(|()| ExitCode::SUCCESS)
         }
         Some(cli::CacheCmd::Gc { max_size, dry_run }) => {
             let cache = crate::cache_provider::resolve(workspace, xdg)?;
-            let cap = max_size.map_or(cli::DEFAULT_CACHE_SIZE_CAP_BYTES, cli::CacheSize::bytes);
+            let cap = match max_size {
+                Some(size) => size.bytes(),
+                None => match cache_retention::cap_bytes(workspace)? {
+                    0 => cli::DEFAULT_CACHE_SIZE_CAP_BYTES,
+                    cap => cap,
+                },
+            };
             commands::cache::gc(&cache, cap, dry_run, output)
                 .await
                 .map(|()| ExitCode::SUCCESS)
@@ -1038,7 +1055,7 @@ async fn run_cache_command(
                 Some(cli::CacheBlobCmd::Put { path }) => commands::cache::put_blob(
                     &cache,
                     path.as_deref(),
-                    cli::DEFAULT_CACHE_SIZE_CAP_BYTES,
+                    cache_retention::cap_bytes(workspace)?,
                     output,
                 )
                 .await
@@ -1081,7 +1098,7 @@ async fn run_cache_command(
                         .into_iter()
                         .map(cli::OutputDigest::into_inner)
                         .collect(),
-                    cli::DEFAULT_CACHE_SIZE_CAP_BYTES,
+                    cache_retention::cap_bytes(workspace)?,
                     output,
                 )
                 .await

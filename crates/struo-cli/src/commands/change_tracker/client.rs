@@ -308,8 +308,13 @@ fn spawn_tracker(workspace: &Path, socket: &Path) -> std::io::Result<()> {
 /// user-facing `struo` binary free to be rebuilt, replaced, or upgraded in
 /// place while a tracker is running.
 fn tracker_launcher(socket: &Path) -> std::io::Result<PathBuf> {
+    private_launcher(socket.parent().unwrap_or_else(|| Path::new(".")))
+}
+
+/// A private copy of the running executable under `directory`, shared by
+/// every long-lived helper launched from the same build of `struo`.
+pub(super) fn private_launcher(directory: &Path) -> std::io::Result<PathBuf> {
     let exe = std::env::current_exe()?;
-    let directory = socket.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(directory)?;
     // Content-address the copy by a cheap fingerprint of the executable so a
     // new `struo` build lands at a new path instead of overwriting a copy a

@@ -892,6 +892,7 @@ async fn a_reused_outcome_needs_its_absent_intermediate_outputs_in_the_local_cac
         cached_results: Vec::new(),
         intermediate_outputs: BTreeSet::from([snapshot.to_string()]),
         per_action_outcomes: Vec::new(),
+        cache_keys: Vec::new(),
     };
 
     assert!(!intermediate_outputs_cached(&outcome, workspace.path(), &cache).await);

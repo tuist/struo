@@ -860,6 +860,9 @@ pub enum Cmd {
 
     #[usage(name = "__change-tracker", hide = true)]
     ChangeTracker,
+
+    #[usage(name = "__cache-gc", hide = true)]
+    CacheRetention,
 }
 
 /// A compatibility invocation that preserves an established build-tool
@@ -991,6 +994,7 @@ impl Cmd {
             Self::Mcp { .. } => vec!["mcp"],
             Self::Reference { .. } => vec!["reference"],
             Self::ChangeTracker => vec!["__change-tracker"],
+            Self::CacheRetention => vec!["__cache-gc"],
         }
     }
 }

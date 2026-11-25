@@ -128,6 +128,19 @@ pub async fn serve(_workspace: &Path, _xdg: &Xdg) -> Result<ExitCode> {
     anyhow::bail!("the filesystem change tracker is not supported on this platform")
 }
 
+/// The executable to launch a detached helper from: a private copy of the
+/// running one, so upgrading or rebuilding `struo` in place does not fail
+/// while the helper runs. Shares the change tracker's copy.
+#[cfg(unix)]
+pub(crate) fn helper_launcher(xdg: &Xdg) -> std::io::Result<PathBuf> {
+    client::private_launcher(&xdg.struo_runtime().join("change-tracker"))
+}
+
+#[cfg(not(unix))]
+pub(crate) fn helper_launcher(_xdg: &Xdg) -> std::io::Result<PathBuf> {
+    std::env::current_exe()
+}
+
 fn socket_path(workspace: &Path, xdg: &Xdg) -> PathBuf {
     let workspace = std::fs::canonicalize(workspace).unwrap_or_else(|_| workspace.to_path_buf());
     let workspace_id = Digest::of_bytes(workspace.to_string_lossy().as_bytes());

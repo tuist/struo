@@ -50,6 +50,7 @@ fn outcome(outputs: &[&str]) -> BuildOutcome {
         cached_results: Vec::new(),
         intermediate_outputs: std::collections::BTreeSet::new(),
         per_action_outcomes: Vec::new(),
+        cache_keys: Vec::new(),
     }
 }
 
@@ -139,6 +140,50 @@ fn a_target_nothing_touched_is_reused() {
     let reused = reopened.reuse(&target, "key", &changed(&["apps/other/src/lib.rs"], &[]));
 
     assert!(reused.is_some());
+}
+
+/// Reusing an outcome must count every action behind it as used, including
+/// Struo's own file plumbing that the reported per-action outcomes omit, or
+/// cache collection evicts the outputs a later reuse needs.
+#[test]
+fn a_reused_outcome_carries_every_cache_key_and_marks_use_once_per_interval() {
+    let workspace = TempDir::new().unwrap();
+    let target = target("apps/tool", "tool");
+    let compile = Digest::of_bytes(b"compile");
+    let write_file = Digest::of_bytes(b"write-file");
+    let mut built = outcome(&[]);
+    built.cache_keys = vec![compile, write_file];
+    let first = TargetOutcomes::open(
+        workspace.path(),
+        "build",
+        SandboxMode::Off,
+        "",
+        None,
+        TransitiveSets::default(),
+    );
+    assert!(first.marks_use(), "a first invocation counts reuse as use");
+    let reopened = round_trip(&workspace, |outcomes| {
+        outcomes.record(
+            &target,
+            "key".to_string(),
+            &AnalysisObservations::default(),
+            &inputs(&[]),
+            &built,
+        );
+    });
+    assert!(
+        !reopened.marks_use(),
+        "invocations within the interval do not mark again"
+    );
+
+    let reused = reopened
+        .reuse(&target, "key", &changed(&[], &[]))
+        .expect("nothing changed");
+    assert_eq!(reused.cache_keys, vec![compile, write_file]);
+    reopened.note_used(&reused);
+    let used = reopened.used_actions();
+    assert_eq!(used.len(), 2);
+    assert!(used.contains(&compile) && used.contains(&write_file));
 }
 
 #[test]

@@ -4,7 +4,7 @@ use tokio::fs::{self, File};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::filesystem::{
-    ensure_dir, rename_into_place, write_durably, write_with_durable_contents,
+    ensure_dir, mark_used, rename_into_place, write_durably, write_with_durable_contents,
 };
 use crate::integrity::{self, CorruptBlob};
 use crate::{blob, ActionResult, Digest, Error, Result};
@@ -28,7 +28,8 @@ const STREAM_CHUNK: usize = 256 * 1024;
 /// output digests in the same store.
 ///
 /// [`open`](Self::open) performs no I/O. Directories are created lazily on the
-/// first write, so a read-only consumer never changes the store.
+/// first write. Reads that find an entry refresh its modification time, which
+/// garbage collection reads as its last use.
 #[derive(Debug, Clone)]
 pub struct Cas {
     root: PathBuf,
@@ -99,6 +100,7 @@ impl Cas {
         let digest = Digest::of_bytes(bytes);
         let path = self.blob_path(&digest);
         if fs::try_exists(&path).await.unwrap_or(false) {
+            mark_used(vec![path]).await;
             return Ok(digest);
         }
         let stored = blob::encode_bytes(bytes).map_err(|source| Error::Io {
@@ -116,6 +118,7 @@ impl Cas {
         }
         let path = self.blob_path(&digest);
         if fs::try_exists(&path).await.unwrap_or(false) {
+            mark_used(vec![path]).await;
             return Ok(digest);
         }
         let stored = blob::encode_bytes(bytes).map_err(|source| Error::Io {
@@ -141,7 +144,9 @@ impl Cas {
         ensure_dir(&scratch).await?;
         let (stored, digest, file) = stream::prepare(&scratch, reader).await?;
         let final_path = self.blob_path(&digest);
-        if !fs::try_exists(&final_path).await.unwrap_or(false) {
+        if fs::try_exists(&final_path).await.unwrap_or(false) {
+            mark_used(vec![final_path]).await;
+        } else {
             File::from_std(file)
                 .sync_all()
                 .await
@@ -179,7 +184,9 @@ impl Cas {
             })?;
         }
         let final_path = self.blob_path(&digest);
-        if !fs::try_exists(&final_path).await.unwrap_or(false) {
+        if fs::try_exists(&final_path).await.unwrap_or(false) {
+            mark_used(vec![final_path]).await;
+        } else {
             rename_into_place(&stored, &final_path).await?;
         }
         Ok(digest)
@@ -247,8 +254,13 @@ impl Cas {
     }
 
     /// Look up a cached action result. `None` is a miss.
+    ///
+    /// A hit counts as a use for [`Cas::gc`]. The use is recorded before the
+    /// read, so a collection with a grace period that rechecks the entry
+    /// before deleting it keeps any result this call returns.
     pub async fn get_action_result(&self, action: &Digest) -> Result<Option<ActionResult>> {
         let path = self.action_path(action);
+        mark_used(vec![path.clone()]).await;
         match fs::read(&path).await {
             Ok(bytes) => {
                 let result =
@@ -258,6 +270,18 @@ impl Cas {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(source) => Err(Error::Io { path, source }),
         }
+    }
+
+    /// Record a use of each action result that is present, for callers that
+    /// reuse cached work through their own records instead of a lookup.
+    pub async fn mark_actions_used(&self, actions: impl IntoIterator<Item = Digest>) {
+        mark_used(
+            actions
+                .into_iter()
+                .map(|action| self.action_path(&action))
+                .collect(),
+        )
+        .await;
     }
 
     /// Delete a single action result. Useful for `struo cache forget`.

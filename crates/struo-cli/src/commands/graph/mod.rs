@@ -189,6 +189,7 @@ pub async fn build(
     let initial_snapshot =
         crate::commands::change_tracker::snapshot(workspace, &xdg, &[], prior_position).await;
     if let Some(record) = build_receipt::load(
+        cache,
         workspace,
         target_id,
         sandbox,
@@ -325,6 +326,7 @@ pub async fn build(
                     source_digests: &source_digests,
                     produced: &produced,
                     deferred: &deferred,
+                    actions: session.used_action_digests(),
                 },
                 &record,
             )

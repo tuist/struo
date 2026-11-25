@@ -122,18 +122,14 @@ pub async fn print_stats(cache: &CacheProvider, cap_bytes: u64, output: Output) 
         cap_bytes,
     };
     let body = match output.format {
+        Format::Human if cap_bytes == 0 => format!(
+            "blobs:   {} ({} bytes)\nactions: {} ({} bytes)\nused:    {used_bytes} bytes (no cap; automatic cleanup off)\n",
+            s.blob_count, s.blob_bytes, s.action_count, s.action_bytes,
+        ),
         Format::Human => {
-            let percent = if cap_bytes == 0 {
-                0
-            } else {
-                // Scale to a whole-percent integer without pulling in a float
-                // rounding rule; saturating multiply is fine because used <= cap
-                // is not guaranteed and the display is informational.
-                used_bytes
-                    .saturating_mul(100)
-                    .checked_div(cap_bytes)
-                    .unwrap_or(0)
-            };
+            // Saturating multiply: used <= cap is not guaranteed, and the
+            // display is informational.
+            let percent = used_bytes.saturating_mul(100) / cap_bytes;
             format!(
                 "blobs:   {} ({} bytes)\nactions: {} ({} bytes)\nused:    {used_bytes} / {cap_bytes} bytes ({percent}% of cap)\n",
                 s.blob_count, s.blob_bytes, s.action_count, s.action_bytes,
@@ -148,7 +144,9 @@ pub async fn print_stats(cache: &CacheProvider, cap_bytes: u64, output: Output) 
 }
 
 pub async fn gc(cache: &CacheProvider, max_size: u64, dry_run: bool, output: Output) -> Result<()> {
-    let report = cache.gc(max_size, dry_run).await?;
+    let report = cache
+        .gc(max_size, std::time::Duration::ZERO, dry_run)
+        .await?;
     let reclaimed = report.bytes_before.saturating_sub(report.bytes_after);
     let record = CacheGcRecord {
         bytes_before: report.bytes_before,
@@ -182,7 +180,11 @@ pub async fn put_blob(
     // eviction candidate set. Otherwise a `cache blob put` into an
     // already-over-cap store could report a digest that has already been
     // reclaimed by the same command.
-    log_eviction(cache.maybe_evict_over_cap(cap_bytes).await?);
+    log_eviction(
+        cache
+            .maybe_evict_over_cap(cap_bytes, struo_cas::AUTOMATIC_GC_GRACE)
+            .await?,
+    );
     let reader = open_blob_input(path).await?;
     let digest = cache.put_stream(reader).await?;
     let record = BlobPutRecord { digest };
@@ -339,7 +341,11 @@ pub async fn put_action(
 ) -> Result<()> {
     // Evict *before* the put so the fresh action result is not eligible
     // for eviction on the same command. See put_blob for the reasoning.
-    log_eviction(cache.maybe_evict_over_cap(cap_bytes).await?);
+    log_eviction(
+        cache
+            .maybe_evict_over_cap(cap_bytes, struo_cas::AUTOMATIC_GC_GRACE)
+            .await?,
+    );
     let action = resolve_action_digest(action, &inputs).await?;
     let result = ActionResult {
         exit_code,

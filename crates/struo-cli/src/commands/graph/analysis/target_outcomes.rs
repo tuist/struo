@@ -38,7 +38,7 @@ use super::{AvailableInput, BuildOutcome};
 use crate::commands::change_tracker::ChangePosition;
 
 // Older outcomes kept every record in one file, which each build read whole.
-const SCHEMA: &str = "struo.target-outcomes.v10";
+const SCHEMA: &str = "struo.target-outcomes.v11";
 const INDEX: &str = "index.json";
 const RECORDS: &str = "records";
 
@@ -86,6 +86,7 @@ struct Record {
     #[serde(default)]
     intermediate_outputs: BTreeSet<String>,
     per_action_outcomes: Vec<super::PerActionOutcome>,
+    cache_keys: Vec<Digest>,
 }
 
 #[derive(Serialize)]
@@ -108,6 +109,7 @@ struct RecordRef<'a> {
     cached_results: &'a [ActionResult],
     intermediate_outputs: &'a BTreeSet<String>,
     per_action_outcomes: &'a [super::PerActionOutcome],
+    cache_keys: &'a [Digest],
 }
 
 #[derive(Serialize)]
@@ -115,6 +117,29 @@ struct ExpansionRef<'a> {
     kind: &'a str,
     package: &'a str,
     patterns: &'a [String],
+}
+
+/// How often reused outcomes count as cache uses. Far finer than the grace
+/// period of automatic cache collection.
+const MARK_USED_INTERVAL: std::time::Duration = std::time::Duration::from_mins(10);
+const USED_STAMP: &str = "used.stamp";
+
+/// Whether this invocation should count reused outcomes as cache uses, and
+/// if so stamp `directory` so invocations in the next interval do not.
+fn claim_use_marking(directory: &Path, now: SystemTime) -> bool {
+    let stamp = directory.join(USED_STAMP);
+    let due = std::fs::metadata(&stamp)
+        .and_then(|metadata| metadata.modified())
+        .map_or(true, |marked| {
+            now.duration_since(marked)
+                .map_or(true, |age| age >= MARK_USED_INTERVAL)
+        });
+    if due && std::fs::create_dir_all(directory).is_ok() {
+        if let Ok(file) = std::fs::File::create(&stamp) {
+            let _ = file.set_modified(now);
+        }
+    }
+    due
 }
 
 /// Which record each target's outcome is stored under, as of one watcher
@@ -147,6 +172,15 @@ pub(super) struct TargetOutcomes {
     /// The record names this invocation reused or wrote, written back as the
     /// index on the way out.
     learned: std::sync::Mutex<BTreeMap<String, String>>,
+    /// Cache keys of the actions behind every outcome this invocation reused
+    /// or recorded, so a later build that skips them all still counts as
+    /// using them.
+    used: std::sync::Mutex<std::collections::HashSet<Digest>>,
+    /// Whether this invocation counts reused outcomes as cache uses. Decided
+    /// once when the outcomes open, from the stamp the last invocation that
+    /// did so left, so a build that reuses every target does not stat each
+    /// of their actions every time.
+    marks_use: bool,
     /// Records nobody indexes and older than this are left over from earlier
     /// invocations; newer ones may belong to a build still running.
     opened_at: SystemTime,
@@ -186,6 +220,7 @@ impl TargetOutcomes {
             .filter(|index| window_from == Some(&index.position))
             .map(|index| index.targets)
             .unwrap_or_default();
+        let marks_use = claim_use_marking(&directory, SystemTime::now());
         Self {
             workspace: workspace.to_path_buf(),
             fingerprints: FingerprintStore::new(workspace),
@@ -193,6 +228,8 @@ impl TargetOutcomes {
             directory,
             stored,
             learned: std::sync::Mutex::new(BTreeMap::new()),
+            used: std::sync::Mutex::new(std::collections::HashSet::new()),
+            marks_use,
             opened_at: SystemTime::now(),
             enabled: enabled(),
             persisted: cfg!(unix) && crate::commands::change_tracker::tracker_enabled(),
@@ -238,7 +275,33 @@ impl TargetOutcomes {
             tracing::debug!(target = %target.label.id, "host observations prevent target-outcome reuse");
             return None;
         }
-        record.into_outcome(&self.fingerprints, dependency_inputs)
+        let outcome = record.into_outcome(&self.fingerprints, dependency_inputs)?;
+        self.note_used(&outcome);
+        Some(outcome)
+    }
+
+    /// Remember that this invocation relied on the actions behind `outcome`.
+    pub(super) fn note_used(&self, outcome: &BuildOutcome) {
+        self.used
+            .lock()
+            .expect("used actions lock poisoned")
+            .extend(outcome.cache_keys.iter().copied());
+    }
+
+    /// Whether reused outcomes should count as cache uses this invocation.
+    pub(super) fn marks_use(&self) -> bool {
+        self.marks_use
+    }
+
+    /// Cache keys of the actions behind the outcomes this invocation reused
+    /// or recorded.
+    pub(super) fn used_actions(&self) -> Vec<Digest> {
+        self.used
+            .lock()
+            .expect("used actions lock poisoned")
+            .iter()
+            .copied()
+            .collect()
     }
 
     #[cfg(test)]
@@ -402,6 +465,7 @@ impl TargetOutcomes {
             cached_results: &outcome.cached_results,
             intermediate_outputs: &outcome.intermediate_outputs,
             per_action_outcomes: &outcome.per_action_outcomes,
+            cache_keys: &outcome.cache_keys,
         };
         let Some(name) = self.write_record(&record) else {
             return;
@@ -554,6 +618,7 @@ impl Record {
                     action
                 })
                 .collect(),
+            cache_keys: self.cache_keys,
         })
     }
 

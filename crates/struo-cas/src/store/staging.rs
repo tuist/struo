@@ -80,7 +80,9 @@ impl Cas {
 
     pub(crate) async fn commit_staged(&self, staged: PendingBlob) -> Result<Digest> {
         let final_path = self.blob_path(&staged.digest);
-        if !tokio::fs::try_exists(&final_path).await.unwrap_or(false) {
+        if tokio::fs::try_exists(&final_path).await.unwrap_or(false) {
+            crate::filesystem::mark_used(vec![final_path]).await;
+        } else {
             rename_into_place(&staged.tmp, &final_path).await?;
         }
         Ok(staged.digest)

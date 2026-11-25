@@ -59,6 +59,7 @@ fn outcome() -> BuildOutcome {
         cached_results: Vec::new(),
         intermediate_outputs: BTreeSet::new(),
         per_action_outcomes: Vec::new(),
+        cache_keys: Vec::new(),
     }
 }
 

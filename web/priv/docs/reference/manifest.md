@@ -44,13 +44,33 @@ These tables are read only from the root manifest:
 | `[infrastructure.cache]` | Chooses the shared cache provider. |
 | `[infrastructure.execution]` | Chooses the remote execution provider. |
 | `[infrastructure.artifacts]` | Chooses the artifact publication provider. |
+| `[local_cache]` | Caps the local cache on this machine with `max_size`. See below. |
 
-Package manifests that declare `[modules]` are rejected. Keep shared module
+Package manifests that declare `[modules]`, `[reporting]`, or `[local_cache]`
+are rejected. Keep shared module
 and infrastructure configuration at the workspace root so every package sees
 the same definitions.
 
 See [Modules](/reference/modules/) and [Infrastructure](/guide/infrastructure/)
 for the contracts owned by those tables.
+
+`[local_cache] max_size` sets the size the local cache is kept under. It takes
+a byte count or a size such as `"50GB"` or `"8GiB"` (KB, MB, GB, and TB are
+powers of 1000; KiB, MiB, GiB, and TiB are powers of 1024), and `0` turns
+automatic cleanup off. A value that is not a size is rejected when the
+manifest loads. It defaults to 20 GB, and the `STRUO_CACHE_MAX_SIZE`
+environment variable overrides it:
+
+```toml
+[local_cache]
+max_size = "50GB"
+```
+
+The local cache is shared by every workspace on the machine. When workspaces
+set different values, the cleanup applies the value of the workspace whose
+command started it, so prefer `STRUO_CACHE_MAX_SIZE` when one machine works
+on several workspaces with different needs. See
+[Keep the local cache bounded](/guide/scripted/caching#keep-the-local-cache-bounded).
 
 Argument values are hashed by default. To allow names declared in the workspace
 graph to appear as readable values in live run telemetry, opt in explicitly:

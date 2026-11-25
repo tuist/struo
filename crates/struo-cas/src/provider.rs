@@ -1,5 +1,6 @@
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt};
 
@@ -468,11 +469,22 @@ impl CacheProvider {
     ///
     /// Only the local tier is collected: the Tuist remote tier is shared
     /// and managed server-side, so `gc` never deletes from it.
-    pub async fn gc(&self, max_bytes: u64, dry_run: bool) -> Result<GcReport> {
+    pub async fn gc(&self, max_bytes: u64, grace: Duration, dry_run: bool) -> Result<GcReport> {
+        self.local().gc(max_bytes, grace, dry_run).await
+    }
+
+    /// Record a use of each local action result that is present, for
+    /// callers that reuse cached work through their own records instead of
+    /// a lookup, so garbage collection treats it as recently used.
+    pub async fn mark_actions_used(&self, actions: impl IntoIterator<Item = Digest>) {
+        self.local().mark_actions_used(actions).await;
+    }
+
+    fn local(&self) -> &Cas {
         match self {
-            Self::Local(cas) => cas.gc(max_bytes, dry_run).await,
-            Self::Tuist(cache) => cache.local().gc(max_bytes, dry_run).await,
-            Self::Remote(cache) => cache.local().gc(max_bytes, dry_run).await,
+            Self::Local(cas) => cas,
+            Self::Tuist(cache) => cache.local(),
+            Self::Remote(cache) => cache.local(),
         }
     }
 
@@ -481,9 +493,12 @@ impl CacheProvider {
     /// immediately trip the check again. Returns `None` when the store
     /// is already within budget.
     ///
-    /// Cheap enough to call after each `put`: it only walks the store
-    /// when it actually needs to reclaim.
-    pub async fn maybe_evict_over_cap(&self, cap_bytes: u64) -> Result<Option<GcReport>> {
+    /// Nothing used within `grace` is evicted; see [`Cas::gc`].
+    pub async fn maybe_evict_over_cap(
+        &self,
+        cap_bytes: u64,
+        grace: Duration,
+    ) -> Result<Option<GcReport>> {
         if cap_bytes == 0 {
             return Ok(None);
         }
@@ -493,7 +508,7 @@ impl CacheProvider {
             return Ok(None);
         }
         let target = cap_bytes.saturating_mul(4) / 5;
-        let report = self.gc(target, false).await?;
+        let report = self.gc(target, grace, false).await?;
         Ok(Some(report))
     }
 }
@@ -503,6 +518,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use tempfile::TempDir;
+
+    use std::time::Duration;
 
     use super::CacheProvider;
     use crate::{ActionResult, Digest};
@@ -594,7 +611,10 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let provider = CacheProvider::open_local(tmp.path());
         provider.put_blob(b"small").await.unwrap();
-        let report = provider.maybe_evict_over_cap(1_000_000).await.unwrap();
+        let report = provider
+            .maybe_evict_over_cap(1_000_000, Duration::ZERO)
+            .await
+            .unwrap();
         assert!(
             report.is_none(),
             "expected no eviction when under cap, got {report:?}"
@@ -615,7 +635,7 @@ mod tests {
         }
         let before = provider.stats().await.unwrap();
         let report = provider
-            .maybe_evict_over_cap(before.blob_bytes / 2)
+            .maybe_evict_over_cap(before.blob_bytes / 2, Duration::ZERO)
             .await
             .unwrap()
             .expect("eviction should fire when over cap");
@@ -628,7 +648,10 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let provider = CacheProvider::open_local(tmp.path());
         provider.put_blob(b"payload").await.unwrap();
-        let report = provider.maybe_evict_over_cap(0).await.unwrap();
+        let report = provider
+            .maybe_evict_over_cap(0, Duration::ZERO)
+            .await
+            .unwrap();
         assert!(report.is_none());
     }
 }

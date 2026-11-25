@@ -91,7 +91,11 @@ async fn a_republished_result_with_evicted_blobs_reexecutes_safely() {
         outputs.push(WorkspacePath::try_from("output").unwrap());
     }
     let captured = runner.run(&action).await.unwrap().result;
-    runner.cache().gc(0, false).await.unwrap();
+    runner
+        .cache()
+        .gc(0, std::time::Duration::ZERO, false)
+        .await
+        .unwrap();
     runner
         .cache()
         .put_action_result(&action.digest(), &captured)

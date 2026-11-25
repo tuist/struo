@@ -27,7 +27,13 @@ pub(crate) fn run() -> ExitCode {
         return handle_incomplete_command(path);
     }
     #[cfg(unix)]
-    if matches!(cli.command, Some(cli::Cmd::ChangeTracker)) && !cli.list {
+    // Detached helpers must not hold the launching command's pipes open, or a
+    // caller waiting for their end of file waits for the helper too.
+    if matches!(
+        cli.command,
+        Some(cli::Cmd::ChangeTracker | cli::Cmd::CacheRetention)
+    ) && !cli.list
+    {
         if let Err(error) = crate::commands::change_tracker::close_inherited_descriptors() {
             errors::write_dispatch_error(cli.format, cli.verbose, &error.into());
             return ExitCode::from(2);

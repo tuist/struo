@@ -83,7 +83,9 @@ where
         check(&sink.cancelled)?;
         let (compressed, digest, file) = sink.output.prepare(None)?;
         let destination = owned.blob_path(&digest);
-        if !destination.try_exists().unwrap_or(false) {
+        if destination.try_exists().unwrap_or(false) {
+            crate::filesystem::mark_used_blocking(&destination);
+        } else {
             file.sync_all()?;
             drop(file);
             check(&sink.cancelled)?;

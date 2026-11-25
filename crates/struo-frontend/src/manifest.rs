@@ -19,6 +19,7 @@ struct Manifest {
     infrastructures: BTreeMap<String, InfrastructureProviderToml>,
     cache_provider: Option<CacheProviderToml>,
     reporting: Option<ReportingToml>,
+    local_cache: Option<LocalCacheToml>,
     modules: Option<ModulesToml>,
     rules: Option<ModulesToml>,
     trigger: Option<toml::Value>,
@@ -45,6 +46,85 @@ impl Manifest {
         }
         Ok(manifest)
     }
+}
+
+/// Settings for this machine's local cache, which every workspace on it
+/// shares.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct LocalCacheToml {
+    max_size: Option<SizeToml>,
+}
+
+/// A size written as a byte count or as text such as `"50GB"`, checked
+/// against [`parse_size`] when the manifest is parsed.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(try_from = "SizeInput")]
+struct SizeToml(u64);
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SizeInput {
+    Bytes(u64),
+    Text(String),
+}
+
+impl TryFrom<SizeInput> for SizeToml {
+    type Error = String;
+
+    fn try_from(input: SizeInput) -> std::result::Result<Self, String> {
+        match input {
+            SizeInput::Bytes(bytes) => Ok(Self(bytes)),
+            SizeInput::Text(text) => parse_size(&text)
+                .map(Self)
+                .map_err(|error| format!("invalid size `{text}`: {error}")),
+        }
+    }
+}
+
+/// `[local_cache] max_size` from a root manifest, in bytes.
+pub fn load_local_cache_max_size_toml_str(path: &str, src: &str) -> Result<Option<u64>> {
+    let manifest = Manifest::parse(path, src, "")?;
+    Ok(manifest
+        .local_cache
+        .and_then(|local_cache| local_cache.max_size)
+        .map(|size| size.0))
+}
+
+/// Parse a byte size with an optional decimal (KB/MB/GB/TB, powers of
+/// 1000) or binary (KiB/MiB/GiB/TiB, powers of 1024) suffix. A bare
+/// number, or a `B` suffix, is bytes. Case-insensitive; surrounding
+/// whitespace and a space before the unit are allowed.
+pub fn parse_size(raw: &str) -> std::result::Result<u64, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("expected a size such as `500MB`, `2GiB`, or a byte count".into());
+    }
+    let digits_end = trimmed
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(trimmed.len());
+    let (number, unit) = trimmed.split_at(digits_end);
+    if number.is_empty() {
+        return Err(format!("`{raw}` must start with a number"));
+    }
+    let value: u64 = number
+        .parse()
+        .map_err(|_| format!("`{number}` is not a valid whole number of units"))?;
+    let multiplier = match unit.trim().to_ascii_lowercase().as_str() {
+        "" | "b" => 1_u64,
+        "kb" => 1_000,
+        "mb" => 1_000_000,
+        "gb" => 1_000_000_000,
+        "tb" => 1_000_000_000_000,
+        "kib" | "k" => 1_024,
+        "mib" | "m" => 1_024 * 1_024,
+        "gib" | "g" => 1_024 * 1_024 * 1_024,
+        "tib" | "t" => 1_024 * 1_024 * 1_024 * 1_024,
+        other => return Err(format!("unknown size unit `{other}`")),
+    };
+    value
+        .checked_mul(multiplier)
+        .ok_or_else(|| format!("`{raw}` overflows a 64-bit byte count"))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -261,6 +341,12 @@ pub(crate) fn load_toml_with_configuration(
         return Err(Error::ManifestSchema {
             path: display_name.to_string(),
             kind: ManifestSchemaError::ReportingInPackage,
+        });
+    }
+    if manifest.local_cache.is_some() && !package.is_empty() {
+        return Err(Error::ManifestSchema {
+            path: display_name.to_string(),
+            kind: ManifestSchemaError::LocalCacheInPackage,
         });
     }
     manifest
@@ -929,6 +1015,38 @@ paths = ["rules/*.star"]
         )
         .unwrap_err();
         assert!(error.to_string().contains("unknown variant"));
+    }
+
+    #[test]
+    fn local_cache_size_is_root_only_and_accepts_text_or_bytes() {
+        let text = "[local_cache]\nmax_size = '50GB'\n";
+        assert_eq!(
+            load_local_cache_max_size_toml_str("struo.toml", text).unwrap(),
+            Some(50_000_000_000)
+        );
+        assert_eq!(
+            load_local_cache_max_size_toml_str("struo.toml", "[local_cache]\nmax_size = 0\n")
+                .unwrap(),
+            Some(0)
+        );
+        assert!(load_toml_with("struo.toml", text, Path::new("."), "").is_ok());
+        let error = load_toml_with("apps/struo.toml", text, Path::new("."), "apps").unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("local cache settings are only loaded from the root"));
+        assert!(
+            load_local_cache_max_size_toml_str("struo.toml", "[local_cache]\nmax_bytes = 1\n")
+                .is_err()
+        );
+        let error = load_toml_with(
+            "struo.toml",
+            "[local_cache]\nmax_size = 'lots'\n",
+            Path::new("."),
+            "",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("invalid size `lots`"), "{error}");
     }
 
     #[test]

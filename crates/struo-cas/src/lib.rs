@@ -33,7 +33,7 @@ pub use budget::{
     MIN_TRANSFER_MEMORY_BYTES,
 };
 pub use error::{Error, ErrorKind, Result};
-pub use gc::GcReport;
+pub use gc::{GcReport, AUTOMATIC_GC_GRACE};
 pub use model::{ActionResult, Stats};
 pub use provider::{ActionCacheHit, CacheProvider};
 pub use remote::{
