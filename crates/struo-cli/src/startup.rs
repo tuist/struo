@@ -26,6 +26,26 @@ pub(crate) fn run() -> ExitCode {
     if let Some(path) = cli.incomplete_command_help_path() {
         return handle_incomplete_command(path);
     }
+    if !cli.list
+        && matches!(
+            cli.command,
+            Some(cli::Cmd::Runtime {
+                cmd: Some(cli::RuntimeCmd::Worker {
+                    private_proc_mounts: true,
+                    ..
+                })
+            })
+        )
+    {
+        #[cfg(target_os = "linux")]
+        let result = crate::commands::runtime::worker::mounts::prepare();
+        #[cfg(not(target_os = "linux"))]
+        let result = Err(anyhow::anyhow!("private worker mounts require Linux"));
+        if let Err(error) = result {
+            errors::write_dispatch_error(cli.format, cli.verbose, &error);
+            return ExitCode::from(2);
+        }
+    }
     #[cfg(unix)]
     // Detached helpers must not hold the launching command's pipes open, or a
     // caller waiting for their end of file waits for the helper too.

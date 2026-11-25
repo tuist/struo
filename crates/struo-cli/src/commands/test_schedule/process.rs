@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use struo_core::{SandboxMode, TestBatch, TestBatchStatus};
 
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(super) fn run_test_target(
     executable: &Path,
     workspace: &Path,
@@ -12,6 +13,7 @@ pub(super) fn run_test_target(
     sandbox: SandboxMode,
     limits: super::executor::ChildLimits,
     portable: Option<&super::portable::Invocation>,
+    configuration: Option<&Path>,
 ) -> Result<Value> {
     if super::cancellation::cancelled() {
         anyhow::bail!(
@@ -24,6 +26,10 @@ pub(super) fn run_test_target(
         SandboxMode::Inputs => "inputs",
         SandboxMode::CopiedInputs => "copied-inputs",
     };
+    let configuration_value = configuration.map(super::Configuration::read).transpose()?;
+    let path_suffix = configuration_value
+        .as_ref()
+        .map_or("", |configuration| configuration.path_suffix.as_str());
     let mut command = Command::new(executable);
     // The schedule writes one snapshot for all of its batches.
     command.env_remove(crate::progress_file::ENV);
@@ -37,11 +43,16 @@ pub(super) fn run_test_target(
         .arg("--cpu-limit")
         .arg(limits.cpu_slots.max(1).to_string());
     command.arg("test").arg("--sandbox").arg(sandbox);
+    if let Some(configuration) = configuration {
+        command
+            .arg("--internal-test-configuration")
+            .arg(configuration);
+    }
     if let Some(portable) = portable {
         portable.add_to_command(&mut command, &batch.id);
     }
     if portable.is_some() || batch.test_filters.is_empty() {
-        let path = workspace.join(results_directory(batch)?.join("test_results.json"));
+        let path = workspace.join(results_directory(batch, path_suffix)?.join("test_results.json"));
         match std::fs::remove_file(&path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -69,7 +80,7 @@ pub(super) fn run_test_target(
         None
     } else {
         Some(
-            results_directory(batch)?
+            results_directory(batch, path_suffix)?
                 .join("test_results.json")
                 .to_string_lossy()
                 .replace(std::path::MAIN_SEPARATOR, "/"),
@@ -89,7 +100,7 @@ pub(super) fn run_test_target(
             "exact batch did not return a completed test execution record"
         ))
     } else {
-        load_batch_results(workspace, batch, results_path)
+        load_batch_results(workspace, batch, results_path, path_suffix)
     };
     let (results, results_error) = match loaded {
         Ok(results) => (Some(results), None),
@@ -119,9 +130,10 @@ pub(super) fn run_test_target(
     }))
 }
 
-fn results_directory(batch: &TestBatch) -> Result<std::path::PathBuf> {
+fn results_directory(batch: &TestBatch, path_suffix: &str) -> Result<std::path::PathBuf> {
     let directory = std::path::PathBuf::from(".struo/out")
         .join(crate::commands::query::target_id_path(&batch.target)?)
+        .join(path_suffix.trim_start_matches('/'))
         .join("test");
     Ok(if batch.test_filters.is_empty() {
         directory
@@ -134,12 +146,13 @@ fn load_batch_results(
     workspace: &Path,
     batch: &TestBatch,
     results_path: Option<&str>,
+    path_suffix: &str,
 ) -> Result<Value> {
     if !batch.test_filters.is_empty() {
         let path = struo_core::WorkspacePath::try_from(
             results_path.context("exact batch did not declare a result path")?,
         )?;
-        let directory = results_directory(batch)?;
+        let directory = results_directory(batch, path_suffix)?;
         anyhow::ensure!(
             std::path::Path::new(path.as_str()).starts_with(&directory),
             "exact batch result must be inside `{}`; the runner must isolate batch outputs",

@@ -109,6 +109,7 @@ pub(crate) async fn run(
     requested_workers: Option<usize>,
     sandbox: SandboxMode,
     resource_limits: ResourceLimits,
+    configuration: super::Configuration,
 ) -> Result<ExitCode> {
     let value = execute(
         workspace,
@@ -119,6 +120,7 @@ pub(crate) async fn run(
         sandbox,
         resource_limits,
         false,
+        configuration,
     )
     .await?;
     let success = value["success"] == true;
@@ -154,6 +156,7 @@ pub(super) async fn execute(
     sandbox: SandboxMode,
     resource_limits: ResourceLimits,
     reporting: bool,
+    configuration: super::Configuration,
 ) -> Result<serde_json::Value> {
     let portable = PortableTestPlan::read(&invocation.path)?;
     portable.validate(workspace, &graph)?;
@@ -188,6 +191,7 @@ pub(super) async fn execute(
         resource_limits,
         Some(invocation),
         reporting,
+        configuration,
     )
     .await?;
     let complete = report.runs.len() == selected_batch_ids.len()

@@ -76,7 +76,7 @@ Each guide covers prerequisites, configuration, usage, and limits.
 | [Object storage](/guide/infrastructure/object-storage) | Yes | No | Your S3, Google Cloud Storage, or Azure bucket |
 | [OpenSandbox](/guide/infrastructure/opensandbox) | No | Yes, self-hosted | Your own sandbox service |
 | [Runloop](/guide/infrastructure/runloop) | No | Yes | Hosted Devbox Blueprint |
-| [Sprites](/guide/infrastructure/sprites) | No | Yes | Disposable Fly.io Linux environment |
+| [Sprites](/guide/infrastructure/sprites) | Yes, optional retained cache | Yes | Disposable Fly.io Linux environments or a locked worker pool |
 | [Tensorlake](/guide/infrastructure/tensorlake) | No | Yes | Hosted registered image or snapshot |
 | [Together Code Sandbox](/guide/infrastructure/together) | No | Yes | Hosted snapshot |
 | [Vercel Sandbox](/guide/infrastructure/vercel) | No | Yes | Hosted runtime |

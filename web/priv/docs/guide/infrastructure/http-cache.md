@@ -102,6 +102,39 @@ Verify sharing from a second machine with an empty local cache, the same
 configuration and inputs. A hit on the first machine alone can come from its
 local cache.
 
+### Run Struo as the server
+
+`struo cache serve` runs an HTTP cache in the Struo executable. Create a
+private JSON credential file containing `{"token":"<random-secret>"}`, then
+start the server:
+
+```sh
+struo --memory-limit 256MiB cache serve \
+  --listen 127.0.0.1:8080 \
+  --data-dir /srv/struo-cache \
+  --token-file /etc/struo-cache/credential.json \
+  --max-size 20GiB
+```
+
+Keep the credential file readable only by the server's account. The token
+authenticates every request, including reads. Configure clients with
+`kind = "http_cache"`, the server URL, and `token_env`; omit `key_prefix`.
+The server accepts Struo's versioned blob and action keys at its root.
+
+The listener defaults to loopback. For remote access, put a TLS reverse proxy
+in front of it and use HTTPS in client configuration. Binding to another
+interface does not enable TLS.
+
+Use a dedicated data directory owned by one server process. Complete objects
+survive restarts; startup removes abandoned uploads. The disk budget includes
+staged uploads and charges each object at least 4 KiB, rounded to 4 KiB units.
+Replacing an object requires room for both the old and staged versions.
+Old objects are evicted by access time. Transfers stream through bounded
+buffers, with at most eight connections and ten-second network idle timeouts.
+
+This command does not provision infrastructure. The managed Sprites cache
+currently installs its bundled Python service, not this executable.
+
 ### Use it from CI
 
 Struo does not use a CI service's own cache storage. GitHub Actions cache
@@ -146,6 +179,16 @@ whose referenced content has been evicted is treated as a miss.
 
 Publishing is best effort. A failed upload is logged as a warning, and the
 command still succeeds with its local result.
+
+### Compatibility
+
+Locked Sprites workers can fetch input blobs and publish output files directly
+to this cache. Configure the usual cache and execution bindings; Struo passes
+cache-only connection material to the trusted worker service, never to actions.
+The coordinator still restores outputs locally, but downstream workers fetch
+their bytes from the shared cache rather than receiving another relay upload.
+Read-only mode disables worker publication. Cache misses, integrity failures,
+outages, or insufficient worker transfer memory use coordinator transfers.
 
 ### Service requirements
 

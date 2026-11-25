@@ -10,7 +10,8 @@ const CACHE_DIR_MARKER: &str = "{{struo.cache_dir}}";
 
 #[must_use]
 pub fn resolve_execution_value(value: &str, execution_root: &Path) -> String {
-    let mut value = value.replace(EXECUTION_ROOT_MARKER, &command_path(execution_root));
+    let mut value = crate::execution_tool::resolve_local(value)
+        .replace(EXECUTION_ROOT_MARKER, &command_path(execution_root));
     if value.contains("{{struo.") {
         for (marker, path) in host_directories() {
             value = value.replace(marker, &command_path(&path));

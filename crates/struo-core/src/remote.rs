@@ -22,6 +22,7 @@ mod opensandbox;
 mod output_install;
 pub(crate) use output_install::restore_output_snapshots;
 mod path;
+pub(crate) use path::output_roots;
 mod phase;
 mod runloop;
 mod sprites;
@@ -32,6 +33,7 @@ mod together;
 #[cfg(any(target_os = "linux", target_vendor = "apple"))]
 mod tuist;
 mod vercel;
+mod worker_pool;
 
 pub(crate) struct PreparedCommand<'a> {
     pub lease: Option<ExecutionPermit>,
@@ -89,10 +91,12 @@ pub(crate) async fn execute_command(
     stream_to_parent: bool,
     setup: CommandFilesystemSetup<'_>,
 ) -> Result<ActionResult> {
-    if !matches!(executor, Executor::Docker | Executor::Tuist)
-        && (!setup.clean_paths.is_empty()
-            || !setup.create_dirs.is_empty()
-            || !setup.post_setup_inputs.is_empty())
+    if !matches!(
+        executor,
+        Executor::Docker | Executor::Tuist | Executor::Sprites
+    ) && (!setup.clean_paths.is_empty()
+        || !setup.create_dirs.is_empty()
+        || !setup.post_setup_inputs.is_empty())
     {
         return Err(executor.unsupported("explicit command filesystem setup"));
     }
@@ -167,6 +171,7 @@ pub(crate) async fn execute_command(
                 workspace_root,
                 cache,
                 stream_to_parent,
+                setup,
             ))
             .await
         }

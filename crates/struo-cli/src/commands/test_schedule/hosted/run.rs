@@ -22,6 +22,8 @@ pub(crate) async fn run(
     jobs: Option<usize>,
     sandbox: SandboxMode,
     limits: ResourceLimits,
+    configuration: super::super::Configuration,
+    resolved: &crate::commands::graph::ResolvedConfiguration,
 ) -> Result<ExitCode> {
     let id = uuid::Uuid::parse_str(id)
         .context("--shard-plan must be an exact hosted plan UUID")?
@@ -60,6 +62,8 @@ pub(crate) async fn run(
         jobs,
         sandbox,
         limits,
+        configuration,
+        resolved,
     )
     .await;
     let (cases, success) = result
@@ -128,6 +132,8 @@ async fn execute(
     jobs: Option<usize>,
     sandbox: SandboxMode,
     limits: ResourceLimits,
+    configuration: super::super::Configuration,
+    resolved: &crate::commands::graph::ResolvedConfiguration,
 ) -> Result<(Vec<Value>, bool)> {
     let urls = assignment["download_urls"]
         .as_array()
@@ -143,7 +149,7 @@ async fn execute(
     let path = directory.path().join("plan.json");
     artifact::unpack(&artifact, id, &path, limits.clone()).await?;
     let portable = PortableTestPlan::read(&path)?;
-    let graph = struo_frontend::load_graph_workspace(workspace)?;
+    let graph = resolved.load_graph(workspace)?;
     portable.validate(workspace, &graph)?;
     portable.select(modules)?;
     // An empty hosted assignment is not the portable CLI's implicit all-batches selection.
@@ -163,6 +169,7 @@ async fn execute(
         sandbox,
         limits,
         true,
+        configuration,
     )
     .await?;
     report::project(&value, &portable, modules)

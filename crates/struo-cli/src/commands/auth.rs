@@ -20,6 +20,9 @@ pub async fn login(
     output: Output,
 ) -> Result<()> {
     match cache_provider::resolve_auth_provider(workspace, xdg, provider)? {
+        ResolvedCacheProviderConfig::Sprites(_) => Err(anyhow::anyhow!(
+            "Sprites uses SPRITES_TOKEN; set it in your environment instead of using `struo auth login`"
+        )),
         ResolvedCacheProviderConfig::Local
         | ResolvedCacheProviderConfig::ObjectStore(_)
         | ResolvedCacheProviderConfig::HttpCache(_) => Err(unsupported_auth_provider(provider)),
@@ -51,6 +54,9 @@ pub async fn login(
 
 pub async fn logout(workspace: &Path, xdg: &Xdg, provider: &str, output: Output) -> Result<()> {
     match cache_provider::resolve_auth_provider(workspace, xdg, provider)? {
+        ResolvedCacheProviderConfig::Sprites(_) => Err(anyhow::anyhow!(
+            "Sprites uses SPRITES_TOKEN; unset it in your environment instead of using `struo auth logout`"
+        )),
         ResolvedCacheProviderConfig::Local
         | ResolvedCacheProviderConfig::ObjectStore(_)
         | ResolvedCacheProviderConfig::HttpCache(_) => Err(unsupported_auth_provider(provider)),

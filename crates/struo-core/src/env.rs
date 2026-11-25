@@ -13,6 +13,10 @@ use std::env;
 mod mise;
 mod mise_runtime;
 mod path;
+mod worker;
+
+pub(crate) use mise_runtime::asset_for;
+pub use worker::WorkerPoolSpec;
 
 pub use mise::{
     workspace_executable, workspace_has_mise_config, workspace_mise_command, workspace_mise_env,

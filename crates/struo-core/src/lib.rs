@@ -21,6 +21,7 @@ pub use struo_presentation::{ActionContext, ActionPackage, ActionPlatform, Actio
 mod evidence;
 mod execute;
 mod execution_path;
+pub mod execution_tool;
 mod executor;
 mod file_blob;
 mod fingerprint_store;
@@ -45,6 +46,7 @@ mod test_manifest;
 mod test_plan;
 mod test_results;
 mod test_schedule;
+pub mod worker;
 mod xdg;
 
 pub use action::{
@@ -60,7 +62,8 @@ pub use env::{
     is_mise_shim, managed_mise, managed_mise_path, select_tool_env, tool_env, workspace_executable,
     workspace_has_mise_config, workspace_mise_command, workspace_mise_env, workspace_prepare_tools,
     workspace_prepared_tool_env, workspace_tool, workspace_tool_command, workspace_tool_env,
-    workspace_tool_env_with_executables, workspace_tool_var, ToolEnvError, MANAGED_MISE_VERSION,
+    workspace_tool_env_with_executables, workspace_tool_var, ToolEnvError, WorkerPoolSpec,
+    MANAGED_MISE_VERSION,
 };
 pub use error::{Error, Result};
 pub use events::{

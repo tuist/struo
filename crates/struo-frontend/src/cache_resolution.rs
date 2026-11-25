@@ -20,6 +20,7 @@ pub enum ResolvedCacheProviderConfig {
     Tuist(ResolvedTuistCacheProviderConfig),
     ObjectStore(ResolvedObjectStoreCacheProviderConfig),
     HttpCache(ResolvedHttpCacheProviderConfig),
+    Sprites(crate::SpritesProviderConfig),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,6 +151,7 @@ fn resolve_named_provider(
         project: binding_project,
     } = binding;
     match provider {
+        UserCacheProvider::Sprites(config) => ResolvedCacheProviderConfig::Sprites(config),
         UserCacheProvider::Tuist {
             url,
             oauth_client_id,
@@ -188,8 +190,10 @@ fn resolve_named_workspace_provider(
     } = binding;
     match provider {
         InfrastructureProviderConfig::Local => Ok(ResolvedCacheProviderConfig::Local),
+        InfrastructureProviderConfig::Sprites(config) => {
+            Ok(ResolvedCacheProviderConfig::Sprites(config))
+        }
         InfrastructureProviderConfig::Microsandbox(_)
-        | InfrastructureProviderConfig::Sprites
         | InfrastructureProviderConfig::Tensorlake { .. }
         | InfrastructureProviderConfig::E2b(_)
         | InfrastructureProviderConfig::Boat(_)

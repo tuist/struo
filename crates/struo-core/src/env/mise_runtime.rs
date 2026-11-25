@@ -16,13 +16,13 @@ pub const MANAGED_MISE_VERSION: &str = "2026.9.1";
 static INSTALL_LOCK: Mutex<()> = Mutex::const_new(());
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct MiseAsset {
+pub(crate) struct MiseAsset {
     filename: &'static str,
-    sha256: &'static str,
+    pub(crate) sha256: &'static str,
 }
 
 impl MiseAsset {
-    fn url(self) -> String {
+    pub(crate) fn url(self) -> String {
         format!(
             "https://github.com/jdx/mise/releases/download/v{MANAGED_MISE_VERSION}/{}",
             self.filename
@@ -219,7 +219,7 @@ fn current_asset() -> Result<MiseAsset, ToolEnvError> {
     })
 }
 
-fn asset_for(operating_system: &str, architecture: &str) -> Option<MiseAsset> {
+pub(crate) fn asset_for(operating_system: &str, architecture: &str) -> Option<MiseAsset> {
     match (operating_system, architecture) {
         ("linux", "x86_64") => Some(MiseAsset {
             filename: "mise-v2026.9.1-linux-x64",

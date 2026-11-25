@@ -3,6 +3,7 @@
 mod query;
 mod session;
 mod supervisor;
+pub(crate) mod worker;
 
 #[cfg(unix)]
 mod protocol;

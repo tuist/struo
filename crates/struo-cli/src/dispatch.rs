@@ -342,11 +342,14 @@ async fn run_command(
             )
             .await
         }
-        Cmd::Cache { cmd } => run_cache_command(workspace, xdg, output, cmd).await,
+        Cmd::Cache { cmd } => run_cache_command(workspace, xdg, output, cmd, resource_limits).await,
         Cmd::Test {
             target,
             sandbox,
             config,
+            remote,
+            compute,
+            internal_test_configuration,
             jobs,
             coverage_report,
             shard_plan,
@@ -365,7 +368,33 @@ async fn run_command(
             batch_test_units,
             test_batch_id,
         } => {
-            let resolved = resolve_configuration(&config)?;
+            let mut configuration = if let Some(path) = &internal_test_configuration {
+                commands::test_schedule::Configuration::read(path)?
+            } else {
+                commands::test_schedule::Configuration {
+                    overrides: config,
+                    ..Default::default()
+                }
+            };
+            let mut resolved = resolve_configuration(&configuration.overrides)?;
+            if remote {
+                let execution =
+                    crate::cache_provider::resolve_execution(workspace, xdg, compute.as_deref())?;
+                configuration.execution = Some(
+                    crate::cache_provider::resolve_execution_image(workspace, xdg, execution)
+                        .await?,
+                );
+            }
+            if let Some(execution) = &configuration.execution {
+                resolved = resolved.with_execution(execution.clone())?;
+            }
+            if internal_test_configuration.is_some() {
+                anyhow::ensure!(
+                    configuration.path_suffix == resolved.path_suffix,
+                    "test configuration changed since the schedule started"
+                );
+            }
+            configuration.path_suffix.clone_from(&resolved.path_suffix);
             if let Some(id) = shard_plan {
                 return Box::pin(commands::test_schedule::hosted::run(
                     workspace,
@@ -377,6 +406,8 @@ async fn run_command(
                     jobs,
                     sandbox,
                     resource_limits.clone(),
+                    configuration,
+                    &resolved,
                 ))
                 .await;
             }
@@ -404,6 +435,7 @@ async fn run_command(
                     test_batch_id,
                     resource_limits: resource_limits.clone(),
                     resolved,
+                    configuration,
                 },
             ))
             .await
@@ -564,6 +596,7 @@ struct TestDispatchArgs {
     test_batch_id: Option<String>,
     resource_limits: ResourceLimits,
     resolved: commands::graph::ResolvedConfiguration,
+    configuration: commands::test_schedule::Configuration,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -595,6 +628,7 @@ async fn dispatch_test(workspace: &Path, xdg: &Xdg, args: TestDispatchArgs) -> R
             args.jobs,
             args.sandbox,
             args.resource_limits,
+            args.configuration,
         )
         .await;
     }
@@ -697,6 +731,7 @@ async fn dispatch_test(workspace: &Path, xdg: &Xdg, args: TestDispatchArgs) -> R
             args.jobs,
             args.sandbox,
             args.resource_limits,
+            args.configuration,
         ))
         .await;
     }
@@ -708,6 +743,7 @@ async fn dispatch_test(workspace: &Path, xdg: &Xdg, args: TestDispatchArgs) -> R
         args.jobs,
         args.sandbox,
         args.resource_limits,
+        args.configuration,
     ))
     .await
 }
@@ -961,6 +997,15 @@ async fn run_runtime_command(
     command: Option<cli::RuntimeCmd>,
 ) -> Result<ExitCode> {
     match command {
+        Some(cli::RuntimeCmd::Worker {
+            listen,
+            root,
+            options,
+            token_file,
+            private_proc_mounts: _,
+        }) => commands::runtime::worker::run(listen, root, &options, &token_file)
+            .await
+            .map(|()| ExitCode::SUCCESS),
         Some(cli::RuntimeCmd::Start { target }) => {
             let target = resolve_required_target(workspace, target)?;
             commands::runtime::start(workspace, output, &target).await
@@ -1023,13 +1068,31 @@ async fn run_auth_command(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 async fn run_cache_command(
     workspace: &Path,
     xdg: &Xdg,
     output: Output,
     command: Option<cli::CacheCmd>,
+    resource_limits: &ResourceLimits,
 ) -> Result<ExitCode> {
     match command {
+        Some(cli::CacheCmd::Serve {
+            listen,
+            data_dir,
+            token_file,
+            max_size,
+        }) => {
+            commands::cache::serve::run(
+                listen,
+                &data_dir,
+                &token_file,
+                max_size.bytes(),
+                resource_limits,
+            )
+            .await?;
+            Ok(ExitCode::SUCCESS)
+        }
         Some(cli::CacheCmd::Stats) => {
             let cache = crate::cache_provider::resolve(workspace, xdg)?;
             commands::cache::print_stats(&cache, cache_retention::cap_bytes(workspace)?, output)

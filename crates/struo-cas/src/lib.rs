@@ -23,6 +23,7 @@ mod model;
 mod provider;
 pub mod remote;
 pub mod request_metadata;
+pub mod server;
 mod stats;
 mod store;
 pub mod transfer;
@@ -37,8 +38,8 @@ pub use gc::{GcReport, AUTOMATIC_GC_GRACE};
 pub use model::{ActionResult, Stats};
 pub use provider::{ActionCacheHit, CacheProvider};
 pub use remote::{
-    HttpCacheAuth, HttpCacheRemote, ObjectStoreRemote, RemoteAccess, RemoteCache, RemoteStore,
-    STRUO_CACHE_READ_ONLY_ENV,
+    HttpCacheAuth, HttpCacheConnection, HttpCacheRemote, ObjectStoreRemote, RemoteAccess,
+    RemoteCache, RemoteStore, SpritesCacheRemote, STRUO_CACHE_READ_ONLY_ENV,
 };
 pub use store::{Cas, StagedBlob, StagedBlobReader};
 pub use struo_cache_core::Digest;

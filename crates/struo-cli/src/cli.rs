@@ -426,6 +426,17 @@ pub enum Cmd {
         #[usage(long, default = "off")]
         sandbox: SandboxMode,
 
+        /// Execute test and build actions in the configured provider environment.
+        #[usage(long)]
+        remote: bool,
+
+        /// Compute provider used with --remote.
+        #[usage(long, value_name = "PROVIDER", requires = "remote")]
+        compute: Option<String>,
+
+        #[usage(long, hide = true, conflicts("remote", "compute", "config"))]
+        internal_test_configuration: Option<PathBuf>,
+
         /// Override the workspace build configuration. See `struo build --config`.
         #[usage(long, value_name = "KEY=VALUE")]
         config: Vec<String>,
@@ -1038,6 +1049,54 @@ mod tests {
     fn parse(argv: &[&str]) -> Cli {
         let argv = argv.iter().map(OsStr::new).collect::<Vec<_>>();
         Cli::try_parse_from(&argv).unwrap()
+    }
+
+    #[test]
+    fn test_remote_options_accept_direct_scheduled_and_portable_execution() {
+        for selection in [
+            vec!["tests"],
+            vec!["--all", "--jobs", "2"],
+            vec!["--plan", "plan.json", "--batch", "batch-id", "--jobs", "2"],
+            vec!["--shard-plan", "hosted-plan", "--shard-index", "0"],
+        ] {
+            let mut arguments = vec!["struo", "test", "--remote", "--compute", "workers"];
+            arguments.extend(selection);
+            let Some(Cmd::Test {
+                remote, compute, ..
+            }) = parse(&arguments).command
+            else {
+                panic!("expected test command");
+            };
+            assert!(remote);
+            assert_eq!(compute.as_deref(), Some("workers"));
+        }
+        let Some(Cmd::Test {
+            remote, compute, ..
+        }) = parse(&["struo", "test", "--remote", "tests"]).command
+        else {
+            panic!("expected test command");
+        };
+        assert!(remote);
+        assert!(compute.is_none());
+    }
+
+    #[test]
+    fn test_compute_requires_remote_and_internal_configuration_cannot_be_overridden() {
+        for options in [
+            vec!["--compute", "workers"],
+            vec!["--internal-test-configuration", "config.json", "--remote"],
+            vec![
+                "--internal-test-configuration",
+                "config.json",
+                "--config",
+                "os=linux",
+            ],
+        ] {
+            let mut arguments = vec!["struo", "test", "tests"];
+            arguments.extend(options);
+            let argv = arguments.iter().map(OsStr::new).collect::<Vec<_>>();
+            assert!(Cli::try_parse_from(&argv).is_err(), "{arguments:?}");
+        }
     }
 
     #[test]

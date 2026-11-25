@@ -907,6 +907,17 @@ separate update workflow.
   remote execution root immediately before launching the process. Use it for
   tools that require absolute paths without embedding a host workspace path in
   the action digest.
+- `execution_tool(path, resolve, suffix = "")` binds an analysis-host
+  executable to a tool on a locked, prepared worker. `resolve` is a direct
+  argument vector run in the worker's locked environment; its stdout must be
+  one absolute path. Struo appends the optional relative `suffix` and verifies
+  that executable's SHA-256 against `path` before launching the action. A
+  missing or different tool fails the action instead of silently selecting
+  another version. Local execution and execution without a worker pool retain
+  `path`. Bindings may appear inside `argv` and `env` values, including inline
+  shell arguments, but not in generated files or response files. Toolchain
+  probing remains on the analysis host; keep its versions aligned with the
+  worker's lockfile. Prepared Sprites workers support this resolution.
 - `cmd_args(args, use_arg_file = None, format = None, before_each = None)`
   creates a structured command-line fragment. `args` is a transitive set or a
   list of strings and transitive sets; each set contributes its items in

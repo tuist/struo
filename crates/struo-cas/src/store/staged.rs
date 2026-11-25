@@ -30,6 +30,25 @@ impl std::fmt::Debug for StagedBlob {
 }
 
 impl StagedBlob {
+    /// Inspect decoded bytes without consuming the lease or retaining another file handle.
+    pub fn starts_with(&mut self, prefix: &[u8]) -> io::Result<bool> {
+        let mut temporary;
+        let file = match &mut self.backing {
+            Backing::Raw(file, _) => file,
+            Backing::Temporary(path) => {
+                temporary = std::fs::File::open(path)?;
+                &mut temporary
+            }
+        };
+        let mut bytes = Vec::new();
+        let result = (&mut *file)
+            .take(prefix.len() as u64)
+            .read_to_end(&mut bytes);
+        file.rewind()?;
+        result?;
+        Ok(bytes == prefix)
+    }
+
     /// Open a bounded-memory reader, retaining the lease until it is dropped.
     pub fn into_reader(self) -> Result<StagedBlobReader> {
         let (file, pin) = match self.backing {

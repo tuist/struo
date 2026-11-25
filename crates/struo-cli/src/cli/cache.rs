@@ -52,6 +52,25 @@ impl FromStr for OutputDigest {
 
 #[derive(Subcommands)]
 pub enum CacheCmd {
+    /// Serve an authenticated HTTP cache with bounded disk and memory usage.
+    Serve {
+        /// Address to bind. Use a TLS reverse proxy for public access.
+        #[usage(long, default = "127.0.0.1:8080")]
+        listen: std::net::SocketAddr,
+
+        /// Directory exclusively owned by this server.
+        #[usage(long)]
+        data_dir: PathBuf,
+
+        /// JSON credential file containing a nonempty `token` string.
+        #[usage(long)]
+        token_file: PathBuf,
+
+        /// Maximum object and staged-upload storage, such as `20GiB`.
+        #[usage(long, default = "20GiB")]
+        max_size: CacheSize,
+    },
+
     /// Print blob and action counts plus on-disk size.
     Stats,
 
@@ -189,6 +208,7 @@ pub enum CacheActionCmd {
 impl CacheCmd {
     pub(super) fn surface_path(&self) -> Vec<&'static str> {
         match self {
+            Self::Serve { .. } => vec!["serve"],
             Self::Stats => vec!["stats"],
             Self::Gc { .. } => vec!["gc"],
             Self::Blob { cmd } => {

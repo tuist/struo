@@ -24,6 +24,21 @@ use crate::analysis::store::{
 };
 use crate::analysis::values::{unpack_string_dict, unpack_string_list, value_to_json};
 
+fn observed_file_sha256(path: &str) -> anyhow::Result<String> {
+    observe_host_path(Path::new(path))?;
+    let digest = with_store(|store| {
+        let store = store.ok_or_else(|| anyhow!("host file digest called outside analysis"))?;
+        store.host_cache.host_file_digest(Path::new(path), || {
+            file_sha256_hex(Path::new(path)).with_context(|| format!("hashing host file `{path}`"))
+        })
+    })?;
+    observe(Observation::FileDigest {
+        path: path.to_string(),
+        sha256: digest.clone(),
+    });
+    Ok(digest)
+}
+
 #[starlark_module]
 pub(super) fn host_globals(builder: &mut GlobalsBuilder) {
     #[allow(clippy::unnecessary_wraps)]
@@ -139,6 +154,32 @@ pub(super) fn host_globals(builder: &mut GlobalsBuilder) {
         } else {
             format!("{EXECUTION_ROOT_MARKER}/{normalized}")
         })
+    }
+
+    /// Bind a host executable to an explicitly resolved prepared-worker tool.
+    fn execution_tool<'v>(
+        path: &str,
+        resolve: Value<'v>,
+        suffix: Option<&str>,
+    ) -> anyhow::Result<String> {
+        let pooled = with_store(|store| {
+            store
+                .and_then(|store| store.execution.as_ref())
+                .is_some_and(|execution| execution.properties.contains_key("worker_pool"))
+        });
+        if !pooled {
+            return Ok(path.to_string());
+        }
+        let tool = struo_core::execution_tool::ExecutionTool {
+            path: path.to_string(),
+            resolve: unpack_string_list(resolve, "resolve")?,
+            suffix: suffix.unwrap_or("").to_string(),
+            sha256: observed_file_sha256(path)?,
+        };
+        let marker = tool.marker();
+        struo_core::execution_tool::ExecutionTool::find(&marker)
+            .map_err(|message| anyhow!(message))?;
+        Ok(marker)
     }
 
     /// Find `name` on `PATH` and return its absolute path. Fails if
@@ -349,19 +390,7 @@ pub(super) fn host_globals(builder: &mut GlobalsBuilder) {
         if !analysis_active() {
             return Ok(String::new());
         }
-        observe_host_path(Path::new(path))?;
-        let digest = with_store(|store| {
-            let store = store.ok_or_else(|| anyhow!("host_file_sha256 called outside analysis"))?;
-            store.host_cache.host_file_digest(Path::new(path), || {
-                file_sha256_hex(Path::new(path))
-                    .with_context(|| format!("hashing host file `{path}`"))
-            })
-        })?;
-        observe(Observation::FileDigest {
-            path: path.to_string(),
-            sha256: digest.clone(),
-        });
-        Ok(digest)
+        observed_file_sha256(path)
     }
 
     /// Return the size in bytes of one host file. This lets a deferred

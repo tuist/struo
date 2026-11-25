@@ -157,6 +157,7 @@ impl Provisioner {
 pub fn resolve(workspace: &Path, xdg: &Xdg, provider: &str) -> Result<Provisioner> {
     match resolve_provider_config(workspace, xdg, provider)? {
         ResolvedCacheProviderConfig::Local
+        | ResolvedCacheProviderConfig::Sprites(_)
         | ResolvedCacheProviderConfig::ObjectStore(_)
         | ResolvedCacheProviderConfig::HttpCache(_) => bail!(
             "provider `{provider}` provides a storage-only cache and cannot create projects. \

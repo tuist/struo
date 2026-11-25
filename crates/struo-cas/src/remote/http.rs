@@ -21,7 +21,7 @@ const UPLOAD_CHUNK_BYTES: usize = 64 * 1024;
 const UPLOAD_BUFFERED_CHUNKS: u64 = 4;
 
 /// Credentials sent with every request.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub enum HttpCacheAuth {
     /// No `Authorization` header.
     #[default]
@@ -102,41 +102,34 @@ pub struct HttpCacheRemote {
     auth: HttpCacheAuth,
 }
 
+/// Private connection material for a trusted service performing cache transfers.
+/// Never expose this value to action environments, manifests, or logs.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpCacheConnection {
+    url: String,
+    key_prefix: String,
+    auth: HttpCacheAuth,
+}
+
+impl fmt::Debug for HttpCacheConnection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("HttpCacheConnection(<redacted>)")
+    }
+}
+
+impl HttpCacheConnection {
+    /// Validate the connection and construct a redirect-disabled client.
+    pub fn connect(&self) -> Result<HttpCacheRemote> {
+        HttpCacheRemote::new(&self.url, Some(&self.key_prefix), self.auth.clone())
+    }
+}
+
 impl HttpCacheRemote {
     /// Address a cache at `url`. Credentials are only sent over HTTPS, or
     /// plain HTTP to a loopback host.
     pub fn new(url: &str, key_prefix: Option<&str>, auth: HttpCacheAuth) -> Result<Self> {
-        let trimmed = url.trim();
-        let with_scheme = if trimmed.contains("://") {
-            trimmed.to_string()
-        } else {
-            format!("https://{trimmed}")
-        };
-        let mut base =
-            Url::parse(&with_scheme).map_err(|_| misconfigured("invalid HTTP cache URL"))?;
-        if !base.username().is_empty() || base.password().is_some() {
-            return Err(misconfigured(
-                "URL credentials are not supported; use credential environment variables",
-            ));
-        }
-        if base.query().is_some() || base.fragment().is_some() {
-            return Err(misconfigured(
-                "HTTP cache URL must not contain a query or fragment",
-            ));
-        }
-        let secure = match base.scheme() {
-            "https" => true,
-            "http" => is_loopback(&base),
-            other => return Err(misconfigured(format!("unsupported URL scheme `{other}`"))),
-        };
-        if !secure && !matches!(auth, HttpCacheAuth::None) {
-            return Err(misconfigured(
-                "refusing to send credentials over plain HTTP; use https",
-            ));
-        }
-        if !base.path().ends_with('/') {
-            base.set_path(&format!("{}/", base.path()));
-        }
+        let base = base_url(url, !matches!(auth, HttpCacheAuth::None))?;
         let key_prefix = key_prefix.unwrap_or_default();
         if key_prefix
             .chars()
@@ -220,6 +213,14 @@ impl RemoteStore for HttpCacheRemote {
         PROVIDER
     }
 
+    async fn http_connection(&self) -> Result<Option<HttpCacheConnection>> {
+        Ok(Some(HttpCacheConnection {
+            url: self.base.to_string(),
+            key_prefix: self.key_prefix.clone(),
+            auth: self.auth.clone(),
+        }))
+    }
+
     async fn head(&self, key: &str) -> Result<Option<u64>> {
         let response = self.send("head", self.request(Method::HEAD, key)?).await?;
         match response.status() {
@@ -276,8 +277,46 @@ impl RemoteStore for HttpCacheRemote {
     }
 
     fn upload_memory(&self, size: u64) -> u64 {
-        size.min(UPLOAD_CHUNK_BYTES as u64 * UPLOAD_BUFFERED_CHUNKS)
+        upload_memory(size)
     }
+}
+
+pub(super) fn upload_memory(size: u64) -> u64 {
+    size.min(UPLOAD_CHUNK_BYTES as u64 * UPLOAD_BUFFERED_CHUNKS)
+}
+
+pub(super) fn base_url(url: &str, authenticated: bool) -> Result<Url> {
+    let trimmed = url.trim();
+    let with_scheme = if trimmed.contains("://") {
+        trimmed.to_string()
+    } else {
+        format!("https://{trimmed}")
+    };
+    let mut base = Url::parse(&with_scheme).map_err(|_| misconfigured("invalid HTTP cache URL"))?;
+    if !base.username().is_empty() || base.password().is_some() {
+        return Err(misconfigured(
+            "URL credentials are not supported; use credential environment variables",
+        ));
+    }
+    if base.query().is_some() || base.fragment().is_some() {
+        return Err(misconfigured(
+            "HTTP cache URL must not contain a query or fragment",
+        ));
+    }
+    let secure = match base.scheme() {
+        "https" => true,
+        "http" => is_loopback(&base),
+        other => return Err(misconfigured(format!("unsupported URL scheme `{other}`"))),
+    };
+    if !secure && authenticated {
+        return Err(misconfigured(
+            "refusing to send credentials over plain HTTP; use https",
+        ));
+    }
+    if !base.path().ends_with('/') {
+        base.set_path(&format!("{}/", base.path()));
+    }
+    Ok(base)
 }
 
 fn content_length(response: &reqwest::Response, operation: &'static str) -> Result<u64> {

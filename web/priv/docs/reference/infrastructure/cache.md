@@ -99,6 +99,14 @@ The server must answer:
 outages. Any other status is a protocol error. Ordering and verification match
 the object storage layout above.
 
+### Struo's HTTP server
+
+`struo cache serve` implements these HTTP operations at the URL root with
+bearer authentication. It stores opaque keys and bytes; clients verify content
+digests when restoring blobs. It does not implement REAPI or execute actions.
+See [running the server](/guide/infrastructure/http-cache#run-struo-as-the-server)
+for credentials, TLS, disk budgets, and restart behavior.
+
 ## Existing REAPI Transport
 
 To serve the current Tuist adapter, implement the following gRPC REAPI v2

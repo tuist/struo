@@ -9,16 +9,25 @@ use crate::remote::lifecycle::Provider;
 use crate::{Executor, ResourceRequest, WorkspacePath};
 
 mod tls;
+mod workers;
 
 #[derive(Default)]
 struct State {
     name: String,
+    retained: bool,
+    checkpoint_comment: String,
+    fail_restore: bool,
     requests: Vec<(String, String)>,
     uploaded: Vec<u8>,
     part: Vec<u8>,
     commands: Vec<Vec<String>>,
+    worker_environment: String,
+    worker_token: String,
+    tool_environment: Vec<u8>,
+    fail_service: bool,
     hold_action: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
     hold_delete: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
+    hold_restore: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -28,6 +37,7 @@ async fn mock(
 ) -> (Client, Arc<Mutex<State>>, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
+    let service_url = url.clone();
     let state = Arc::new(Mutex::new(State::default()));
     let server_state = state.clone();
     let task = tokio::spawn(async move {
@@ -46,9 +56,17 @@ async fn mock(
             let mut words = first.split_whitespace();
             let method = words.next().unwrap().to_string();
             let path = words.next().unwrap().to_string();
+            let token = if matches!(
+                path.as_str(),
+                "/v1/health" | "/v1/actions" | "/v1/cas/missing"
+            ) {
+                server_state.lock().unwrap().worker_token.clone()
+            } else {
+                "test-token".to_string()
+            };
             assert!(headers
                 .to_lowercase()
-                .contains("authorization: bearer test-token"));
+                .contains(&format!("authorization: bearer {token}")));
             server_state
                 .lock()
                 .unwrap()
@@ -61,7 +79,11 @@ async fn mock(
                     .filter(|(k, _)| k == "cmd")
                     .map(|(_, v)| v.into_owned())
                     .collect();
-                let is_action = args[0] == "node";
+                let is_action = args[0] == "node"
+                    || (args[0] == preparation::MISE
+                        && args.get(1).is_some_and(|arg| arg == "exec"));
+                let is_environment =
+                    args[0] == preparation::MISE && args.get(1).is_some_and(|arg| arg == "env");
                 if args[0] == "dd" {
                     let mut state = server_state.lock().unwrap();
                     if !args.contains(&"oflag=append".into())
@@ -80,6 +102,15 @@ async fn mock(
                 ))
                 .await
                 .unwrap();
+                if is_environment {
+                    ws.send(Message::Binary(
+                        b"\x01{\"TOOL_HOME\":\"/home/sprite/.struo-worker/data/home\"}"
+                            .to_vec()
+                            .into(),
+                    ))
+                    .await
+                    .unwrap();
+                }
                 if is_action {
                     let hold = server_state.lock().unwrap().hold_action.clone();
                     if let Some((arrived, release)) = hold {
@@ -93,6 +124,11 @@ async fn mock(
                     ws.send(Message::Binary(vec![1, b'o', 0, 255].into()))
                         .await
                         .unwrap();
+                    ws.send(Message::Text(
+                        r#"{"type":"debug","message":"command output received"}"#.into(),
+                    ))
+                    .await
+                    .unwrap();
                     ws.send(Message::Binary(vec![2, b'e', b'r', b'r'].into()))
                         .await
                         .unwrap();
@@ -136,6 +172,41 @@ async fn mock(
             socket.read_exact(&mut body).await.unwrap();
             let mut status = 200;
             let response = match method.as_str() {
+                "GET" if path.contains("tool-environment.json") => server_state.lock().unwrap().tool_environment.clone(),
+                "POST" if path == "/v1/cas/missing" => b"[]".to_vec(),
+                "POST" if path == "/v1/actions" => {
+                    let hold = server_state.lock().unwrap().hold_action.clone();
+                    if let Some((arrived, release)) = hold {
+                        arrived.notify_one();
+                        release.notified().await;
+                        continue;
+                    }
+                    if server_state.lock().unwrap().fail_service { status = 503; }
+                    serde_json::to_vec(&crate::worker::Response {
+                        result: ActionResult { exit_code: i32::from(exit.unwrap_or(0)), stdout: None, stderr: None, outputs: BTreeMap::new() },
+                        output_archive: None, output_archive_bytes: 0, shared_blobs: Vec::new(),
+                    }).unwrap()
+                }
+                "GET" if path == "/v1/health" => {
+                    serde_json::to_vec(&serde_json::json!({"version": crate::worker::PROTOCOL_VERSION, "environment": server_state.lock().unwrap().worker_environment})).unwrap()
+                }
+                "POST" if path.ends_with("/checkpoint") => {
+                    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                    server_state.lock().unwrap().checkpoint_comment = body["comment"].as_str().unwrap().into();
+                    b"{\"type\":\"keepalive\"}\n{\"type\":\"complete\",\"data\":\"Checkpoint v1 created\"}\n".to_vec()
+                }
+                "POST" if path.ends_with("/restore") => {
+                    let hold = server_state.lock().unwrap().hold_restore.clone();
+                    if let Some((arrived, release)) = hold {
+                        arrived.notify_one();
+                        release.notified().await;
+                    }
+                    if server_state.lock().unwrap().fail_restore { status = 500; }
+                    b"{\"type\":\"keepalive\"}\n{\"type\":\"complete\"}\n".to_vec()
+                }
+                "GET" if path.ends_with("/checkpoints") => {
+                    serde_json::to_vec(&serde_json::json!([{"id": "v1", "comment": server_state.lock().unwrap().checkpoint_comment}])).unwrap()
+                }
                 "POST" => {
                     assert_eq!(path, "/v1/sprites");
                     let create: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -147,10 +218,23 @@ async fn mock(
                         .unwrap()
                 }
                 "PUT" => {
-                    assert!(path.contains(
+                    assert!(server_state.lock().unwrap().retained || path.contains(
                         "/fs/write?path=%2Ftmp%2Fstruo-input-part&workingDir=%2F&mode=0600"
                     ));
                     assert!(body.len() <= 16 * 1024 * 1024);
+                    if path.contains("worker-options.json") {
+                        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                        assert_eq!(value["tool_environment"]["TOOL_HOME"], "/home/sprite/.struo-worker/data/home");
+                        assert_eq!(value["tool_environment"]["HOME"], "/home/sprite/.struo-worker/home");
+                        server_state.lock().unwrap().worker_environment = value["environment"].as_str().unwrap().into();
+                    }
+                    if path.contains("tool-environment.json") {
+                        server_state.lock().unwrap().tool_environment = body.clone();
+                    }
+                    if path.contains("worker-credential.json") {
+                        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                        server_state.lock().unwrap().worker_token = value["token"].as_str().unwrap().into();
+                    }
                     server_state.lock().unwrap().part = body;
                     if fail_upload {
                         status = 400;
@@ -161,7 +245,7 @@ async fn mock(
                     if !path.contains("/fs/read?") {
                         let name = server_state.lock().unwrap().name.clone();
                         let response = serde_json::to_vec(
-                            &serde_json::json!({"name": name, "id": "original-id"}),
+                            &serde_json::json!({"name": name, "id": "original-id", "url": service_url}),
                         )
                         .unwrap();
                         socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", response.len()).as_bytes()).await.unwrap();
@@ -238,7 +322,7 @@ async fn mock(
                 .await
                 .unwrap();
             socket.write_all(&response).await.unwrap();
-            if method == "DELETE" {
+            if method == "DELETE" && !server_state.lock().unwrap().retained {
                 break;
             }
         }
@@ -291,6 +375,7 @@ async fn transfers_declared_dependencies_and_outputs_and_preserves_streams_and_e
             &cache,
             false,
             client,
+            CommandFilesystemSetup::default(),
         )
         .await
         .unwrap();
@@ -400,6 +485,7 @@ async fn transfer_failure_and_missing_exit_still_delete_owned_sprite() {
             &cache,
             false,
             client,
+            CommandFilesystemSetup::default(),
         )
         .await
         .unwrap_err();
@@ -491,6 +577,7 @@ async fn cancelled_execution_holds_admission_until_delete_finishes() {
         &cache,
         false,
         client,
+        CommandFilesystemSetup::default(),
     ));
     assert_ready(async {
         tokio::select! {

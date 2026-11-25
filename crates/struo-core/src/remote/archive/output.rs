@@ -67,7 +67,11 @@ pub(in crate::remote) async fn install_output_archive_limited(
     .await
     .map_err(|source| archive_error(provider, format!("output archive task failed: {source}")))??;
     staging
-        .install_admitted(outputs.as_slice(), workspace_root, lease)
+        .install_admitted(
+            &crate::remote::path::output_roots(&outputs),
+            workspace_root,
+            lease,
+        )
         .await
 }
 

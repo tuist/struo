@@ -14,7 +14,7 @@ pub(super) struct Client {
     pub limits: RemoteIoLimits,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub(super) struct Sprite {
     pub name: String,
     #[serde(rename = "id")]
@@ -113,6 +113,18 @@ impl Client {
         sprite.ownership = serde_json::to_string(&(&sprite.name, &sprite.provider_id)).unwrap();
         tracing::debug!(provider = "sprites", sprite = %sprite.name, "created remote sandbox");
         Ok(sprite)
+    }
+}
+
+impl Sprite {
+    pub(super) fn from_identity(identity: &str) -> Result<Self> {
+        let (name, provider_id): (String, String) = serde_json::from_str(identity)
+            .map_err(|_| api_error("invalid retained Sprite identity"))?;
+        Ok(Self {
+            name,
+            provider_id,
+            ownership: identity.into(),
+        })
     }
 }
 

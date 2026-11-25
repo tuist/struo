@@ -26,6 +26,7 @@ pub(super) fn execute(
     sandbox: SandboxMode,
     resource_limits: &ResourceLimits,
     portable: Option<&super::portable::Invocation>,
+    configuration: &Path,
 ) -> Result<CompletedSchedule> {
     let requested_workers = bounded_worker_request(requested_workers, resource_limits);
     let workers = worker_count(Some(requested_workers), plan.batches.len());
@@ -45,6 +46,7 @@ pub(super) fn execute(
             sandbox,
             child_limits,
             portable,
+            Some(configuration),
         );
         if let Some(progress) = &progress {
             let run = run.as_ref().ok();

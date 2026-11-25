@@ -25,14 +25,22 @@ pub(crate) async fn run(
     jobs: Option<usize>,
     sandbox: SandboxMode,
     limits: ResourceLimits,
+    configuration: super::test_schedule::Configuration,
 ) -> Result<ExitCode> {
     let portable = PortableTestPlan::export(workspace, &graph, plan.clone())?;
     let before = context::configuration(workspace, &graph);
     let commit = context::clean_commit(workspace).await;
     let metadata = metadata::collect(workspace).await;
-    let execution =
-        super::test_schedule::execute(workspace, Some(graph.clone()), plan, jobs, sandbox, limits)
-            .await?;
+    let execution = super::test_schedule::execute(
+        workspace,
+        Some(graph.clone()),
+        plan,
+        jobs,
+        sandbox,
+        limits,
+        configuration,
+    )
+    .await?;
     let succeeded = execution.runs.iter().all(|run| run["success"] == true);
     let value = json!({"schema": "struo.portable_test_execution.v1", "plan_id": portable.id,
         "selected_batch_ids": portable.plan.batches.iter().map(|batch| &batch.id).collect::<Vec<_>>(),

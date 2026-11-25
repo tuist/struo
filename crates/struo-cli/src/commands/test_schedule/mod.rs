@@ -1,4 +1,5 @@
 mod cancellation;
+mod configuration;
 mod executor;
 pub(crate) mod hosted;
 pub(crate) mod portable;
@@ -20,6 +21,8 @@ use tokio::io::AsyncWriteExt;
 use crate::cli::{Format, Output};
 use crate::render;
 
+pub(crate) use configuration::Configuration;
+
 pub(crate) const MAX_TEST_WORKERS: usize = 256;
 
 #[derive(Debug, Serialize)]
@@ -38,6 +41,7 @@ impl TestExecutionReport {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute(
     workspace: &Path,
     graph: Option<Vec<struo_frontend::GraphTarget>>,
@@ -45,6 +49,7 @@ pub(crate) async fn execute(
     requested_workers: Option<usize>,
     sandbox: SandboxMode,
     resource_limits: ResourceLimits,
+    configuration: Configuration,
 ) -> Result<TestExecutionReport> {
     validate_workers(requested_workers)?;
     if plan.batches.is_empty() {
@@ -64,6 +69,7 @@ pub(crate) async fn execute(
         resource_limits,
         None,
         false,
+        configuration,
     )
     .await
 }
@@ -78,6 +84,7 @@ async fn execute_validated(
     resource_limits: ResourceLimits,
     portable: Option<portable::Invocation>,
     reporting: bool,
+    configuration: Configuration,
 ) -> Result<TestExecutionReport> {
     validate_workers(requested_workers)?;
     anyhow::ensure!(!plan.batches.is_empty(), "test plan contains no batches");
@@ -88,6 +95,7 @@ async fn execute_validated(
     let workspace_path = workspace.to_path_buf();
     let scheduler_workspace = workspace_path.clone();
     let blocking_plan = plan.clone();
+    let configuration = configuration.snapshot()?;
     let schedule = tokio::task::spawn_blocking(move || {
         executor::execute(
             &executable,
@@ -98,6 +106,7 @@ async fn execute_validated(
             sandbox,
             &resource_limits,
             portable.as_ref(),
+            configuration.path(),
         )
     });
     let completed = cancellation::supervise(schedule, reporting)
@@ -126,6 +135,7 @@ async fn execute_validated(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run(
     workspace: &Path,
     graph: Option<Vec<struo_frontend::GraphTarget>>,
@@ -134,6 +144,7 @@ pub(crate) async fn run(
     requested_workers: Option<usize>,
     sandbox: SandboxMode,
     resource_limits: ResourceLimits,
+    configuration: Configuration,
 ) -> Result<ExitCode> {
     let report = execute(
         workspace,
@@ -142,6 +153,7 @@ pub(crate) async fn run(
         requested_workers,
         sandbox,
         resource_limits,
+        configuration,
     )
     .await?;
     let succeeded = report.succeeded();

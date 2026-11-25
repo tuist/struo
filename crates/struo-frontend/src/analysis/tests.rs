@@ -102,6 +102,42 @@ fn execution_path_is_stable_and_rejects_workspace_escapes() {
 }
 
 #[test]
+fn execution_tools_bind_prepared_workers_without_changing_local_actions() {
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("compiler");
+    std::fs::write(&path, "compiler-one").unwrap();
+    let source = format!(
+        "value = execution_tool({}, resolve = ['compiler', '--root'], suffix = 'bin/compiler')",
+        serde_json::to_string(&path.to_string_lossy()).unwrap()
+    );
+    assert_eq!(eval_string(&source).unwrap(), path.to_string_lossy());
+    let mut store = store_for(tmp.path(), "");
+    store.execution = Some(struo_core::RemoteExecution {
+        provider: "workers".into(),
+        properties: BTreeMap::from([("worker_pool".into(), serde_json::json!({}))]),
+        ..struo_core::RemoteExecution::provider("workers")
+    });
+    let (_, first) = with_active_store(store, || eval_string(&source).unwrap());
+    let (_, tool) = struo_core::execution_tool::ExecutionTool::find(&first)
+        .unwrap()
+        .remove(0);
+    assert_eq!(tool.resolve, ["compiler", "--root"]);
+    assert_eq!(
+        struo_core::resolve_execution_value(&first, tmp.path()),
+        path.to_string_lossy()
+    );
+    std::fs::write(&path, "compiler-two").unwrap();
+    let mut store = store_for(tmp.path(), "");
+    store.execution = Some(struo_core::RemoteExecution {
+        provider: "workers".into(),
+        properties: BTreeMap::from([("worker_pool".into(), serde_json::json!({}))]),
+        ..struo_core::RemoteExecution::provider("workers")
+    });
+    let (_, second) = with_active_store(store, || eval_string(&source).unwrap());
+    assert_ne!(first, second);
+}
+
+#[test]
 fn host_env_reads_active_analysis_environment_only() {
     let name = "STRUO_HOST_ENV_TEST";
     let source = format!(

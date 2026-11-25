@@ -10,6 +10,23 @@ pub(super) use boundary::{Directory, Parent};
 mod tree;
 pub(super) use tree::validate_output_tree;
 
+pub(crate) fn output_roots(outputs: &[crate::WorkspacePath]) -> Vec<crate::WorkspacePath> {
+    let paths = outputs
+        .iter()
+        .map(crate::WorkspacePath::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    paths
+        .iter()
+        .filter(|path| {
+            !Path::new(path)
+                .ancestors()
+                .skip(1)
+                .any(|parent| parent.to_str().is_some_and(|parent| paths.contains(parent)))
+        })
+        .map(|path| crate::WorkspacePath::try_from(*path).expect("validated output path"))
+        .collect()
+}
+
 pub(super) fn validate_output_links(
     directory: &Directory,
     links: &[PathBuf],

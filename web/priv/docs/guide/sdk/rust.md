@@ -45,12 +45,20 @@ owns provider selection:
 | --- | --- |
 | `Cache::new()` | Opens the [default local cache](/guide/sdk/#choose-a-cache). |
 | `Cache::local(root)` | Opens an isolated local cache at a caller-owned root. |
-| `Cache::from_workspace(root)` | Resolves the same effective provider as the command line for this workspace, including Tuist, object storage, and HTTP cache providers. Returns a `Result`. |
+| `Cache::from_workspace(root)` | Resolves the same effective provider as the command line for this workspace, including Tuist, object storage, HTTP cache, and retained Sprites cache providers. Returns a `Result`. |
 | `Cache::with_provider(cache)` | Wraps an existing `CacheProvider`. |
 
 To display diagnostics or pass the provider into code that already works with
 content-addressed storage, use `provider()` for the underlying `CacheProvider`
 and `root()` for its local root directory.
+
+With a [Sprites cache binding](/guide/infrastructure/sprites), constructing a
+workspace cache performs no provisioning. The first remote operation lazily
+creates or reuses the user's retained cache Sprite. `SPRITES_TOKEN` (or
+`STRUO_SPRITES_TOKEN`) is required; the SDK uses the same credentials directory
+and retained cache as the command line. Local hits do not wake the remote
+cache. Other constructors keep their existing local-only or explicit-provider
+behavior.
 
 ## Blobs
 

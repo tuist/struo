@@ -66,19 +66,17 @@ async fn restore_scoped(
         return Ok(());
     }
     let staging = std::sync::Arc::new(StagingDir::create(workspace_root)?);
+    let mut prefetched = prefetch::restore(result, cache, &staging).await?;
     // Classify before inspecting existing outputs: hashing a remote link on
     // the coordinator could read data that the action never declared.
-    if prefetch::has_remote_outputs(result, cache, &staging).await? {
-        let prefetched = prefetch::restore(result, cache, &staging).await?;
+    if prefetch::has_remote_outputs(&mut prefetched)? {
         return crate::remote::restore_output_snapshots(prefetched, workspace_root, lease).await;
     }
     let outputs = outputs_needing_restore(result, workspace_root).await?;
     if outputs.outputs.is_empty() {
         return Ok(());
     }
-    let prefetched = prefetch::restore(&outputs, cache, &staging).await?;
-    #[cfg(any(target_os = "linux", target_vendor = "apple"))]
-    let mut prefetched = prefetched;
+    prefetched.retain(|output| outputs.outputs.contains_key(&output.rel));
     #[cfg(any(target_os = "linux", target_vendor = "apple"))]
     if let Some(permit) = crate::resource_scope::current().filter(|_| prefetched.len() == 1) {
         return single::restore(

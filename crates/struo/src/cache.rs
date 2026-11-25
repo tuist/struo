@@ -83,6 +83,14 @@ impl Cache {
                     struo_cas::RemoteAccess::from_config(config.store.read_only)?,
                 )
             }
+            struo_frontend::ResolvedCacheProviderConfig::Sprites(config) => CacheProvider::remote(
+                xdg.struo_cas(),
+                std::sync::Arc::new(struo_cas::SpritesCacheRemote::from_env(
+                    &xdg.config_home.join("struo").join("credentials"),
+                    config.cache_max_size_bytes,
+                )?),
+                struo_cas::RemoteAccess::from_config(config.read_only)?,
+            ),
             struo_frontend::ResolvedCacheProviderConfig::HttpCache(config) => {
                 let cache = config.cache;
                 let auth = struo_cas::HttpCacheAuth::from_env(

@@ -294,6 +294,13 @@ def _rustc_toolchain(target):
         identity += "\x00host-libc\x00" + host_libc
     return (rustc, identity, host_triple)
 
+def _rust_execution_tool(rustc, name = "rustc"):
+    return execution_tool(
+        _parent_dir(rustc) + "/" + _host_exe(name),
+        resolve = ["rustc", "--print", "sysroot"],
+        suffix = "bin/" + _host_exe(name),
+    )
+
 def _rust_host_triple_from_version(version):
     for line in version.split("\n"):
         if line.startswith("host: "):
@@ -1295,8 +1302,8 @@ def _rust_build_script_env(ctx, rustc, target, host_triple, out_dir, script_path
     if "NUM_JOBS" not in env:
         env["NUM_JOBS"] = str(_rust_build_script_jobs(ctx))
     env["OUT_DIR"] = execution_path(out_dir)
-    env["RUSTC"] = rustc
-    env["RUSTDOC"] = _parent_dir(rustc) + "/" + _host_exe("rustdoc")
+    env["RUSTC"] = _rust_execution_tool(rustc)
+    env["RUSTDOC"] = _rust_execution_tool(rustc, "rustdoc")
     env["TARGET"] = target or host_triple
     if "CARGO_ENCODED_RUSTFLAGS" not in env:
         env["CARGO_ENCODED_RUSTFLAGS"] = _rust_encoded_rustflags(ctx)
@@ -1475,7 +1482,7 @@ def _rust_build_script(ctx, rustc, identity, target, host_triple, edition, dep_a
     compile_args.extend(linker_args)
     compile_args.append(script_path)
     compile_argv = (
-        [rustc] +
+        [_rust_execution_tool(rustc)] +
         _rust_inline_proc_macro_extern_args(deps, _rust_aliases(ctx)) +
         _rust_response_file_args(ctx, compile_args, "build-script-rustc.rsp")
     )
@@ -1939,7 +1946,7 @@ def _rust_compile(ctx, crate_type, default_root, output_name, test = False, prov
     rustc_args.extend(linker_script_args)
     rustc_args.append(crate_root)
     argv = (
-        [rustc] +
+        [_rust_execution_tool(rustc)] +
         _rust_response_file_args(ctx, _rust_inline_proc_macro_extern_args(deps, aliases) + rustc_args, "rustc.rsp")
     )
     dependency_build_outputs = _rust_dep_build_script_outputs(deps)
@@ -2778,7 +2785,7 @@ def _rust_test_impl(ctx):
         history = _rust_action_history(ctx, "test-runner.compile", runner_host_triple),
         presentation = _action_metadata(platforms = [_action_platform("rust", runner_host_triple, usage = "build-tool")]),
         source_files = _action_source_files([runner_source]),
-        argv = [runner_rustc, "--edition", "2021", runner_source, "-o", runner],
+        argv = [_rust_execution_tool(runner_rustc), "--edition", "2021", runner_source, "-o", runner],
         inputs = [runner_source],
         outputs = [runner],
         env = runner_env,

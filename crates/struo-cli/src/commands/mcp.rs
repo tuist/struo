@@ -555,6 +555,7 @@ impl Server {
                 workers,
                 struo_core::SandboxMode::Off,
                 resource_limits,
+                crate::commands::test_schedule::Configuration::default(),
             )
             .await?;
             let mut value = serde_json::to_value(report)?;

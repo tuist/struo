@@ -334,6 +334,10 @@ pub fn module_authoring_contract() -> ModuleAuthoringContract {
             entry("workspace_root()", "Read the absolute workspace root."),
             entry("host_which(name)", "Resolve a required executable."),
             entry(
+                "execution_tool(path, resolve, suffix = \"\")",
+                "Bind an analysis executable to a prepared worker. The direct resolver argv returns an absolute path, optionally joined with suffix. Prepared execution verifies SHA-256 against the analysis executable; local and unprepared actions keep path. Use in argv and env, not generated file contents.",
+            ),
+            entry(
                 "host_which_optional(name)",
                 "Resolve an optional executable.",
             ),

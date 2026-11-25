@@ -430,3 +430,35 @@ async fn archive_install_replaces_a_leaf_symlink_without_following_it() {
         b"coordinator only"
     );
 }
+
+#[tokio::test]
+async fn archive_install_preserves_nested_declared_outputs() {
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("outputs.tar");
+    archive(
+        &path,
+        &[],
+        &[
+            ("build/value.rs", b"generated"),
+            ("build/status", b"0"),
+            ("build-log", b"log"),
+        ],
+    );
+    let outputs = ["build/status", "build", "build/value.rs", "build-log"]
+        .map(|path| WorkspacePath::try_from(path).unwrap());
+    install_output_archive(&path, workspace.path(), &outputs, "test")
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read(workspace.path().join("build/value.rs")).unwrap(),
+        b"generated"
+    );
+    assert_eq!(
+        std::fs::read(workspace.path().join("build/status")).unwrap(),
+        b"0"
+    );
+    assert_eq!(
+        std::fs::read(workspace.path().join("build-log")).unwrap(),
+        b"log"
+    );
+}

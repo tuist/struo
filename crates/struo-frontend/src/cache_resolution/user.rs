@@ -51,6 +51,7 @@ pub(super) enum UserCacheProvider {
     },
     ObjectStore(crate::ObjectStoreCacheProviderConfig),
     HttpCache(crate::HttpCacheProviderConfig),
+    Sprites(crate::SpritesProviderConfig),
 }
 
 pub(super) fn take_named_user_provider(

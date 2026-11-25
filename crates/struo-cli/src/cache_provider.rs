@@ -11,12 +11,15 @@ use struo_frontend::{
     NamedCacheProviderConfig, DEFAULT_TUIST_URL,
 };
 
+mod worker_pool;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ResolvedCacheProviderConfig {
     Local,
     Tuist(TuistCacheConfig),
     ObjectStore(struo_frontend::ResolvedObjectStoreCacheProviderConfig),
     HttpCache(struo_frontend::ResolvedHttpCacheProviderConfig),
+    Sprites(struo_frontend::SpritesProviderConfig),
 }
 
 const DEFAULT_EXECUTION_PROVIDER: &str = "microsandbox";
@@ -41,9 +44,8 @@ pub(crate) fn resolve_execution(
     explicit_provider: Option<&str>,
 ) -> Result<RemoteExecution> {
     let binding = resolve_execution_unresolved(workspace, xdg, explicit_provider)?;
-    Ok(bind_environment_override(binding, |name| {
-        std::env::var(name).ok()
-    }))
+    let binding = bind_environment_override(binding, |name| std::env::var(name).ok());
+    worker_pool::bind(workspace, binding)
 }
 
 /// Bind Tuist execution to the image its service runs now when the workspace
@@ -225,6 +227,9 @@ fn resolve_config_with_env(
     .context("resolving cache provider")?;
     Ok(match config {
         struo_frontend::ResolvedCacheProviderConfig::Local => ResolvedCacheProviderConfig::Local,
+        struo_frontend::ResolvedCacheProviderConfig::Sprites(config) => {
+            ResolvedCacheProviderConfig::Sprites(config)
+        }
         struo_frontend::ResolvedCacheProviderConfig::Tuist(config) => {
             ResolvedCacheProviderConfig::Tuist(default_tuist_config(
                 config.provider_name,
@@ -246,6 +251,18 @@ fn resolve_config_with_env(
 fn build_provider(xdg: &Xdg, config: ResolvedCacheProviderConfig) -> Result<CacheProvider> {
     match config {
         ResolvedCacheProviderConfig::Local => Ok(CacheProvider::open_local(xdg.struo_cas())),
+        ResolvedCacheProviderConfig::Sprites(config) => {
+            let remote = struo_cas::SpritesCacheRemote::from_env(
+                &credentials_root(xdg),
+                config.cache_max_size_bytes,
+            )
+            .context("configuring Sprites cache provider")?;
+            Ok(CacheProvider::remote(
+                xdg.struo_cas(),
+                std::sync::Arc::new(remote),
+                struo_cas::RemoteAccess::from_config(config.read_only)?,
+            ))
+        }
         ResolvedCacheProviderConfig::Tuist(config) => {
             CacheProvider::tuist(xdg.struo_cas(), credentials_root(xdg), config)
                 .context("configuring Tuist cache provider")
@@ -321,6 +338,7 @@ fn resolve_named_provider(
         project: binding_project,
     } = binding;
     match provider {
+        UserCacheProvider::Sprites(config) => ResolvedCacheProviderConfig::Sprites(config),
         UserCacheProvider::Tuist {
             url,
             oauth_client_id,
@@ -359,8 +377,10 @@ fn resolve_named_workspace_provider(
     } = binding;
     match provider {
         InfrastructureProviderConfig::Local => Ok(ResolvedCacheProviderConfig::Local),
+        InfrastructureProviderConfig::Sprites(config) => {
+            Ok(ResolvedCacheProviderConfig::Sprites(config))
+        }
         InfrastructureProviderConfig::Microsandbox(_)
-        | InfrastructureProviderConfig::Sprites
         | InfrastructureProviderConfig::Tensorlake { .. }
         | InfrastructureProviderConfig::E2b(_)
         | InfrastructureProviderConfig::Daytona(_)
@@ -455,7 +475,7 @@ fn remote_from_workspace_provider(
         InfrastructureProviderConfig::Local => ("local", None),
         InfrastructureProviderConfig::Microsandbox(config) => ("microsandbox", Some(config.image)),
         InfrastructureProviderConfig::E2b(config) => ("e2b", Some(config.template)),
-        InfrastructureProviderConfig::Sprites => ("sprites", None),
+        InfrastructureProviderConfig::Sprites(_) => ("sprites", None),
         InfrastructureProviderConfig::Tensorlake {
             environment,
             environment_kind,
@@ -515,6 +535,14 @@ fn remote_from_user_provider(
         properties,
     } = binding;
     Ok(match provider {
+        UserCacheProvider::Sprites(_) => RemoteExecution {
+            provider: name,
+            properties,
+            executor: Some("sprites".to_string()),
+            environment: None,
+            account: binding_account,
+            project: binding_project,
+        },
         UserCacheProvider::Tuist {
             account, project, ..
         } => RemoteExecution {
@@ -642,6 +670,7 @@ enum UserCacheProvider {
     },
     ObjectStore(struo_frontend::ObjectStoreCacheProviderConfig),
     HttpCache(struo_frontend::HttpCacheProviderConfig),
+    Sprites(struo_frontend::SpritesProviderConfig),
 }
 
 fn maybe_load_user_config(xdg: &Xdg) -> Result<Option<UserConfig>> {
@@ -734,6 +763,7 @@ pub fn account(workspace: &std::path::Path) -> Option<String> {
     match resolve_config(workspace, &xdg).ok()? {
         ResolvedCacheProviderConfig::Tuist(config) => config.account,
         ResolvedCacheProviderConfig::Local
+        | ResolvedCacheProviderConfig::Sprites(_)
         | ResolvedCacheProviderConfig::ObjectStore(_)
         | ResolvedCacheProviderConfig::HttpCache(_) => None,
     }
@@ -747,6 +777,7 @@ pub fn project(workspace: &std::path::Path) -> Option<String> {
     match resolve_config(workspace, &xdg).ok()? {
         ResolvedCacheProviderConfig::Tuist(config) => config.project,
         ResolvedCacheProviderConfig::Local
+        | ResolvedCacheProviderConfig::Sprites(_)
         | ResolvedCacheProviderConfig::ObjectStore(_)
         | ResolvedCacheProviderConfig::HttpCache(_) => None,
     }
@@ -1702,6 +1733,82 @@ provider = "remote_tests"
             resolve_execution(tmp.path(), &xdg, Some("sprites")).unwrap(),
             RemoteExecution::provider("sprites")
         );
+        assert_eq!(
+            resolve_config_with_env(tmp.path(), &xdg, None).unwrap(),
+            ResolvedCacheProviderConfig::Local
+        );
+    }
+
+    #[test]
+    fn sprites_workspace_provider_resolves_both_capabilities() {
+        let tmp = TempDir::new().unwrap();
+        let xdg = xdg_under(tmp.path());
+        write_workspace(
+            tmp.path(),
+            r#"
+[infrastructures.cloud]
+kind = "sprites"
+cache_max_size_bytes = 4096
+read_only = true
+[infrastructure.execution]
+name = "cloud"
+[infrastructure.cache]
+name = "cloud"
+"#,
+        );
+        assert_eq!(
+            resolve_config_with_env(tmp.path(), &xdg, None).unwrap(),
+            ResolvedCacheProviderConfig::Sprites(struo_frontend::SpritesProviderConfig {
+                cache_max_size_bytes: 4096,
+                read_only: true,
+            })
+        );
+        let remote = resolve_execution_unresolved(tmp.path(), &xdg, None).unwrap();
+        assert_eq!(remote.provider, "cloud");
+        assert_eq!(remote.executor.as_deref(), Some("sprites"));
+        assert!(remote.environment.is_none());
+        assert!(remote.properties.is_empty());
+    }
+
+    #[test]
+    fn sprites_personal_provider_resolves_both_capabilities() {
+        let tmp = TempDir::new().unwrap();
+        let xdg = xdg_under(tmp.path());
+        write_user_config(
+            &xdg,
+            r#"
+[infrastructures.cloud]
+kind = "sprites"
+[infrastructure.execution]
+name = "cloud"
+[infrastructure.cache]
+name = "cloud"
+"#,
+        );
+        assert_eq!(
+            resolve_config_with_env(tmp.path(), &xdg, None).unwrap(),
+            ResolvedCacheProviderConfig::Sprites(struo_frontend::SpritesProviderConfig::default())
+        );
+        let remote = resolve_execution_unresolved(tmp.path(), &xdg, None).unwrap();
+        assert_eq!(remote.provider, "cloud");
+        assert_eq!(remote.executor.as_deref(), Some("sprites"));
+        assert!(remote.environment.is_none());
+        assert!(remote.properties.is_empty());
+    }
+
+    #[test]
+    fn sprites_cache_rejects_zero_capacity_without_provisioning() {
+        let tmp = TempDir::new().unwrap();
+        let Err(error) = build_provider(
+            &xdg_under(tmp.path()),
+            ResolvedCacheProviderConfig::Sprites(struo_frontend::SpritesProviderConfig {
+                cache_max_size_bytes: 0,
+                read_only: false,
+            }),
+        ) else {
+            panic!("zero capacity must be rejected");
+        };
+        assert!(format!("{error:#}").contains("cache_max_size_bytes"));
     }
 
     #[test]

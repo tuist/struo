@@ -12,7 +12,8 @@ async fn collections_deduplicate_overlapping_windows_and_stream_oversized_blobs(
     digests.extend_from_within(..10);
     digests.push(Digest::of_bytes(&[]));
     let reversed = digests.iter().copied().rev().collect::<Vec<_>>();
-    tokio::time::timeout(Duration::from_secs(10), async {
+    // Multiple windows perform real disk and RPC I/O under the minimum transfer budget.
+    tokio::time::timeout(Duration::from_secs(30), async {
         let (first, second) = tokio::join!(
             provider.prefetch_blobs(&digests),
             provider.prefetch_blobs(&reversed),
@@ -82,22 +83,25 @@ async fn cancelled_preparation_and_atomic_admission_do_not_block_individual_read
             tokio::spawn(async move { provider.prefetch_blobs_guarded(&digests, owner).await })
         };
         tokio::time::timeout(Duration::from_secs(5), async {
-            while let Ok(flight) = tokio::time::timeout(
-                Duration::from_millis(1),
-                cache.download_flights.acquire(digests[0]),
-            )
-            .await
-            {
-                drop(flight);
-                tokio::task::yield_now().await;
+            if preparing {
+                while let Ok(flight) = tokio::time::timeout(
+                    Duration::from_millis(1),
+                    cache.download_flights.acquire(digests[0]),
+                )
+                .await
+                {
+                    drop(flight);
+                    tokio::task::yield_now().await;
+                }
+            } else {
+                // The bulk waiter reserves free permits before it can acquire the held slot.
+                while cache.batch_downloads.slots.available_permits() != 0 {
+                    tokio::task::yield_now().await;
+                }
             }
         })
         .await
         .unwrap();
-        assert_eq!(
-            cache.batch_downloads.slots.available_permits(),
-            MAX_PENDING - usize::from(!preparing)
-        );
         task.abort();
         assert!(task.await.unwrap_err().is_cancelled());
         assert_eq!(Arc::strong_count(&owner), 1);
@@ -106,6 +110,14 @@ async fn cancelled_preparation_and_atomic_admission_do_not_block_individual_read
             .await
             .unwrap()
             .unwrap();
+        assert_eq!(
+            cache.local.get_blob(&digests[0]).await.unwrap(),
+            bodies
+                .iter()
+                .find(|body| Digest::of_bytes(body) == digests[0])
+                .unwrap()
+                .as_slice()
+        );
         for digest in digests {
             drop(cache.download_flights.acquire(digest).await);
         }

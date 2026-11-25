@@ -43,7 +43,7 @@ pub use cache_provider::{
     HttpCacheProviderConfig, InfrastructureConfig, InfrastructureProviderConfig,
     LangSmithExecutionProviderConfig, MicrosandboxExecutionProviderConfig,
     NamedCacheProviderConfig, NorthflankExecutionProviderConfig, ObjectStoreCacheProviderConfig,
-    OpenSandboxExecutionProviderConfig, RunloopExecutionProviderConfig,
+    OpenSandboxExecutionProviderConfig, RunloopExecutionProviderConfig, SpritesProviderConfig,
     TogetherExecutionProviderConfig, TuistCacheProviderConfig, VercelExecutionProviderConfig,
     DEFAULT_TUIST_URL,
 };

@@ -156,6 +156,22 @@ pub struct DockerExecutionProviderConfig {
     pub image: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SpritesProviderConfig {
+    pub cache_max_size_bytes: u64,
+    pub read_only: bool,
+}
+
+impl Default for SpritesProviderConfig {
+    fn default() -> Self {
+        Self {
+            cache_max_size_bytes: 20 * 1024 * 1024 * 1024,
+            read_only: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InfrastructureProviderConfig {
     Local,
@@ -168,7 +184,7 @@ pub enum InfrastructureProviderConfig {
     Together(TogetherExecutionProviderConfig),
     Northflank(NorthflankExecutionProviderConfig),
     Cloudflare(CloudflareExecutionProviderConfig),
-    Sprites,
+    Sprites(SpritesProviderConfig),
     Tensorlake {
         environment: String,
         environment_kind: String,
@@ -287,7 +303,7 @@ pub(crate) enum InfrastructureProviderToml {
     Cloudflare {
         image: String,
     },
-    Sprites,
+    Sprites(SpritesProviderConfig),
     Tensorlake {
         image: Option<String>,
         snapshot: Option<String>,
@@ -379,7 +395,7 @@ impl InfrastructureProviderToml {
     ) -> Result<InfrastructureProviderConfig> {
         Ok(match self {
             Self::Local => InfrastructureProviderConfig::Local,
-            Self::Sprites => InfrastructureProviderConfig::Sprites,
+            Self::Sprites(config) => InfrastructureProviderConfig::Sprites(config),
             Self::Tensorlake {
                 image,
                 snapshot,

@@ -23,9 +23,11 @@ use crate::{ActionCacheHit, ActionResult, Cas, Digest, Error, ErrorKind, Result,
 mod aws_credentials;
 mod http;
 mod object_storage;
+mod sprites;
 
-pub use self::http::{HttpCacheAuth, HttpCacheRemote};
+pub use self::http::{HttpCacheAuth, HttpCacheConnection, HttpCacheRemote};
 pub use self::object_storage::ObjectStoreRemote;
+pub use self::sprites::SpritesCacheRemote;
 
 /// Largest action record a remote may return. Records only list digests, so
 /// anything larger is not a record this client wrote.
@@ -74,6 +76,12 @@ impl fmt::Debug for RemoteBody {
 pub trait RemoteStore: Send + Sync + fmt::Debug + 'static {
     /// Short label used in errors and logs, such as `s3`.
     fn provider(&self) -> &'static str;
+
+    /// Optional private HTTP connection for direct transfers by trusted workers.
+    /// Other stores retain coordinator-mediated transfers.
+    async fn http_connection(&self) -> Result<Option<HttpCacheConnection>> {
+        Ok(None)
+    }
 
     /// Size of the object at `key`, or `None` when it is absent.
     async fn head(&self, key: &str) -> Result<Option<u64>>;

@@ -1,5 +1,7 @@
 //! `struo cache` - inspect and mutate the configured cache provider.
 
+pub(crate) mod serve;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;

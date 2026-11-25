@@ -4,21 +4,25 @@ use std::time::Duration;
 
 use struo_cas::{ActionResult, CacheProvider};
 
-use super::archive::{
-    create_input_archive_limited, install_output_archive_limited, output_archive_file,
-};
+use super::archive::create_input_archive_limited;
 use super::lifecycle::{self, Budget, Journal};
-use super::{join_path, PreparedCommand};
+use super::{CommandFilesystemSetup, PreparedCommand};
 use crate::executor::staging::CapturePermit;
-use crate::{resolve_execution_argv, resolve_execution_env};
 use crate::{ExecutionPermit, RemoteExecution, Result};
 
+mod action;
+mod checkpoint;
 mod client;
 mod exec;
+mod filesystem;
+mod preparation;
+mod service;
 #[cfg(test)]
 mod tests;
+mod tools;
 mod transfer;
 mod transport;
+mod workers;
 
 use client::{api_error, Client, Sprite};
 
@@ -27,18 +31,34 @@ const INPUT_ARCHIVE: &str = "/tmp/struo-inputs.tar";
 const OUTPUT_ARCHIVE: &str = "/tmp/struo-outputs.tar";
 
 pub(super) async fn execute_command(
-    _remote: &RemoteExecution,
+    remote: &RemoteExecution,
     command: PreparedCommand<'_>,
     workspace_root: &Path,
     cache: &CacheProvider,
     stream_to_parent: bool,
+    filesystem: CommandFilesystemSetup<'_>,
 ) -> Result<ActionResult> {
+    if let Some(value) = remote.properties.get("worker_pool") {
+        let spec: crate::WorkerPoolSpec = serde_json::from_value(value.clone())
+            .map_err(|_| api_error("invalid locked worker pool configuration"))?;
+        spec.validate()?;
+        return workers::execute(
+            spec,
+            command,
+            workspace_root,
+            cache,
+            stream_to_parent,
+            filesystem,
+        )
+        .await;
+    }
     execute_with_client(
         command,
         workspace_root,
         cache,
         stream_to_parent,
         Client::from_env()?,
+        filesystem,
     )
     .await
 }
@@ -50,6 +70,7 @@ async fn execute_with_client(
     cache: &CacheProvider,
     stream_to_parent: bool,
     mut client: Client,
+    filesystem: CommandFilesystemSetup<'_>,
 ) -> Result<ActionResult> {
     client.limits = command
         .lease
@@ -87,92 +108,19 @@ async fn execute_with_client(
         ))
         .await?;
     let result = deadline
-        .within(async {
-            client
-                .upload(
-                    &sprite,
-                    archive.path(),
-                    archive.len(),
-                    cache,
-                    capture.as_ref(),
-                )
-                .await?;
-            drop(archive);
-            drop(input_phase);
-            setup(
-                &client,
-                &sprite,
-                &["mkdir".into(), "-p".into(), GUEST_ROOT.into()],
-                cache,
-                capture.as_ref(),
-            )
-            .await?;
-            setup(
-                &client,
-                &sprite,
-                &[
-                    "tar".into(),
-                    "-xf".into(),
-                    INPUT_ARCHIVE.into(),
-                    "-C".into(),
-                    GUEST_ROOT.into(),
-                ],
-                cache,
-                capture.as_ref(),
-            )
-            .await?;
-            let argv = resolve_execution_argv(command.argv, Path::new(GUEST_ROOT));
-            let env = resolve_execution_env(command.env, Path::new(GUEST_ROOT));
-            let cwd = command.cwd.map_or_else(
-                || GUEST_ROOT.to_string(),
-                |cwd| join_path(GUEST_ROOT, cwd.as_str()),
-            );
-            let result = super::phase::run(
-                "sprites",
-                "execute",
-                Box::pin(client.execute(
-                    &sprite,
-                    &argv,
-                    Some(&cwd),
-                    &env,
-                    cache,
-                    stream_to_parent,
-                    capture.as_ref(),
-                )),
-            )
-            .await?;
-            if command.accepts_exit_code(result.exit_code) && !command.outputs.is_empty() {
-                let mut argv = vec![
-                    "tar".into(),
-                    "--hard-dereference".into(),
-                    "-cf".into(),
-                    OUTPUT_ARCHIVE.into(),
-                    "-C".into(),
-                    GUEST_ROOT.into(),
-                ];
-                argv.extend(
-                    command
-                        .outputs
-                        .iter()
-                        .map(|path| format!("./{}", path.as_str())),
-                );
-                setup(&client, &sprite, &argv, cache, capture.as_ref()).await?;
-                let archive = output_archive_file(workspace_root)?;
-                let phase = client
-                    .download(&sprite, archive.path(), command.lease.as_ref())
-                    .await?;
-                install_output_archive_limited(
-                    archive.path(),
-                    workspace_root,
-                    command.outputs,
-                    "sprites",
-                    client.limits,
-                    phase,
-                )
-                .await?;
-            }
-            Ok(result)
-        })
+        .within(action::run(
+            &client,
+            &sprite,
+            &command,
+            workspace_root,
+            cache,
+            stream_to_parent,
+            archive,
+            input_phase,
+            capture.as_ref(),
+            false,
+            filesystem,
+        ))
         .await;
     let deleted = super::phase::run("sprites", "cleanup", cleanup.run()).await;
     match (result, deleted) {

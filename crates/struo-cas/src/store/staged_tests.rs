@@ -8,9 +8,15 @@ async fn staged_raw_storage_is_pinned_and_reader_owns_its_lease() {
     std::fs::create_dir(&parent).unwrap();
     let payload = b"immutable raw payload";
     let digest = cas.put_blob(payload).await.unwrap();
-    let lease = cas.stage_blob(&digest, &parent).await.unwrap();
+    let mut lease = cas.stage_blob(&digest, &parent).await.unwrap();
     std::fs::remove_file(cas.blob_path(&digest)).unwrap();
     std::fs::write(cas.blob_path(&digest), b"replacement inode").unwrap();
+    assert!(lease.starts_with(b"immutable").unwrap());
+    assert!(!lease.starts_with(b"replacement").unwrap());
+    assert!(!lease
+        .starts_with(b"immutable raw payload plus extra")
+        .unwrap());
+    assert!(lease.starts_with(b"").unwrap());
     let mut reader = lease.into_reader().unwrap();
     let mut bytes = Vec::new();
     reader.read_to_end(&mut bytes).unwrap();
@@ -65,13 +71,13 @@ async fn staged_decoding_covers_compression_literal_magic_empty_and_corruption()
         blob::ZSTD_BLOB_MAGIC.to_vec(),
     ] {
         let digest = cas.put_blob(&payload).await.unwrap();
-        let mut reader = cas
-            .stage_blob(&digest, &parent)
-            .await
-            .unwrap()
-            .into_reader()
-            .unwrap();
+        let mut lease = cas.stage_blob(&digest, &parent).await.unwrap();
         std::fs::remove_file(cas.blob_path(&digest)).unwrap();
+        assert!(lease
+            .starts_with(&payload[..payload.len().min(16)])
+            .unwrap());
+        assert!(!lease.starts_with(b"wrong prefix").unwrap());
+        let mut reader = lease.into_reader().unwrap();
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).unwrap();
         assert_eq!(bytes, payload);

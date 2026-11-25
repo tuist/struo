@@ -723,6 +723,7 @@ mod observation_completeness_tests {
     /// Globals whose answer comes from the host and is written into the
     /// observation ledger, so a replay can ask again and compare.
     const RECORDED: &[&str] = &[
+        "execution_tool",
         "host_arch",
         "host_cached_command",
         "host_command",

@@ -4,6 +4,21 @@ use usage::Subcommands;
 
 #[derive(Subcommands)]
 pub enum RuntimeCmd {
+    /// Internal: serve isolated actions on a prepared execution worker.
+    #[usage(hide = true)]
+    Worker {
+        #[usage(long, default = "0.0.0.0:8080")]
+        listen: std::net::SocketAddr,
+        #[usage(long)]
+        root: PathBuf,
+        #[usage(long)]
+        options: PathBuf,
+        #[usage(long)]
+        token_file: PathBuf,
+        #[usage(long)]
+        private_proc_mounts: bool,
+    },
+
     /// Start a target in a persisted runtime session.
     Start {
         /// Target id, e.g. `tools/demo/LaunchApp` or `./LaunchApp`.
@@ -66,6 +81,7 @@ pub enum RuntimeCmd {
 impl RuntimeCmd {
     pub(super) fn surface_path(&self) -> Vec<&'static str> {
         match self {
+            Self::Worker { .. } => vec!["worker"],
             Self::Start { .. } => vec!["start"],
             Self::Status { .. } => vec!["status"],
             Self::Logs { .. } => vec!["logs"],

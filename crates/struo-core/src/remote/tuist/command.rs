@@ -1,24 +1,9 @@
 use std::path::Path;
 
 use crate::remote::PreparedCommand;
-use crate::{resolve_execution_argv, Error, Result, WorkspacePath};
+use crate::{resolve_execution_argv, Error, Result};
 
-pub(super) fn output_roots(outputs: &[WorkspacePath]) -> Vec<WorkspacePath> {
-    let paths = outputs
-        .iter()
-        .map(WorkspacePath::as_str)
-        .collect::<std::collections::BTreeSet<_>>();
-    paths
-        .iter()
-        .filter(|path| {
-            !Path::new(path)
-                .ancestors()
-                .skip(1)
-                .any(|parent| parent.to_str().is_some_and(|parent| paths.contains(parent)))
-        })
-        .map(|path| WorkspacePath::try_from(*path).expect("validated output path"))
-        .collect()
-}
+pub(super) use crate::remote::path::output_roots;
 
 pub(super) fn arguments(command: &PreparedCommand<'_>, root: &Path) -> Result<Vec<String>> {
     let arguments = resolve_execution_argv(command.argv, root);
