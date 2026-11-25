@@ -1365,6 +1365,20 @@ async fn action_result_blobs_present(
     Ok(true)
 }
 
+/// The kind of a declared action, as remote execution reports it: the first
+/// segment of its identifier after the target label (`elixir-compile` for
+/// `atlas/app:elixir-compile:atlas`), or the capability when the identifier
+/// does not start with the label.
+fn action_mnemonic(target_id: &str, identifier: &str, capability: &str) -> String {
+    identifier
+        .strip_prefix(target_id)
+        .and_then(|rest| rest.strip_prefix(':'))
+        .and_then(|rest| rest.split(':').next())
+        .filter(|kind| !kind.is_empty())
+        .unwrap_or(capability)
+        .to_string()
+}
+
 /// Run a cache miss whose inputs are on disk, holding its lock and permit.
 async fn execute_declared_cache_miss(
     context: &DeclaredActionContext<'_>,
@@ -1374,15 +1388,22 @@ async fn execute_declared_cache_miss(
 ) -> Result<struo_core::Outcome> {
     preparation::setup(context, action, declared, &lease).await?;
     let local = struo_core::Executor::resolve(action)? == struo_core::Executor::Local;
-    let result = provider::execute(
-        action,
-        context.workspace,
-        context.cache,
-        if local { context.output_observer } else { None },
-        lease.clone(),
-        &declared.clean_paths,
-        &declared.create_dirs,
-        &declared.arg_files,
+    let label = struo_cas::request_metadata::ActionLabel {
+        mnemonic: action_mnemonic(context.target_id, context.identifier, context.capability),
+        target: context.target_id.to_string(),
+    };
+    let result = struo_cas::request_metadata::with_action(
+        label,
+        provider::execute(
+            action,
+            context.workspace,
+            context.cache,
+            if local { context.output_observer } else { None },
+            lease.clone(),
+            &declared.clean_paths,
+            &declared.create_dirs,
+            &declared.arg_files,
+        ),
     )
     .await
     .with_context(|| {

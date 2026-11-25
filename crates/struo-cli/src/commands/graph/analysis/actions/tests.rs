@@ -3008,3 +3008,22 @@ async fn a_cached_output_a_later_action_redirects_into_is_not_restored_over_it()
         "changed"
     );
 }
+
+#[test]
+fn remote_actions_are_labelled_by_the_identifier_kind() {
+    use super::action_mnemonic;
+    assert_eq!(
+        action_mnemonic("atlas/app", "atlas/app:elixir-compile", "build"),
+        "elixir-compile"
+    );
+    assert_eq!(
+        action_mnemonic("atlas/app", "atlas/app:elixir-stage-apps:noora", "build"),
+        "elixir-stage-apps"
+    );
+    // A target whose label is a prefix of another's falls back to the capability.
+    assert_eq!(
+        action_mnemonic("atlas/app", "atlas/application:x", "build"),
+        "build"
+    );
+    assert_eq!(action_mnemonic("atlas/app", "atlas/app:", "test"), "test");
+}

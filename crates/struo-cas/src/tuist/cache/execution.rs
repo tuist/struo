@@ -496,15 +496,15 @@ impl TuistExecution {
                     inline_stderr: false,
                     inline_output_files: Vec::new(),
                 };
-                client
-                    .execute(self.cas.authorized_grpc_request(request, "execute").await?)
-                    .await
+                let mut request = self.cas.authorized_grpc_request(request, "execute").await?;
+                crate::request_metadata::attach(&mut request);
+                client.execute(request).await
             }
             Some(name) => {
                 let request = reapi::WaitExecutionRequest { name: name.clone() };
-                client
-                    .wait_execution(self.cas.authorized_grpc_request(request, "execute").await?)
-                    .await
+                let mut request = self.cas.authorized_grpc_request(request, "execute").await?;
+                crate::request_metadata::attach(&mut request);
+                client.wait_execution(request).await
             }
         };
         follow(stream, operation_name).await

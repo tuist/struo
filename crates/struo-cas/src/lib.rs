@@ -22,6 +22,7 @@ mod integrity;
 mod model;
 mod provider;
 pub mod remote;
+pub mod request_metadata;
 mod stats;
 mod store;
 pub mod transfer;

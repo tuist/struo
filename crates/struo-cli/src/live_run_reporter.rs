@@ -107,6 +107,11 @@ pub async fn spawn_with_test_context(
     let (ready_tx, ready_rx) = oneshot::channel();
     let system_sampler = crate::bus_events::spawn_system_sampler(bus);
 
+    // Remote actions name the run by the same ID its events carry, so the
+    // service can join them to it, even when no event stream connects.
+    let run_id = new_run_id();
+    struo_cas::request_metadata::set_invocation(run_id.clone(), crate::cli::CLI_VERSION);
+
     let handle = tokio::task::spawn_blocking(move || {
         let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -116,7 +121,6 @@ pub async fn spawn_with_test_context(
             return Ok(0);
         };
         runtime.block_on(async move {
-            let run_id = new_run_id();
             let account = account.unwrap_or_default();
             let project = project.unwrap_or_default();
 
