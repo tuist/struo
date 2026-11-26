@@ -410,7 +410,7 @@ def _xcode_realpath(path):
     return path
 def _xcode_workspace_relative(path):
     return path
-def _xcode_workspace_xcframework_specs(ctx, platform, sdk_variant):
+def _xcode_workspace_xcframework_specs(projects, platform, sdk_variant):
     return [{"name": "Vendor", "kind": "apple_xcframework_import", "attrs": {"bundle": "Vendor.xcframework", "platform": platform}}]
 def _xcode_register_absolute_xcframework_refs(objects, specs, names, platform, sdk_variant):
     pass

@@ -440,6 +440,22 @@ TOML
     The path "$WORKSPACE/.struo/out/Feature/Feature.framework/Feature" should be file
   End
 
+  It 'imports only the XCFrameworks a project references'
+    Skip if 'apple toolchain unavailable on this host' apple_toolchain_unavailable
+    copy_xcode_xcframework_import_fixture
+    for copy in .build/artifacts/pkg unrelated/vendor .struo/swift-package-packages/pkg; do
+      mkdir -p "$WORKSPACE/$copy"
+      cp -R "$WORKSPACE/Vendor/RustComponents.xcframework" "$WORKSPACE/$copy/"
+    done
+    xcframework_imports() {
+      struo --format json query targets | jq -r '.[] | select(.kind == "apple_xcframework_import") | .name'
+    }
+
+    When call xcframework_imports
+    The status should be success
+    The stdout should equal 'XCFramework_Vendor_RustComponents.xcframework'
+  End
+
   It 'lowers a Firefox-style multi-library project from a real .xcodeproj'
     Skip if 'apple toolchain unavailable on this host' apple_toolchain_unavailable
     copy_xcode_firefox_app_fixture

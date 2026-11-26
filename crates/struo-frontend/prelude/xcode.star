@@ -5257,7 +5257,7 @@ def _xcode_workspace_framework_graphs(ctx, projects, platforms):
     graphs = {}
     sdk_variant = ctx["attr"].get("sdk_variant") or "simulator"
     for platform in platforms:
-        specs = _xcode_workspace_xcframework_specs(ctx, platform, sdk_variant)
+        specs = _xcode_workspace_xcframework_specs(projects, platform, sdk_variant)
         names = _xcode_xcframework_name_map(specs)
         for project in projects:
             _xcode_register_absolute_xcframework_refs(project["objects"], specs, names, platform, sdk_variant)
@@ -5272,27 +5272,25 @@ def _xcode_workspace_framework_graphs(ctx, projects, platforms):
         graphs[platform] = {"specs": specs, "names": names, "modules": modules}
     return graphs
 
-def _xcode_workspace_xcframework_specs(ctx, platform, sdk_variant):
+def _xcode_workspace_xcframework_specs(projects, platform, sdk_variant):
     # CocoaPods and similar project generators may leave a prebuilt framework
     # next to a native target instead of expressing it as a package dependency.
-    # Treat each discovered bundle as a typed import so its selected slice
-    # participates in compilation and linking. `find -L` follows generated
-    # workspace symlinks to verified artifact caches.
-    root = workspace_root()
-    infos = host_command([host_which("find"), "-L", root, "-type", "f", "-name", "Info.plist"])
+    # Treat each bundle a project file reference points at as a typed import so
+    # its selected slice participates in compilation and linking. Copies the
+    # projects do not reference, such as package build artifacts or Struo's own
+    # state, stay out of the graph.
+    bundles = {}
+    for project in projects:
+        file_paths = project["file_paths"]
+        for file_ref_id, file_ref in project["objects"].items():
+            if type(file_ref) != "dict" or file_ref.get("isa") != "PBXFileReference":
+                continue
+            bundle = _xcode_workspace_input_path(file_paths.get(file_ref_id) or _xcode_file_ref_path({}, file_ref))
+            if _ends_with(bundle, ".xcframework") and not bundle.startswith("../") and host_file_exists(_xcode_abs(bundle + "/Info.plist")):
+                bundles[bundle] = True
     specs = []
-    seen = {}
-    for absolute in infos.split("\n"):
-        relative = _xcode_workspace_relative(absolute)
-        marker = ".xcframework/Info.plist"
-        index = relative.find(marker)
-        if index < 0:
-            continue
-        bundle = relative[:index + len(".xcframework")]
+    for bundle in sorted(bundles.keys()):
         name = "XCFramework_" + _xcode_sanitized_target_name(bundle)
-        if bundle in seen:
-            continue
-        seen[bundle] = True
         specs.append({
             "name": name,
             "kind": "apple_xcframework_import",
