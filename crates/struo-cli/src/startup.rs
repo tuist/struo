@@ -40,7 +40,8 @@ pub(crate) fn run() -> ExitCode {
         #[cfg(target_os = "linux")]
         let result = crate::commands::runtime::worker::mounts::prepare();
         #[cfg(not(target_os = "linux"))]
-        let result = Err(anyhow::anyhow!("private worker mounts require Linux"));
+        let result: anyhow::Result<()> =
+            Err(anyhow::anyhow!("private worker mounts require Linux"));
         if let Err(error) = result {
             errors::write_dispatch_error(cli.format, cli.verbose, &error);
             return ExitCode::from(2);

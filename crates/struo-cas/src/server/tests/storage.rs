@@ -21,7 +21,9 @@ async fn exact_capacity_unequal_eviction_and_head_access() {
     server.stop().await;
     let tied = std::time::SystemTime::now() + Duration::from_secs(3600);
     for number in [1, 2] {
-        std::fs::File::open(root.path().join(key(number).trim_start_matches('/')))
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(root.path().join(key(number).trim_start_matches('/')))
             .unwrap()
             .set_times(std::fs::FileTimes::new().set_accessed(tied))
             .unwrap();

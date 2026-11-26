@@ -109,14 +109,16 @@ impl Storage {
         };
         temporary.persist(&path).map_err(|error| error.error)?;
         self.used = self.used - old + charge(length);
-        std::fs::File::open(&self.directory)?.sync_all()
+        #[cfg(unix)]
+        std::fs::File::open(&self.directory)?.sync_all()?;
+        Ok(())
     }
 
     pub fn touch(&mut self, file: &std::fs::File) -> io::Result<()> {
-        // Preserve access order across clock ties, rollback, and server restarts.
+        // Windows timestamps have 100 ns resolution; smaller steps lose access order.
         let next = self
             .last_access
-            .checked_add(Duration::from_nanos(1))
+            .checked_add(Duration::from_nanos(100))
             .ok_or_else(|| io::Error::other("cache access timestamp overflow"))?
             .max(SystemTime::now());
         file.set_times(std::fs::FileTimes::new().set_accessed(next))?;
@@ -128,7 +130,11 @@ impl Storage {
         if self.object_charge(key).await? == 0 {
             return Ok(None);
         }
-        let source = fs::File::open(self.directory.join(key)).await?;
+        let source = fs::OpenOptions::new()
+            .read(true)
+            .write(cfg!(windows))
+            .open(self.directory.join(key))
+            .await?;
         let length = source.metadata().await?.len();
         let source = source.into_std().await;
         self.touch(&source)?;
