@@ -43,7 +43,7 @@ such as an offline package archive in `srcs`, not `resolver_inputs`.
 
 | Attribute | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `package_json` | string | no | `package.json` | JavaScript package manifest |
+| `package_json` | string | no | `package.json` | JavaScript package manifest; in a monorepo, the root one that declares `workspaces` |
 | `package_manager` | string | no | `auto` | `auto`, `npm`, `pnpm`, `yarn`, or `bun` |
 | `package_manager_executable` | string | no |  | Package manager executable override |
 | `lockfile` | string | no |  | Lockfile path, detected when omitted |
@@ -77,9 +77,12 @@ installation. Cache replay restores generated files as well as dependencies.
 This does not automatically copy those generated files into consumer source
 workspaces; consumers still need an explicit source boundary.
 
-This target models one application package and does not synthesize package
-manager workspaces. Switching package managers can also change native podspec
-checksums, so regenerate and check in `Podfile.lock` after a switch.
+In a monorepo, declare the target at the workspace root and list every
+workspace member's `package.json` in `srcs`. See
+[Monorepos](/guide/graph/react-native#monorepos).
+
+Switching package managers can also change native podspec checksums, so
+regenerate and check in `Podfile.lock` after a switch.
 
 ## Example
 

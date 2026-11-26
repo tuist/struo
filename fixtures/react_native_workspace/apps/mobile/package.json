@@ -1,0 +1,1 @@
+{"name":"mobile","version":"1.0.0","dependencies":{"@acme/theme":"1.0.0","react-native":"file:../../vendor/react-native-0.86.0.tgz","hermes-compiler":"file:../../vendor/hermes-compiler-0.14.0.tgz"}}

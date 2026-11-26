@@ -1,0 +1,14 @@
+[[target]]
+name = "Dependencies"
+kind = "react_native_dependencies"
+srcs = [
+  "package.json",
+  "package-lock.json",
+  "apps/mobile/package.json",
+  "packages/theme/package.json",
+  "packages/theme/theme.js",
+  "vendor/*.tgz",
+]
+
+[target.attrs]
+package_json = "package.json"

@@ -1337,7 +1337,7 @@ _REACT_NATIVE_DEPENDENCY_REFERENCES = [
 react_native_dependencies = target_kind(
     docs = "Installs the exact JavaScript dependency graph from npm, pnpm, Yarn, or Bun lockfiles and exposes locked React Native and Hermes identities.",
     attrs = [
-        attr("package_json", "string", default = "\"package.json\"", docs = "Package-relative JavaScript package manifest.", configurable = False),
+        attr("package_json", "string", default = "\"package.json\"", docs = "Package-relative JavaScript package manifest. In a workspace, use the root manifest that declares `workspaces`.", configurable = False),
         attr("package_manager", "string", default = "\"auto\"", docs = "`auto`, `npm`, `pnpm`, `yarn`, or `bun`. Auto uses packageManager, the lockfile name, or the only declared supported lockfile.", configurable = False),
         attr("package_manager_executable", "string", default = "\"\"", docs = "Optional package manager executable override.", configurable = False),
         attr("lockfile", "string", default = "\"\"", docs = "Package-relative lockfile. Auto-detected when omitted.", configurable = False),

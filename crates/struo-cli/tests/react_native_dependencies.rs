@@ -204,3 +204,63 @@ fn workspace_build_uses_private_sources_and_restores_products() {
             .exists());
     }
 }
+
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+#[test]
+fn workspace_root_target_installs_sibling_workspace_packages() {
+    let workspace = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    copy_dir(
+        std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/react_native_workspace"
+        )),
+        workspace.path(),
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_struo"))
+        .arg("-C")
+        .arg(workspace.path())
+        .args(["--memory-limit", "512MiB", "build", "Dependencies"])
+        .env("HOME", home.path())
+        .env("XDG_CACHE_HOME", home.path().join("cache"))
+        .env("XDG_CONFIG_HOME", home.path().join("config"))
+        .env("XDG_STATE_HOME", home.path().join("state"))
+        .env("STRUO_CACHE_PROVIDER", "local")
+        .env("STRUO_CHANGE_TRACKER", "0")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let resolved = Command::new("node")
+        .args([
+            "-p",
+            "require('@acme/theme') + ':' + require('react-native/package.json').version",
+        ])
+        .current_dir(
+            workspace
+                .path()
+                .join(".struo/out/Dependencies/javascript/apps/mobile"),
+        )
+        .output()
+        .unwrap();
+    assert!(resolved.status.success(), "{resolved:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&resolved.stdout).trim(),
+        "blue:0.86.0"
+    );
+}

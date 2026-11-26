@@ -118,18 +118,62 @@ Struo supports `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, and
 `bun.lock`. It detects the manager from the target attributes, the
 `packageManager` field, or the declared lockfile.
 
-For a workspace, declare the dependency target at the installation root and
-include in `srcs` every workspace package manifest, local package source needed
-during installation, and lifecycle script with its inputs. Declare
-package-manager configuration with `package_manager_files` and include it in
-`resolver_inputs`. For Yarn's `yarnPath`, also stage the checked-in release
-through `srcs`.
+Declare package-manager configuration with `package_manager_files` and include
+it in `resolver_inputs`. For Yarn's `yarnPath`, also list the checked-in release
+in `srcs`. Package-manager configuration must not contain credentials, because
+inputs can enter a shared cache.
 
-A missing workspace manifest can make an immutable install fail because the
-staged project no longer matches the lockfile. Fix the declaration; do not
-disable frozen installs or regenerate the lockfile. Package-manager
-configuration must not contain credentials, because inputs can enter a shared
-cache.
+### Monorepos
+
+When the app depends on sibling packages through package-manager workspaces,
+the dependency target describes the whole workspace, not just the app. Take
+this layout:
+
+```text
+package.json                 # "workspaces": ["apps/*", "packages/*"]
+package-lock.json
+apps/mobile/package.json     # depends on "@acme/theme"
+packages/theme/package.json
+packages/theme/theme.js
+```
+
+Declare the target in the root `struo.toml`, next to the lockfile:
+
+```toml
+[[target]]
+name = "Dependencies"
+kind = "react_native_dependencies"
+srcs = [
+  "package.json",
+  "package-lock.json",
+  "apps/mobile/package.json",
+  "packages/theme/package.json",
+  "packages/theme/theme.js",
+]
+
+[target.attrs]
+package_json = "package.json"  # the manifest that declares `workspaces`
+```
+
+- `package_json` is the root manifest, not the app's.
+- `srcs` lists every workspace member's `package.json`, plus any file a member
+  needs at install time, such as its entry point or lifecycle scripts. Struo
+  installs from the declared files only.
+- With pnpm, also add `pnpm-workspace.yaml` to `srcs`.
+
+The same layout works with Bun, pnpm, and Yarn.
+
+#### Troubleshooting
+
+| Error | Fix |
+| --- | --- |
+| `Workspace dependency "@acme/theme" not found` | Point `package_json` at the root manifest. |
+| `resolves outside its owner package` | Move the target from the app's `struo.toml` to the root one. |
+| `lockfile had changes, but lockfile is frozen` | Add the missing workspace member's `package.json` to `srcs`. |
+
+npm does not always report these mistakes and can install an incomplete
+`node_modules` instead. Fix the declaration rather than disabling frozen
+installs or regenerating the lockfile.
 
 ### Native modules
 
