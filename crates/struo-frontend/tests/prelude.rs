@@ -8119,6 +8119,127 @@ result = repr(provider["app_path"])
 }
 
 #[cfg(unix)]
+fn watchos_application_plist(attrs: &str, template: Option<&str>) -> String {
+    let prelude = macos_prelude_source();
+    let workspace = TempDir::new().unwrap();
+    std::fs::create_dir_all(workspace.path().join("watch")).unwrap();
+    std::fs::write(workspace.path().join("watch/main.swift"), "print(1)\n").unwrap();
+    if let Some(template) = template {
+        std::fs::write(workspace.path().join("watch/Info.plist"), template).unwrap();
+    }
+    let source = format!(
+        r#"{prelude}
+def host_which(name):
+    return "/usr/bin/" + name
+
+def host_command(argv, env = None, merge_stderr = None):
+    if "--find" in argv:
+        return "/toolchain/" + argv[len(argv) - 1] + "\n"
+    if "--show-sdk-path" in argv:
+        return "/sdks/WatchSimulator.sdk\n"
+    if "--version" in argv:
+        return "Swift version test\n"
+    if "-print-resource-dir" in argv:
+        return "/toolchain/resource\n"
+    fail("unexpected host_command: " + str(argv))
+
+attrs = {{"platform": "watchos", "bundle_id": "dev.example.watch", "minimum_os": "10.0", "sdk_variant": "simulator"}}
+attrs.update({attrs})
+_apple_application_impl({{
+    "label": {{"package": "watch", "name": "WatchApp", "id": "watch/WatchApp"}},
+    "attr": attrs,
+    "deps": [],
+    "srcs": ["*.swift"],
+    "build_dir": ".struo/out/watch/WatchApp",
+    "capability": "build",
+}})
+result = "ok"
+"#
+    );
+    let store = store_for(workspace.path(), "watch");
+    let (store, out) = with_active_store(store, || eval_prelude_source_to_repr(source));
+    out.unwrap();
+    let plist = action_by_identifier(
+        &store,
+        "write_path:.struo/out/watch/WatchApp.app/Info.plist",
+    );
+    let Some(DeclaredActionOperation::WriteFile { bytes, .. }) = &plist.operation else {
+        panic!("expected application property list");
+    };
+    String::from_utf8(bytes.clone()).unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn prelude_apple_application_generates_watchos_property_list_like_rules_apple() {
+    let plist = watchos_application_plist(
+        r#"{
+    "build_version": "",
+    "short_version_string": "",
+    "info_plist_entries": {
+        "WKCompanionAppBundleIdentifier": "\"dev.example & co\"",
+        "UISupportedInterfaceOrientations": "[\"UIInterfaceOrientationPortrait\"]",
+        "UIApplicationSceneManifest": "{\"UIApplicationSupportsMultipleScenes\":true,\"UISceneConfigurations\":{}}",
+    },
+}"#,
+        None,
+    );
+    for expected in [
+        "\t<key>WKApplication</key>\n\t<true/>",
+        "\t<key>UIDeviceFamily</key>\n\t<array>\n\t\t<integer>4</integer>\n\t</array>",
+        "\t<key>WKCompanionAppBundleIdentifier</key>\n\t<string>dev.example &amp; co</string>",
+        "\t<key>UISupportedInterfaceOrientations</key>\n\t<array>\n\t\t<string>UIInterfaceOrientationPortrait</string>\n\t</array>",
+        "\t<key>UIApplicationSceneManifest</key>\n\t<dict>\n\t\t<key>UIApplicationSupportsMultipleScenes</key>\n\t\t<true/>\n\t\t<key>UISceneConfigurations</key>\n\t\t<dict/>\n\t</dict>",
+    ] {
+        assert!(plist.contains(expected), "missing {expected:?} in {plist}");
+    }
+    for absent in [
+        "LSRequiresIPhoneOS",
+        "CFBundleVersion",
+        "CFBundleShortVersionString",
+    ] {
+        assert!(!plist.contains(absent), "unexpected {absent} in {plist}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn prelude_apple_application_merges_entries_into_a_template_like_swift_build() {
+    let plist = watchos_application_plist(
+        r#"{
+    "info_plist": "Info.plist",
+    "build_version": "42",
+    "info_plist_entries": {
+        "CFBundleDisplayName": "\"New\"",
+        "UISupportedInterfaceOrientations": "[\"UIInterfaceOrientationPortrait\",\"UIInterfaceOrientationLandscapeLeft\"]",
+        "NSAppTransportSecurity": "{\"B\":true}",
+    },
+}"#,
+        Some("<plist version=\"1.0\"><dict><key>CFBundleDisplayName</key><string>Old</string><key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array><key>NSAppTransportSecurity</key><dict><key>A</key><true/></dict><key>UIDeviceFamily</key><array><integer>1</integer></array><key>CFBundleVersion</key><string>1</string></dict></plist>"),
+    );
+    let compact: String = plist.chars().filter(|c| !c.is_whitespace()).collect();
+    for expected in [
+        "<key>CFBundleDisplayName</key><string>New</string>",
+        "<key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string></array>",
+        "<key>NSAppTransportSecurity</key><dict><key>A</key><true/><key>B</key><true/></dict>",
+        "<key>UIDeviceFamily</key><array><integer>4</integer></array>",
+        "<key>WKApplication</key><true/>",
+        "<key>CFBundleVersion</key><string>42</string>",
+        "<key>CFBundleExecutable</key><string>WatchApp</string>",
+        "<key>CFBundleIdentifier</key><string>dev.example.watch</string>",
+    ] {
+        assert!(compact.contains(expected), "missing {expected:?} in {plist}");
+    }
+    for absent in [
+        "<string>Old</string>",
+        "<string>1</string>",
+        "CFBundleShortVersionString",
+    ] {
+        assert!(!compact.contains(absent), "unexpected {absent} in {plist}");
+    }
+}
+
+#[cfg(unix)]
 fn assert_apple_thinning_adapter(store: &AnalysisStore) {
     let adapter = action_by_identifier(
         store,
@@ -16167,6 +16288,51 @@ result = repr([product_name, attrs["bundle_id"], attrs["info_plist"], attrs["inf
     assert_eq!(
         eval_prelude_source_to_repr(source).unwrap(),
         r#"["Example App", "org.example.Example-App", "App/Info.plist", {"EXECUTABLE_NAME": "Example App", "PRODUCT_BUNDLE_IDENTIFIER": "org.example.Example-App", "SRCROOT": "/workspace"}]"#
+    );
+}
+
+#[test]
+fn prelude_xcode_generated_info_plist_follows_settings_platform_and_product_type() {
+    let prelude = xcode_prelude_source();
+    let source = format!(
+        r#"{prelude}
+keys = {{
+    "PRODUCT_NAME": "App",
+    "GENERATE_INFOPLIST_FILE": "YES",
+    "INFOPLIST_KEY_CFBundleDisplayName": "$(PRODUCT_NAME) Display",
+    "INFOPLIST_KEY_UILaunchScreen_Generation": "YES",
+    "INFOPLIST_KEY_UIApplicationSceneManifest_Generation": "NO",
+    "INFOPLIST_KEY_UIStatusBarHidden": "NO",
+    "INFOPLIST_KEY_WKCompanionAppBundleIdentifier": "",
+    "INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad": "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft",
+    "CURRENT_PROJECT_VERSION": "7",
+    "MARKETING_VERSION": "$(MAJOR).1",
+    "DEVELOPMENT_LANGUAGE": "fr",
+}}
+subs = {{"PRODUCT_NAME": "App", "MAJOR": "2"}}
+generated = {{"GENERATE_INFOPLIST_FILE": "YES"}}
+result = repr([
+    _xcode_generated_info_plist_attrs(keys, subs, "ios", "application"),
+    _xcode_generated_info_plist_attrs(generated, subs, "ios", "extension"),
+    _xcode_generated_info_plist_attrs(generated, subs, "watchos", "application"),
+    _xcode_generated_info_plist_attrs(generated, subs, "watchos", "watch_app"),
+    _xcode_generated_info_plist_attrs({{"INFOPLIST_KEY_CFBundleDisplayName": "App"}}, subs, "ios", "application"),
+    _xcode_families({{"TARGETED_DEVICE_FAMILY": "1,2,3,4,7"}}),
+    _xcode_info_plist_file({{"GENERATE_INFOPLIST_FILE": "YES", "INFOPLIST_FILE": "App/Info.plist"}}, subs),
+])
+"#
+    );
+    assert_eq!(
+        eval_prelude_source_to_repr(source).unwrap(),
+        concat!(
+            r#"[{"build_version": "7", "short_version_string": "2.1", "info_plist_entries": {"CFBundleDevelopmentRegion": "\"fr\"", "LSRequiresIPhoneOS": "true", "CFBundleDisplayName": "\"App Display\"", "UILaunchScreen": "{\"UILaunchScreen\":{}}", "UIStatusBarHidden": "false", "UISupportedInterfaceOrientations~ipad": "[\"UIInterfaceOrientationPortrait\",\"UIInterfaceOrientationLandscapeLeft\"]", "WKCompanionAppBundleIdentifier": "\"\""}}, "#,
+            r#"{"build_version": "", "short_version_string": "", "info_plist_entries": {"CFBundleDevelopmentRegion": "\"en\""}}, "#,
+            r#"{"build_version": "", "short_version_string": "", "info_plist_entries": {"CFBundleDevelopmentRegion": "\"en\"", "MinimumOSVersion~ipad": "\"9.0\""}}, "#,
+            r#"{"build_version": "", "short_version_string": "", "info_plist_entries": {"CFBundleDevelopmentRegion": "\"en\"", "WKWatchKitApp": "true"}}, "#,
+            r#"{}, "#,
+            r#"["iphone", "ipad", "tv", "watch", "vision"], "#,
+            r#""App/Info.plist"]"#,
+        )
     );
 }
 

@@ -1,0 +1,25 @@
+// !$*UTF8*$!
+{
+ archiveVersion = 1;
+ objectVersion = 56;
+ objects = {
+  ROOT = {isa = PBXProject; mainGroup = GROUP; buildConfigurationList = PROJECTCONFIGS; targets = (PHONE, WATCH); };
+  GROUP = {isa = PBXGroup; sourceTree = "<group>"; children = (PHONEMAIN, WATCHMAIN, WATCHXCCONFIG); };
+  PHONEMAIN = {isa = PBXFileReference; path = Phone/main.swift; sourceTree = "<group>"; };
+  WATCHMAIN = {isa = PBXFileReference; path = Watch/main.swift; sourceTree = "<group>"; };
+  WATCHXCCONFIG = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Watch/Watch.xcconfig; sourceTree = "<group>"; };
+  PHONESOURCE = {isa = PBXBuildFile; fileRef = PHONEMAIN; };
+  WATCHSOURCE = {isa = PBXBuildFile; fileRef = WATCHMAIN; };
+  PHONESOURCES = {isa = PBXSourcesBuildPhase; files = (PHONESOURCE); };
+  WATCHSOURCES = {isa = PBXSourcesBuildPhase; files = (WATCHSOURCE); };
+  PROJECTCONFIGS = {isa = XCConfigurationList; buildConfigurations = (PROJECTDEBUG); defaultConfigurationName = Debug; };
+  PROJECTDEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {SWIFT_VERSION = 5.0; GENERATE_INFOPLIST_FILE = YES; }; };
+  PHONECONFIGS = {isa = XCConfigurationList; buildConfigurations = (PHONEDEBUG); defaultConfigurationName = Debug; };
+  PHONEDEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; TARGETED_DEVICE_FAMILY = "1,2"; PRODUCT_NAME = ReproApp; PRODUCT_BUNDLE_IDENTIFIER = dev.example.repro; INFOPLIST_FILE = Phone/Info.plist; CURRENT_PROJECT_VERSION = 7; MARKETING_VERSION = 2.1; INFOPLIST_KEY_UILaunchScreen_Generation = YES; INFOPLIST_KEY_CFBundleDisplayName = "Repro & Display"; INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES; INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft"; }; };
+  WATCHCONFIGS = {isa = XCConfigurationList; buildConfigurations = (WATCHDEBUG); defaultConfigurationName = Debug; };
+  WATCHDEBUG = {isa = XCBuildConfiguration; name = Debug; baseConfigurationReference = WATCHXCCONFIG; buildSettings = {SDKROOT = watchos; WATCHOS_DEPLOYMENT_TARGET = 10.0; TARGETED_DEVICE_FAMILY = 4; PRODUCT_NAME = WatchApp; PRODUCT_BUNDLE_IDENTIFIER = dev.example.repro.watchkitapp; }; };
+  PHONE = {isa = PBXNativeTarget; name = ReproApp; productType = "com.apple.product-type.application"; buildConfigurationList = PHONECONFIGS; buildPhases = (PHONESOURCES); dependencies = (); };
+  WATCH = {isa = PBXNativeTarget; name = WatchApp; productType = "com.apple.product-type.application"; buildConfigurationList = WATCHCONFIGS; buildPhases = (WATCHSOURCES); dependencies = (); };
+ };
+ rootObject = ROOT;
+}

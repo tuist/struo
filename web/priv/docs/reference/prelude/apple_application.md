@@ -93,7 +93,7 @@ import inference and should not be authored manually.
 | `target_sdk_version` | string | no | `minimum_os` | Software development kit version used in the target triple |
 | `sdk_variant` | string | no | `simulator` | `simulator` or `device`; ignored on macOS (not configurable) |
 | `xcode_developer_dir` | string | no | active Xcode on macOS; registered `darwin` SDK on Linux | Xcode Developer directory on macOS or xtool Darwin SDK Developer directory on Linux |
-| `families` | list&lt;string&gt; | no | `[]` | Supported device families (`iphone`, `ipad`); an empty list uses `iphone` |
+| `families` | list&lt;string&gt; | no | `[]` | Supported device families written to `UIDeviceFamily`: iphone, ipad, tv, watch, vision, or mac. Defaults to the platform's family, with iphone for iOS |
 | `device_type` | string | no |  | Simulator device type `struo run` uses, as listed by `xcrun simctl list devicetypes`, such as `iPad Air 11-inch (M2)`; see [Running](#running) |
 | `os_version` | string | no |  | Simulator runtime version `struo run` uses, as listed by `xcrun simctl list runtimes`, such as `18.2`; see [Running](#running) |
 | `product_name` | string | no | target name | Application product name (not configurable) |
@@ -103,6 +103,9 @@ import inference and should not be authored manually.
 | `asset_catalogs` | list&lt;string&gt; | no | `[]` | Asset catalog paths compiled into the application bundle |
 | `info_plist` | string | no |  | Info.plist template path |
 | `info_plist_substitutions` | map&lt;string,string&gt; | no | `{}` | Values substituted into the generated Info.plist |
+| `info_plist_entries` | map&lt;string,string&gt; | no | `{}` | Info.plist keys, each a JSON value: a string, boolean, number, array, or object. They are merged into the generated or `info_plist` property list: a scalar replaces the existing value, an array appends missing items, and an object merges one level deep |
+| `build_version` | string | no |  | `CFBundleVersion`. Replaces the `info_plist` value when set. A generated Info.plist uses `1` when unset and omits the key when empty |
+| `short_version_string` | string | no |  | `CFBundleShortVersionString`. Replaces the `info_plist` value when set. A generated Info.plist uses `1.0` when unset and omits the key when empty |
 | `entitlements` | string | no |  | Entitlements plist path |
 | `entitlements_substitutions` | map&lt;string,string&gt; | no | `{}` | Build-setting values substituted into `$(NAME)` or `${NAME}` placeholders before signing |
 | `development_team` | string | no |  | Apple development team identifier used to derive simulator application identity; with `signing = "development"` it must match the provisioning profile team |

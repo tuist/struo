@@ -4648,10 +4648,9 @@ def _xcode_families(settings):
     families = []
     for code in raw.split(","):
         code = code.strip()
-        if code == "1":
-            families.append("iphone")
-        elif code == "2":
-            families.append("ipad")
+        family = {"1": "iphone", "2": "ipad", "3": "tv", "4": "watch", "6": "mac", "7": "vision"}.get(code)
+        if family:
+            families.append(family)
     return families
 
 # ---------------------------------------------------------------------------
@@ -4951,10 +4950,76 @@ def _xcode_test_style(ctx, source_paths):
             return "swift_testing"
     return "xctest"
 
+# Typed `INFOPLIST_KEY_*` settings that Xcode copies into a generated
+# Info.plist. Other string keys are the listed names plus every
+# `*UsageDescription`.
+_XCODE_INFOPLIST_BOOL_KEYS = [
+    "GCSupportsControllerUserInteraction", "GCSupportsGameMode", "ITSAppUsesNonExemptEncryption",
+    "LSBackgroundOnly", "LSSupportsOpeningDocumentsInPlace", "LSUIElement", "MetalCaptureEnabled",
+    "NSAppDataAccessNotify", "NSSupportsLiveActivities", "NSSupportsLiveActivitiesFrequentUpdates",
+    "NSViewGestureRecognizerIsExclusive", "UIApplicationSupportsIndirectInputEvents", "UIRequiresFullScreen",
+    "UIStatusBarHidden", "UISupportsDocumentBrowser", "WKApplication", "WKRunsIndependentlyOfCompanionApp", "WKWatchOnly",
+]
+_XCODE_INFOPLIST_LIST_KEYS = [
+    "UIRequiredDeviceCapabilities", "UISupportedInterfaceOrientations", "UISupportedInterfaceOrientations~ipad",
+    "UISupportedInterfaceOrientations~iphone", "WKSupportsLiveActivityLaunchAttributeTypes",
+]
+_XCODE_INFOPLIST_STRING_KEYS = [
+    "CFBundleDisplayName", "CLKComplicationPrincipalClass", "ITSEncryptionExportComplianceCode",
+    "LSApplicationCategoryType", "NSHumanReadableCopyright", "NSMainNibFile", "NSMainStoryboardFile",
+    "NSPrincipalClass", "NSSensorKitPrivacyPolicyURL", "NSStickerSharingLevel", "UILaunchStoryboardName",
+    "UIMainStoryboardFile", "UIStatusBarStyle", "UIUserInterfaceStyle", "WKCompanionAppBundleIdentifier",
+    "WKExtensionDelegateClassName",
+]
+_XCODE_INFOPLIST_GENERATED_DICTS = {
+    # Xcode writes the launch screen dictionary nested under its own key.
+    "UILaunchScreen_Generation": ("UILaunchScreen", {"UILaunchScreen": {}}),
+    "UIApplicationSceneManifest_Generation": ("UIApplicationSceneManifest", {"UIApplicationSupportsMultipleScenes": True, "UISceneConfigurations": {}}),
+}
+
+def _xcode_info_plist_bool(value):
+    return value.strip().upper() in ["YES", "TRUE", "1"]
+
+def _xcode_generated_info_plist_attrs(settings, subs, platform, kind):
+    # Mirrors swift-build's generated Info.plist content: each assigned
+    # `INFOPLIST_KEY_<Key>` becomes `<Key>`, typed like its build setting and
+    # encoded as JSON, plus the keys it adds by platform and product type.
+    # Version keys come only from the build settings that set them.
+    if _xcode_scalar(settings.get("GENERATE_INFOPLIST_FILE")).upper() != "YES":
+        return {}
+    attrs = {}
+    for attr_name, setting in [("build_version", "CURRENT_PROJECT_VERSION"), ("short_version_string", "MARKETING_VERSION")]:
+        value = _xcode_resolve_vars(_xcode_scalar(settings.get(setting)), subs)
+        attrs[attr_name] = "" if "$(" in value or "${" in value else value
+    region = _xcode_resolve_vars(_xcode_scalar(settings.get("DEVELOPMENT_LANGUAGE")), subs)
+    entries = {"CFBundleDevelopmentRegion": _json_encode("en" if not region or "$(" in region else region)}
+    if kind == "application" and platform in ["ios", "tvos"]:
+        entries["LSRequiresIPhoneOS"] = "true"
+    if kind == "application" and platform == "watchos":
+        entries["MinimumOSVersion~ipad"] = _json_encode("9.0")
+    if kind == "watch_app":
+        entries["WKWatchKitApp"] = "true"
+    prefix = "INFOPLIST_KEY_"
+    for name in sorted(settings.keys()):
+        if not name.startswith(prefix):
+            continue
+        setting = name[len(prefix):]
+        key = setting.replace("_iPad", "~ipad").replace("_iPhone", "~iphone")
+        raw = settings[name]
+        if setting in _XCODE_INFOPLIST_GENERATED_DICTS:
+            if _xcode_info_plist_bool(_xcode_resolve_vars(_xcode_scalar(raw), subs)):
+                generated_key, value = _XCODE_INFOPLIST_GENERATED_DICTS[setting]
+                entries[generated_key] = _json_encode(value)
+        elif key in _XCODE_INFOPLIST_LIST_KEYS:
+            entries[key] = _json_encode([_xcode_resolve_vars(item, subs) for item in _xcode_setting_to_list(raw)])
+        elif key in _XCODE_INFOPLIST_BOOL_KEYS:
+            entries[key] = _json_encode(_xcode_info_plist_bool(_xcode_resolve_vars(_xcode_scalar(raw), subs)))
+        elif key in _XCODE_INFOPLIST_STRING_KEYS or key.endswith("UsageDescription"):
+            entries[key] = _json_encode(_xcode_resolve_vars(_xcode_scalar(raw), subs))
+    attrs["info_plist_entries"] = entries
+    return attrs
+
 def _xcode_info_plist_file(settings, subs):
-    generate = _xcode_scalar(settings.get("GENERATE_INFOPLIST_FILE")).upper()
-    if generate == "YES":
-        return ""
     raw = _xcode_scalar(settings.get("INFOPLIST_FILE"))
     if not raw:
         return ""
@@ -5576,6 +5641,7 @@ def _xcode_lower_target(ctx, objects, target, project_settings, name_to_id, dep_
         spec_kind = "apple_application"
         if kind == "extension":
             attrs["application_extension"] = True
+        attrs.update(_xcode_generated_info_plist_attrs(settings, subs, platform, kind))
     elif kind == "framework":
         attrs, product_name = _xcode_library_attrs(ctx, target, settings, subs, platform, files)
         if product_type == "com.apple.product-type.framework" and not _xcode_framework_is_static(settings, product_type):

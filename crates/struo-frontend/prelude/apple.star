@@ -3391,7 +3391,68 @@ def _swift_macro_impl(ctx):
 # and application bundles need; richer types (arrays, bools) layer on
 # through small per-key templates.
 
-def _render_plist(entries, bool_entries = {}, array_entries = {}):
+def _apple_plist_value_lines(value, indent):
+    if type(value) == type(True):
+        return [indent + ("<true/>" if value else "<false/>")]
+    if type(value) == type(0):
+        return [indent + "<integer>" + str(value) + "</integer>"]
+    if type(value) == type([]):
+        if not value:
+            return [indent + "<array/>"]
+        lines = [indent + "<array>"]
+        for item in value:
+            lines.extend(_apple_plist_value_lines(item, indent + "\t"))
+        return lines + [indent + "</array>"]
+    if type(value) == type({}):
+        if not value:
+            return [indent + "<dict/>"]
+        lines = [indent + "<dict>"]
+        for key in sorted(value.keys()):
+            lines.append(indent + "\t<key>" + _xml_escape(key) + "</key>")
+            lines.extend(_apple_plist_value_lines(value[key], indent + "\t"))
+        return lines + [indent + "</dict>"]
+    return [indent + "<string>" + _xml_escape(str(value)) + "</string>"]
+
+# rules_apple's `families` values and their `UIDeviceFamily` codes; `mac`
+# adds no code.
+_APPLE_DEVICE_FAMILY_CODES = {"iphone": 1, "ipad": 2, "tv": 3, "watch": 4, "vision": 7, "mac": 0}
+_APPLE_DEFAULT_FAMILY = {"tvos": "tv", "watchos": "watch", "visionos": "vision", "xros": "vision", "macos": "mac", "macosx": "mac"}
+
+def _apple_plist_value_text(key, value, indent):
+    return "\n".join([indent + "<key>" + _xml_escape(key) + "</key>"] + _apple_plist_value_lines(value, indent)) + "\n"
+
+def _apple_plist_merge(contents, entries):
+    # Merges `entries` into a property list the way swift-build merges
+    # generated content: scalars replace, arrays append missing items, and
+    # dictionaries merge one level deep.
+    for key in sorted(entries.keys()):
+        value = entries[key]
+        entry = _apple_plist_entry(contents, key)
+        if entry == None:
+            closing = contents.rfind("</dict>")
+            contents = contents[:closing] + _apple_plist_value_text(key, value, "\t") + contents[closing:]
+            continue
+        start, inner_start, inner_end, end = entry
+        tag = contents[contents.rfind("<", 0, inner_start) + 1:inner_start - 1].split(" ")[0]
+        if inner_start == end:
+            tag = ""
+        inner = contents[inner_start:inner_end]
+        if type(value) == type([]) and tag == "array":
+            existing = "".join(inner.split())
+            additions = ["\n".join(_apple_plist_value_lines(item, "\t\t")) + "\n" for item in value]
+            additions = [item for item in additions if "".join(item.split()) not in existing]
+            contents = contents[:inner_end] + "".join(additions) + contents[inner_end:]
+        elif type(value) == type({}) and tag == "dict":
+            for child_key in sorted(value.keys()):
+                child = _apple_plist_entry(inner, child_key)
+                text = _apple_plist_value_text(child_key, value[child_key], "\t\t")
+                inner = inner + text if child == None else inner[:child[0]] + text + inner[child[3]:]
+            contents = contents[:inner_start] + inner + contents[inner_end:]
+        else:
+            contents = contents[:start] + _apple_plist_value_text(key, value, "\t").lstrip("\t").rstrip("\n") + contents[end:]
+    return contents
+
+def _render_plist(entries, bool_entries = {}, array_entries = {}, typed_entries = {}):
     lines = [
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
         "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
@@ -3415,6 +3476,9 @@ def _render_plist(entries, bool_entries = {}, array_entries = {}):
             else:
                 lines.append("\t\t<string>" + str(item) + "</string>")
         lines.append("\t</array>")
+    for key in sorted(typed_entries.keys()):
+        lines.append("\t<key>" + _xml_escape(key) + "</key>")
+        lines.extend(_apple_plist_value_lines(typed_entries[key], "\t"))
     lines.append("</dict>")
     lines.append("</plist>")
     lines.append("")
@@ -5181,7 +5245,7 @@ def _apple_application_impl(ctx):
     # can contain spaces (a bundle displayed as "Ice Cubes" has module name
     # "Ice_Cubes"), so derive the module name separately.
     module_name = _apple_swift_module_name(attrs.get("module_name") or product_name)
-    families = attrs.get("families") or ["iphone"]
+    families = attrs.get("families") or [_APPLE_DEFAULT_FAMILY.get(platform) or "iphone"]
     sdk_frameworks_attr = attrs.get("sdk_frameworks") or []
     weak_sdk_frameworks = attrs.get("weak_sdk_frameworks") or []
     sdk_dylibs_attr = attrs.get("sdk_dylibs") or []
@@ -5198,6 +5262,9 @@ def _apple_application_impl(ctx):
     entitlements_substitutions = attrs.get("entitlements_substitutions") or {}
     info_plist_template = attrs.get("info_plist") or ""
     info_plist_substitutions = attrs.get("info_plist_substitutions") or {}
+    info_plist_entries = attrs.get("info_plist_entries") or {}
+    build_version = attrs.get("build_version")
+    short_version_string = attrs.get("short_version_string")
     development_team = attrs.get("development_team") or ""
     private_header_dirs = []
     for header_dir in (attrs.get("exported_header_dirs") or []) + (attrs.get("private_header_dirs") or []):
@@ -5757,12 +5824,7 @@ def _apple_application_impl(ctx):
         source_files = _action_source_files(swift_inputs),
     )
 
-    device_family_codes = []
-    for family in families:
-        if family == "iphone":
-            device_family_codes.append({"integer": 1})
-        elif family == "ipad":
-            device_family_codes.append({"integer": 2})
+    device_family_codes = [{"integer": _APPLE_DEVICE_FAMILY_CODES[family]} for family in families if _APPLE_DEVICE_FAMILY_CODES.get(family)]
     xcode_entries = _apple_xcode_build_plist_entries(swiftc["sdk_path"])
     build_entries = dict(xcode_entries)
     build_entries.update({
@@ -5770,31 +5832,52 @@ def _apple_application_impl(ctx):
         "DTPlatformName": swiftc["sdk_name"],
     })
     build_arrays = {"CFBundleSupportedPlatforms": [_apple_supported_platform(swiftc["sdk_name"])]}
-    if not is_macos:
+    if device_family_codes:
         build_arrays["UIDeviceFamily"] = device_family_codes
+    typed_entries = {key: json_decode(value) for key, value in info_plist_entries.items()}
     if info_plist_template:
         info_plist_source = _package_relative(ctx, info_plist_template)
         info_plist_path = info_plist_source if info_plist_source.startswith("/") else workspace_root() + "/" + info_plist_source
         info_plist_contents = host_file_read(info_plist_path)
         for key, value in info_plist_substitutions.items():
             info_plist_contents = info_plist_contents.replace("$(" + key + ")", value).replace("${" + key + "}", value)
-        # Only iPhone and iPad device family codes are modelled.
-        template_arrays = build_arrays if platform == "ios" else {"CFBundleSupportedPlatforms": build_arrays["CFBundleSupportedPlatforms"]}
-        info_plist_contents = _apple_plist_with_build_entries(info_plist_contents, build_entries, template_arrays, ["UIDeviceFamily"] + list(xcode_entries.keys()))
-    else:
-        plist_entries = {
-            "CFBundleDevelopmentRegion": "en",
+        template_entries = {
             "CFBundleExecutable": product_name,
             "CFBundleIdentifier": bundle_id,
             "CFBundleInfoDictionaryVersion": "6.0",
             "CFBundleName": product_name,
             "CFBundlePackageType": "XPC!" if application_extension else "APPL",
-            "CFBundleShortVersionString": "1.0",
-            "CFBundleVersion": "1",
+        }
+        template_entries.update(build_entries)
+        info_plist_contents = _apple_plist_with_build_entries(info_plist_contents, template_entries, build_arrays, ["UIDeviceFamily"] + list(xcode_entries.keys()))
+        for key, value in [("CFBundleVersion", build_version), ("CFBundleShortVersionString", short_version_string)]:
+            if value and key not in typed_entries:
+                typed_entries[key] = value
+    else:
+        plist_entries = {
+            key: value
+            for key, value in {
+                "CFBundleDevelopmentRegion": "en",
+                "CFBundleExecutable": product_name,
+                "CFBundleIdentifier": bundle_id,
+                "CFBundleInfoDictionaryVersion": "6.0",
+                "CFBundleName": product_name,
+                "CFBundlePackageType": "XPC!" if application_extension else "APPL",
+                "CFBundleShortVersionString": "1.0" if short_version_string == None else short_version_string,
+                "CFBundleVersion": "1" if build_version == None else build_version,
+            }.items()
+            if value and key not in typed_entries
         }
         plist_entries.update(build_entries)
-        bool_entries = {} if is_macos else {"LSRequiresIPhoneOS": True}
-        info_plist_contents = _render_plist(plist_entries, bool_entries, build_arrays)
+        info_plist_contents = _render_plist(plist_entries, {}, build_arrays)
+    # Like rules_apple's watchos_application, single-target watchOS apps are
+    # marked `WKApplication` unless the plist already declares its watch app kind.
+    if platform == "watchos" and not application_extension and not any([
+        key in typed_entries or _apple_plist_entry(info_plist_contents, key) != None
+        for key in ["WKApplication", "WKWatchKitApp"]
+    ]):
+        typed_entries["WKApplication"] = True
+    info_plist_contents = _apple_plist_merge(info_plist_contents, typed_entries)
     if asset_car:
         # `actool` declares the app icon and other catalog-owned keys in its
         # partial Info.plist, which only exists once the catalog compiles, so
@@ -8261,7 +8344,7 @@ apple_application = target_kind(
         attr("target_sdk_version", "string", docs = "Build-time SDK version baked into the triple. Defaults to `minimum_os`"),
         attr("sdk_variant", "string", default = "\"simulator\"", docs = "`simulator` or `device` SDK selection. Ignored on macOS", configurable = False),
         attr("xcode_developer_dir", "string", docs = "Pin Xcode's Developer directory on macOS or an xtool Darwin SDK's Developer directory on Linux. Linux defaults to the registered darwin Swift SDK; the selection contributes to action cache identity."),
-        attr("families", "list<string>", default = "[]", docs = "Supported device families, such as iphone or ipad"),
+        attr("families", "list<string>", default = "[]", docs = "Supported device families written to `UIDeviceFamily`: iphone, ipad, tv, watch, vision, or mac. Defaults to the platform's family, with iphone for iOS"),
         attr("device_type", "string", docs = "Simulator device type `struo run` uses, as listed by `xcrun simctl list devicetypes`, such as `iPad Air 11-inch (M2)`. Defaults to the best existing simulator for the platform"),
         attr("os_version", "string", docs = "Simulator runtime version `struo run` uses, as listed by `xcrun simctl list runtimes`, such as `18.2`. Defaults to any runtime at least `minimum_os`"),
         attr("product_name", "string", docs = "Application product name. Defaults to the target name", configurable = False),
@@ -8271,6 +8354,9 @@ apple_application = target_kind(
         attr("asset_catalogs", "list<string>", default = "[]", docs = "Asset catalog paths compiled into the application bundle"),
         attr("info_plist", "string", docs = "Info.plist template path"),
         attr("info_plist_substitutions", "map<string,string>", default = "{}", docs = "Values substituted into the generated Info.plist"),
+        attr("info_plist_entries", "map<string,string>", default = "{}", docs = "Info.plist keys, each a JSON value: a string, boolean, number, array, or object. They are merged into the generated or `info_plist` property list: a scalar replaces the existing value, an array appends missing items, and an object merges one level deep"),
+        attr("build_version", "string", docs = "`CFBundleVersion`. Replaces the `info_plist` value when set. A generated Info.plist uses `1` when unset and omits the key when empty"),
+        attr("short_version_string", "string", docs = "`CFBundleShortVersionString`. Replaces the `info_plist` value when set. A generated Info.plist uses `1.0` when unset and omits the key when empty"),
         attr("entitlements", "string", docs = "Entitlements plist path"),
         attr("development_team", "string", docs = "Apple development team identifier used to derive simulator application identity; with `signing = \"development\"` it must match the provisioning profile team", configurable = False),
         attr("provisioning_profile", "string", docs = "Development provisioning profile path (`.mobileprovision`, or `.provisionprofile` on macOS) for `signing = \"development\"`. It is embedded in the bundle, its team and application identifier must match `bundle_id`, and every requested entitlement must be granted by it"),

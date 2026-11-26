@@ -1,0 +1,2 @@
+INFOPLIST_KEY_WKCompanionAppBundleIdentifier = dev.example.repro
+INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait
