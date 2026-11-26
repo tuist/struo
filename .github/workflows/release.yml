@@ -93,7 +93,7 @@ jobs:
       # checkout: Struo rejects resolver sources that resolve outside it.
       - name: Attach cache volume
         if: startsWith(matrix.runner, 'tuist-')
-        uses: tuist/cache-volume@dff0b58204ceca89edd5c89a333f7687c92c5576 # v1.13.0
+        uses: tuist/cache-volume@45b3ecfc8e17971a9d839825e7d369f7db0aa32f # v1.13.2
         with:
           key: release-${{ matrix.target }}
           path: target
@@ -188,7 +188,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Attach cache volume
-        uses: tuist/cache-volume@dff0b58204ceca89edd5c89a333f7687c92c5576 # v1.13.0
+        uses: tuist/cache-volume@45b3ecfc8e17971a9d839825e7d369f7db0aa32f # v1.13.2
         with:
           key: release-${{ matrix.target }}
           path: target
