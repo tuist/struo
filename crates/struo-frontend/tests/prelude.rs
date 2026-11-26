@@ -16850,6 +16850,97 @@ fn prelude_apple_application_compiles_asset_catalogs() {
 }
 
 #[test]
+fn prelude_xcode_finds_the_app_icon_of_a_project_in_a_nested_package() {
+    // Catalog paths are workspace-relative, while the resolver runs in the
+    // project's package, so an icon set must still be found when that package
+    // is not the workspace root.
+    let workspace = tempfile::tempdir().unwrap();
+    for icon_set in [
+        "app/Assets.xcassets/AppIcon.appiconset",
+        "app/Assets.xcassets/Icons/Beta.appiconset",
+    ] {
+        std::fs::create_dir_all(workspace.path().join(icon_set)).unwrap();
+        std::fs::write(workspace.path().join(icon_set).join("Contents.json"), "{}").unwrap();
+    }
+    let source = format!(
+        r#"{}
+result = repr([
+    _xcode_app_icon_exists(["app/Assets.xcassets"], "AppIcon"),
+    _xcode_app_icon_exists(["app/Assets.xcassets"], "Beta"),
+    _xcode_app_icon_exists(["app/Assets.xcassets"], "Missing"),
+])
+"#,
+        xcode_prelude_source()
+    );
+    let (_, result) = with_active_store(store_for(workspace.path(), "app"), || {
+        eval_prelude_source_to_repr(source)
+    });
+    assert_eq!(result.unwrap(), "[True, True, False]");
+}
+
+#[test]
+fn prelude_apple_application_merges_the_asset_catalog_info_plist() {
+    // `actool` declares the app icon in a partial Info.plist; the bundle's
+    // Info.plist must carry it, and must stay untouched when the catalog
+    // contributes nothing.
+    let workspace = tempfile::tempdir().unwrap();
+    let base = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\">\n<dict>\n\t<!-- template -->\n\t<key>CFBundleExecutable</key>\n\t<string>ReproApp</string>\n\t<key>UIDeviceFamily</key>\n\t<array>\n\t\t<integer>1</integer>\n\t</array>\n</dict>\n</plist>\n";
+    let icon = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\">\n<dict>\n\t<key>CFBundleIcons</key>\n\t<dict>\n\t\t<key>CFBundlePrimaryIcon</key>\n\t\t<dict>\n\t\t\t<key>CFBundleIconFiles</key>\n\t\t\t<array>\n\t\t\t\t<string>AppIcon60x60</string>\n\t\t\t</array>\n\t\t\t<key>CFBundleIconName</key>\n\t\t\t<string>AppIcon</string>\n\t\t</dict>\n\t</dict>\n</dict>\n</plist>\n";
+    let empty =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\">\n<dict/>\n</plist>\n";
+    for (name, contents) in [
+        ("base.plist", base),
+        ("icon.plist", icon),
+        ("empty.plist", empty),
+    ] {
+        std::fs::write(workspace.path().join(name), contents).unwrap();
+    }
+    let merged = |partial: &str| {
+        let source = format!(
+            r#"{}
+apple_info_plist_merge_plan({{"args": {{"base": "base.plist", "partial": "{partial}", "output": "Info.plist"}}}})
+result = repr(None)
+"#,
+            apple_prelude_source()
+        );
+        let (store, result) = with_active_store(store_for(workspace.path(), ""), || {
+            eval_prelude_source_to_repr(source)
+        });
+        result.unwrap();
+        store
+            .actions
+            .iter()
+            .find_map(|action| match &action.operation {
+                Some(DeclaredActionOperation::WriteFile { path, bytes })
+                    if path == "Info.plist" =>
+                {
+                    Some(String::from_utf8(bytes.clone()).unwrap())
+                }
+                _ => None,
+            })
+            .expect("Info.plist was not written")
+    };
+
+    let with_icon = plist::Value::from_reader_xml(merged("icon.plist").as_bytes())
+        .unwrap()
+        .into_dictionary()
+        .unwrap();
+    assert_eq!(
+        with_icon["CFBundleExecutable"].as_string(),
+        Some("ReproApp")
+    );
+    assert_eq!(
+        with_icon["UIDeviceFamily"].as_array().unwrap()[0].as_signed_integer(),
+        Some(1)
+    );
+    let primary = with_icon["CFBundleIcons"].as_dictionary().unwrap()["CFBundlePrimaryIcon"]
+        .as_dictionary()
+        .unwrap();
+    assert_eq!(primary["CFBundleIconName"].as_string(), Some("AppIcon"));
+    assert_eq!(merged("empty.plist"), base);
+}
+
+#[test]
 fn prelude_xcode_asset_catalog_dir_recovers_catalog() {
     // A synchronized glob yields files inside a `.xcassets`; the catalog is
     // recovered as the directory up to `.xcassets`, and non-catalog paths yield

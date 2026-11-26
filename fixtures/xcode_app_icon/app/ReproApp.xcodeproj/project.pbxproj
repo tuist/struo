@@ -1,0 +1,19 @@
+// !$*UTF8*$!
+{
+ archiveVersion = 1;
+ objectVersion = 56;
+ objects = {
+  ROOT = {isa = PBXProject; mainGroup = GROUP; buildConfigurationList = CONFIGS; targets = (APP); };
+  GROUP = {isa = PBXGroup; sourceTree = "<group>"; children = (MAIN, CATALOG); };
+  MAIN = {isa = PBXFileReference; path = main.swift; sourceTree = "<group>"; };
+  CATALOG = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+  SOURCE = {isa = PBXBuildFile; fileRef = MAIN; };
+  RESOURCE = {isa = PBXBuildFile; fileRef = CATALOG; };
+  SOURCES = {isa = PBXSourcesBuildPhase; files = (SOURCE); };
+  RESOURCES = {isa = PBXResourcesBuildPhase; files = (RESOURCE); };
+  CONFIGS = {isa = XCConfigurationList; buildConfigurations = (DEBUG); defaultConfigurationName = Debug; };
+  DEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; TARGETED_DEVICE_FAMILY = 1; SWIFT_VERSION = 5.0; PRODUCT_NAME = ReproApp; PRODUCT_BUNDLE_IDENTIFIER = dev.example.repro; GENERATE_INFOPLIST_FILE = YES; ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO; }; };
+  APP = {isa = PBXNativeTarget; name = ReproApp; productType = "com.apple.product-type.application"; buildConfigurationList = CONFIGS; buildPhases = (SOURCES, RESOURCES); dependencies = (); };
+ };
+ rootObject = ROOT;
+}

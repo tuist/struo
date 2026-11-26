@@ -3337,6 +3337,19 @@ def _apple_plist_entry(contents, key):
         return None
     return (start, tag_end + 1, closing, closing + len("</" + tag + ">"))
 
+def apple_info_plist_merge_plan(ctx):
+    spec = ctx["args"]
+    root = workspace_root() + "/"
+    contents = host_file_read(root + spec["base"])
+    partial = plist_decode(host_file_read(root + spec["partial"]))
+    # Re-encoding is only needed when the catalog contributes keys, so a bundle
+    # without them keeps its Info.plist byte for byte.
+    if partial:
+        merged = plist_decode(contents)
+        merged.update(partial)
+        contents = plist_encode(merged)
+    write_path(spec["output"], contents)
+
 def _apple_version_less(left, right):
     left_parts = [int(part) if part.isdigit() else 0 for part in left.strip().split(".")]
     right_parts = [int(part) if part.isdigit() else 0 for part in right.strip().split(".")]
@@ -5090,6 +5103,7 @@ def _apple_application_impl(ctx):
     asset_catalogs = [_apple_resource_path(ctx, catalog) for catalog in (attrs.get("asset_catalogs") or [])]
     app_icon = attrs.get("app_icon") or ""
     asset_car = ""
+    car_partial_plist = ""
     if asset_catalogs:
         actool = _resolve_actool(xcode_developer_dir)
         actool_platform = _apple_actool_platform(platform, sdk_variant)
@@ -5136,7 +5150,10 @@ def _apple_application_impl(ctx):
             car_partial_plist,
         ]
         if app_icon:
-            car_argv.extend(["--app-icon", app_icon])
+            # Loose icon PNGs vary by platform and device and cannot be declared
+            # ahead of time; the system reads the icon from `Assets.car`
+            # through `CFBundleIconName`, so keep the bundle to declared files.
+            car_argv.extend(["--app-icon", app_icon, "--standalone-icon-behavior", "none"])
         run_action(
             display_name = "Compile asset catalog · " + ctx["label"]["name"],
             source_files = _action_source_files(asset_catalogs),
@@ -5613,7 +5630,7 @@ def _apple_application_impl(ctx):
             info_plist_contents = info_plist_contents.replace("$(" + key + ")", value).replace("${" + key + "}", value)
         # Only iPhone and iPad device family codes are modelled.
         template_arrays = build_arrays if platform == "ios" else {"CFBundleSupportedPlatforms": build_arrays["CFBundleSupportedPlatforms"]}
-        write_path(info_plist, _apple_plist_with_build_entries(info_plist_contents, build_entries, template_arrays, ["UIDeviceFamily"]))
+        info_plist_contents = _apple_plist_with_build_entries(info_plist_contents, build_entries, template_arrays, ["UIDeviceFamily"])
     else:
         plist_entries = {
             "CFBundleDevelopmentRegion": "en",
@@ -5627,7 +5644,21 @@ def _apple_application_impl(ctx):
         }
         plist_entries.update(build_entries)
         bool_entries = {} if is_macos else {"LSRequiresIPhoneOS": True}
-        write_path(info_plist, _render_plist(plist_entries, bool_entries, build_arrays))
+        info_plist_contents = _render_plist(plist_entries, bool_entries, build_arrays)
+    if asset_car:
+        # `actool` declares the app icon and other catalog-owned keys in its
+        # partial Info.plist, which only exists once the catalog compiles, so
+        # the bundle's Info.plist is merged after it, as Xcode does.
+        info_plist_base = declare_output("Info.base.plist")
+        write_path(info_plist_base, info_plist_contents)
+        expand_actions(
+            implementation = "apple_info_plist_merge_plan",
+            inputs = [info_plist_base, car_partial_plist],
+            outputs = [info_plist],
+            args = {"base": info_plist_base, "partial": car_partial_plist, "output": info_plist},
+        )
+    else:
+        write_path(info_plist, info_plist_contents)
 
     prepackage_outputs = _apple_run_prepackage_actions(ctx, attrs, [executable, info_plist], app_path)
     resource_files = _apple_materialize_resources(

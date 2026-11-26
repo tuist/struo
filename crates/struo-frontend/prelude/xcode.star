@@ -4748,13 +4748,17 @@ def _xcode_detect_xctest_usage(sources):
 
 def _xcode_app_icon_exists(catalogs, name):
     # An app icon set lives in an asset catalog as `<name>.appiconset` (or a
-    # sticker/icon-stack variant) containing a `Contents.json`.
+    # sticker/icon-stack variant) containing a `Contents.json`. Catalog paths
+    # are workspace-relative, so walk them from the workspace root rather than
+    # globbing from the project's package.
+    markers = ["/" + name + suffix + "/Contents.json" for suffix in [".appiconset", ".stickersiconset", ".icon", ".solidimagestacklayer"]]
     for catalog in catalogs:
         if _basename(catalog) == name + ".icon":
             return True
-        for suffix in [".appiconset", ".stickersiconset", ".icon", ".solidimagestacklayer"]:
-            if glob([catalog + "/**/" + name + suffix + "/Contents.json"]):
-                return True
+        for path in _xcode_package_files(catalog):
+            for marker in markers:
+                if path.endswith(marker):
+                    return True
     return False
 
 def _xcode_bundle_id(settings, subs, product_name):
