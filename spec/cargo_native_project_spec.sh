@@ -103,6 +103,48 @@ Describe 'cargo native project'
     The stdout should include 'rust_library cargo_bat'
   End
 
+  It 'leaves out an optional dependency that the selected features disable'
+    cargo_toolchain_unavailable && Skip 'cargo and rustc are required'
+    copy_fixture cargo_sqlx
+
+    When call /bin/sh -c '"$1" -C "$2" build cargo_demo_bin_demo --quiet && "$1" -C "$2" --format json query targets | jq -r ".[].id"' sh "$STRUO_BIN" "$WORKSPACE"
+    The status should be success
+    The stdout should include 'sqlx-postgres-0.8.6'
+    The stdout should not include 'sqlx-sqlite'
+  End
+
+  use_cargo_metadata_snapshot() {
+    cat > "$WORKSPACE/struo.toml" <<'EOF'
+[[target]]
+name = "cargo"
+kind = "cargo_workspace"
+srcs = ["Cargo.toml", "Cargo.lock", ".cargo/config.toml", "cargo-metadata.json"]
+
+[target.attrs]
+resolver_inputs = ["Cargo.toml", "Cargo.lock", ".cargo/config.toml", "cargo-metadata.json"]
+metadata_file = "cargo-metadata.json"
+EOF
+    host_triple=$(rustc -vV | sed -n 's/^host: //p') || return
+    (cd "$WORKSPACE" && cargo metadata --format-version 1 --locked --offline) |
+      jq --rawfile manifest "$WORKSPACE/Cargo.toml" --rawfile lock "$WORKSPACE/Cargo.lock" \
+        --rawfile config "$WORKSPACE/.cargo/config.toml" --arg host "$host_triple" \
+        '. + {struo_snapshot: {
+          inputs: {"Cargo.toml": $manifest, "Cargo.lock": $lock, ".cargo/config.toml": $config},
+          selection: {features: [], all_features: false, no_default_features: false, target: "", host: false, host_triple: $host}
+        }}' > "$WORKSPACE/cargo-metadata.json"
+  }
+
+  It 'leaves out a feature-disabled optional dependency listed in a Cargo metadata snapshot'
+    cargo_toolchain_unavailable && Skip 'cargo and rustc are required'
+    copy_fixture cargo_sqlx
+    use_cargo_metadata_snapshot
+
+    When call /bin/sh -c '"$1" -C "$2" build cargo_demo_bin_demo --quiet && "$1" -C "$2" --format json query targets | jq -r ".[].id"' sh "$STRUO_BIN" "$WORKSPACE"
+    The status should be success
+    The stdout should include 'sqlx-postgres-0.8.6'
+    The stdout should not include 'sqlx-sqlite'
+  End
+
   It 'builds and runs a binary whose sources sit outside src'
     cargo_toolchain_unavailable && Skip 'cargo and rustc are required'
     copy_fixture cargo_ripgrep

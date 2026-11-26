@@ -1,0 +1,7 @@
+[package]
+name = "sqlx-sqlite"
+version = "0.8.6"
+edition = "2021"
+
+[features]
+migrate = []

@@ -1,0 +1,15 @@
+# Shape borrowed from a service using sqlx with only its Postgres driver: the
+# facade crate makes each database driver optional, and its `migrate` feature
+# forwards to every driver through weak `driver?/migrate` references. Cargo
+# keeps the disabled SQLite driver in the lockfile and in `cargo metadata`,
+# but never compiles it, and neither may Struo. The vendored SQLite driver
+# fails to compile so a build that reaches it fails loudly.
+[package]
+name = "demo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sqlx = { version = "0.8.6", default-features = false, features = ["postgres", "migrate"] }
+
+[workspace]

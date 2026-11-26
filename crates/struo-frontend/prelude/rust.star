@@ -2912,9 +2912,11 @@ def _cargo_resolved_metadata(ctx, default_vendor_dir = "third_party/rust/vendor"
         host_triple = snapshot_host_triple
         metadata = _cargo_resolver_json_file(ctx, metadata_file, "Cargo metadata snapshot")
         _cargo_validate_metadata_snapshot(ctx, metadata, metadata_file, False, snapshot_host_triple)
+        _cargo_drop_feature_disabled_deps(metadata)
         host_metadata = _cargo_resolver_json_file(ctx, host_metadata_file, "host Cargo metadata snapshot") if host_metadata_file else None
         if host_metadata != None:
             _cargo_validate_metadata_snapshot(ctx, host_metadata, host_metadata_file, True, snapshot_host_triple)
+            _cargo_drop_feature_disabled_deps(host_metadata)
     else:
         _, _, host_triple = _rustc_toolchain(target)
         cargo = host_which("cargo")
@@ -3736,6 +3738,75 @@ def _cargo_resolve_nodes(metadata):
     for node in resolve.get("nodes") or []:
         nodes[node.get("id")] = node
     return nodes
+
+def _cargo_dep_key(name):
+    return name.replace("-", "_")
+
+# A metadata snapshot keeps every optional dependency in `deps`, enabled or
+# not; the node's `features` decide which ones Cargo compiles. An optional
+# dependency is enabled by its implicit feature, a `dep:name` entry, or a
+# non-weak `name/feature` entry of an enabled feature. Disabled edges are
+# removed and packages no workspace member reaches anymore are dropped.
+def _cargo_drop_feature_disabled_deps(metadata):
+    packages = metadata.get("packages") or []
+    package_by_id = {package.get("id"): package for package in packages}
+    resolve = metadata.get("resolve") or {}
+    nodes = resolve.get("nodes") or []
+    pruned = False
+    for node in nodes:
+        package = package_by_id.get(node.get("id")) or {}
+        required = {}
+        optional = {}
+        for dependency in package.get("dependencies") or []:
+            key = _cargo_dep_key(dependency.get("rename") or dependency.get("name") or "")
+            if dependency.get("optional"):
+                optional[key] = True
+            else:
+                required[key] = True
+        if not optional:
+            continue
+        declared = package.get("features") or {}
+        enabled = {}
+        for feature in node.get("features") or []:
+            enabled[_cargo_dep_key(feature)] = True
+            for entry in declared.get(feature) or []:
+                if entry.startswith("dep:"):
+                    enabled[_cargo_dep_key(entry[len("dep:"):])] = True
+                elif "/" in entry:
+                    name = entry.split("/")[0]
+                    if not name.endswith("?"):
+                        enabled[_cargo_dep_key(name)] = True
+        disabled = {
+            key: True
+            for key in optional.keys()
+            if not required.get(key) and not enabled.get(key)
+        }
+        if not disabled:
+            continue
+        pruned = True
+        node["deps"] = [dep for dep in node.get("deps") or [] if not disabled.get(_cargo_dep_key(dep.get("name") or ""))]
+        kept = {dep.get("pkg"): True for dep in node["deps"]}
+        node["dependencies"] = [dep for dep in node.get("dependencies") or [] if kept.get(dep)]
+    if not pruned:
+        return
+
+    by_id = {node.get("id"): node for node in nodes}
+    reachable = {}
+    stack = list(_cargo_workspace_member_ids(metadata, packages).keys())
+    for _ in range(len(nodes) + 1):
+        if not stack:
+            break
+        current = stack
+        stack = []
+        for package_id in current:
+            if package_id in reachable:
+                continue
+            reachable[package_id] = True
+            for dep in (by_id.get(package_id) or {}).get("deps") or []:
+                if dep.get("pkg") not in reachable:
+                    stack.append(dep.get("pkg"))
+    resolve["nodes"] = [node for node in nodes if reachable.get(node.get("id"))]
+    metadata["packages"] = [package for package in packages if reachable.get(package.get("id"))]
 
 # The host-platform graph misses proc macros and build scripts that only the
 # target platform reaches, such as a proc macro behind a wasm-only dependency.
