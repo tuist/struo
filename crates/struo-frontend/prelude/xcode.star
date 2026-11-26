@@ -1995,10 +1995,21 @@ def _xcode_workspace_input_path(path):
 def _xcode_target_input_path(ctx, path):
     path = _xcode_workspace_input_path(path)
     package = ctx["label"]["package"]
-    prefix = package + "/" if package else ""
-    if prefix and path.startswith(prefix):
-        return path[len(prefix):]
-    return path
+    if not package or not path or path == package or path.startswith("."):
+        return path
+    if path.startswith(package + "/"):
+        return path[len(package) + 1:]
+
+    # Projects reach sibling directories with `../`. Express those paths
+    # relative to the package, the form `glob` and `_package_relative` resolve.
+    package_parts = package.split("/")
+    path_parts = path.split("/")
+    common = 0
+    for index in range(min(len(package_parts), len(path_parts))):
+        if package_parts[index] != path_parts[index]:
+            break
+        common = index + 1
+    return "/".join([".."] * (len(package_parts) - common) + path_parts[common:])
 
 def _xcode_lowered_attrs(ctx, attrs):
     for key in ["bridging_header", "prefix_header", "modulemap", "info_plist", "entitlements"]:

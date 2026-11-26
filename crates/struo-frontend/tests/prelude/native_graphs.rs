@@ -463,3 +463,54 @@ result = repr([[spec["kind"], spec["deps"]] for spec in graph["specs"]])
         r#"[["swift_package_build_tools", []], ["apple_library", ["./SwiftPackage_app_App_BuildTools"]], ["swift_package_build_tools", []], ["apple_library", ["./SwiftPackage_app_App_MacroHost_BuildTools"]]]"#
     );
 }
+
+#[test]
+fn xcode_paths_outside_the_project_package_resolve_against_the_project_directory() {
+    let pbxproj = serde_json::json!({
+        "rootObject": "ROOT",
+        "objects": {
+            "ROOT": {"isa": "PBXProject", "buildConfigurationList": "CONFIGS", "targets": ["APP"], "mainGroup": "GROUP"},
+            "GROUP": {"isa": "PBXGroup", "sourceTree": "<group>", "children": ["SOURCES_GROUP", "SHARED_GROUP"]},
+            "SOURCES_GROUP": {"isa": "PBXGroup", "sourceTree": "<group>", "path": "Sources", "children": ["APP_FILE"]},
+            "SHARED_GROUP": {"isa": "PBXGroup", "sourceTree": "<group>", "name": "shared", "path": "../shared", "children": ["SHARED_FILE"]},
+            "APP_FILE": {"isa": "PBXFileReference", "sourceTree": "<group>", "path": "App.swift"},
+            "SHARED_FILE": {"isa": "PBXFileReference", "sourceTree": "<group>", "path": "Shared.swift"},
+            "APP_SOURCE": {"isa": "PBXBuildFile", "fileRef": "APP_FILE"},
+            "SHARED_SOURCE": {"isa": "PBXBuildFile", "fileRef": "SHARED_FILE"},
+            "SOURCES": {"isa": "PBXSourcesBuildPhase", "files": ["APP_SOURCE", "SHARED_SOURCE"]},
+            "CONFIGS": {"isa": "XCConfigurationList", "buildConfigurations": ["DEBUG"], "defaultConfigurationName": "Debug"},
+            "DEBUG": {"isa": "XCBuildConfiguration", "name": "Debug", "buildSettings": {
+                "SDKROOT": "macosx",
+                "MACOSX_DEPLOYMENT_TARGET": "14.0",
+                "PRODUCT_NAME": "$(TARGET_NAME)",
+                "PRODUCT_BUNDLE_IDENTIFIER": "dev.example.repro",
+                "INFOPLIST_FILE": "../shared/Info.plist",
+            }},
+            "APP": {"isa": "PBXNativeTarget", "name": "ReproApp", "productType": "com.apple.product-type.application", "buildConfigurationList": "CONFIGS", "buildPhases": ["SOURCES"], "dependencies": []},
+        },
+    })
+    .to_string();
+    let source = format!(
+        r#"{}
+def workspace_root():
+    return "/repo"
+def host_command(argv, env = None, cwd = None, merge_stderr = None, check = True):
+    return {pbxproj:?}
+def host_file_exists(path):
+    return path == "/repo/shared/Info.plist"
+def host_file_read(path):
+    if path != "/repo/shared/Info.plist":
+        fail("read unexpected host file " + path)
+    return "<plist><dict/></plist>"
+ctx = {{"label": {{"package": "app", "name": "xcode", "id": "app/xcode"}}, "attr": {{"project": "Repro.xcodeproj"}}}}
+app = [spec for spec in _xcode_workspace_resolver(ctx)["targets"] if spec["name"] == "ReproApp"][0]
+target = {{"label": {{"package": "app", "name": "ReproApp", "id": "app/ReproApp"}}}}
+result = repr([app["srcs"], _package_relative(target, app["attrs"]["info_plist"])])
+"#,
+        xcode_prelude_source()
+    );
+    assert_eq!(
+        eval_prelude_source_to_repr(source).unwrap(),
+        r#"[["Sources/App.swift", "../shared/Shared.swift"], "shared/Info.plist"]"#
+    );
+}

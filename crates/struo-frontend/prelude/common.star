@@ -166,6 +166,15 @@ def _file_globs(patterns, exclude = []):
 def _package_relative(ctx, path):
     if not path:
         return path
+    if path.startswith("../"):
+        package = ctx["label"]["package"]
+        parts = package.split("/") if package else []
+        for part in path.split("/"):
+            if part == ".." and parts and parts[-1] != "..":
+                parts.pop()
+            elif part and part != ".":
+                parts.append(part)
+        return "/".join(parts)
     if path.startswith("/") or path.startswith("."):
         return path
     package = ctx["label"]["package"]

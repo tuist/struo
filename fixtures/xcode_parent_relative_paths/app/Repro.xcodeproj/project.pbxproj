@@ -1,0 +1,20 @@
+// !$*UTF8*$!
+{
+ archiveVersion = 1;
+ objectVersion = 56;
+ objects = {
+  ROOT = {isa = PBXProject; mainGroup = GROUP; buildConfigurationList = CONFIGS; targets = (APP); };
+  GROUP = {isa = PBXGroup; sourceTree = "<group>"; children = (SOURCES_GROUP, SHARED_GROUP); };
+  SOURCES_GROUP = {isa = PBXGroup; path = Sources; sourceTree = "<group>"; children = (MAIN); };
+  SHARED_GROUP = {isa = PBXGroup; name = shared; path = ../shared; sourceTree = "<group>"; children = (SHARED); };
+  MAIN = {isa = PBXFileReference; path = main.swift; sourceTree = "<group>"; };
+  SHARED = {isa = PBXFileReference; path = Shared.swift; sourceTree = "<group>"; };
+  MAIN_SOURCE = {isa = PBXBuildFile; fileRef = MAIN; };
+  SHARED_SOURCE = {isa = PBXBuildFile; fileRef = SHARED; };
+  SOURCES = {isa = PBXSourcesBuildPhase; files = (MAIN_SOURCE, SHARED_SOURCE); };
+  CONFIGS = {isa = XCConfigurationList; buildConfigurations = (DEBUG); defaultConfigurationName = Debug; };
+  DEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 14.0; SWIFT_VERSION = 5.0; PRODUCT_NAME = ReproApp; PRODUCT_BUNDLE_IDENTIFIER = dev.example.repro; INFOPLIST_FILE = ../shared/Info.plist; }; };
+  APP = {isa = PBXNativeTarget; name = ReproApp; productType = "com.apple.product-type.application"; buildConfigurationList = CONFIGS; buildPhases = (SOURCES); dependencies = (); };
+ };
+ rootObject = ROOT;
+}

@@ -3387,7 +3387,7 @@ def _apple_entitlements_with_application_identifier(contents, development_team, 
 
 def _apple_resource_path(ctx, path):
     path = _apple_script_output_path(ctx, path)
-    if not path or path.startswith("/") or path.startswith("."):
+    if not path or path.startswith("/") or (path.startswith(".") and not path.startswith("../")):
         return path
     package = ctx["label"]["package"]
     if package and (path == package or path.startswith(package + "/")):
