@@ -74,8 +74,7 @@ python3() {
   "$SPEC_PYTHON3" "$@"
 }
 
-start_python_server() {
-  # A fixture must not keep ShellSpec's private pipes open after its test ends.
+close_shellspec_fds() {
   for fixture_fd in /dev/fd/*; do
     fixture_fd="${fixture_fd##*/}"
     case "$fixture_fd" in
@@ -83,6 +82,11 @@ start_python_server() {
     esac
     eval "exec ${fixture_fd}>&-"
   done
+}
+
+start_python_server() {
+  # A fixture must not keep ShellSpec's private pipes open after its test ends.
+  close_shellspec_fds
   exec "$SPEC_PYTHON3" "$REPO_ROOT/fixtures/server_launcher.py" "$@" </dev/null
 }
 

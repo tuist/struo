@@ -6,15 +6,20 @@
   ROOT = {isa = PBXProject; mainGroup = GROUP; buildConfigurationList = CONFIGS; targets = (APP); };
   GROUP = {isa = PBXGroup; sourceTree = "<group>"; children = (SOURCES_GROUP, SHARED_GROUP); };
   SOURCES_GROUP = {isa = PBXGroup; path = Sources; sourceTree = "<group>"; children = (MAIN); };
-  SHARED_GROUP = {isa = PBXGroup; name = shared; path = ../shared; sourceTree = "<group>"; children = (SHARED); };
+  SHARED_GROUP = {isa = PBXGroup; name = shared; path = ../shared; sourceTree = "<group>"; children = (SHARED, GREETING, CATALOG); };
   MAIN = {isa = PBXFileReference; path = main.swift; sourceTree = "<group>"; };
   SHARED = {isa = PBXFileReference; path = Shared.swift; sourceTree = "<group>"; };
+  GREETING = {isa = PBXFileReference; path = greeting.txt; sourceTree = "<group>"; };
+  CATALOG = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+  GREETING_RESOURCE = {isa = PBXBuildFile; fileRef = GREETING; };
+  CATALOG_RESOURCE = {isa = PBXBuildFile; fileRef = CATALOG; };
+  RESOURCES = {isa = PBXResourcesBuildPhase; files = (GREETING_RESOURCE, CATALOG_RESOURCE); };
   MAIN_SOURCE = {isa = PBXBuildFile; fileRef = MAIN; };
   SHARED_SOURCE = {isa = PBXBuildFile; fileRef = SHARED; };
   SOURCES = {isa = PBXSourcesBuildPhase; files = (MAIN_SOURCE, SHARED_SOURCE); };
   CONFIGS = {isa = XCConfigurationList; buildConfigurations = (DEBUG); defaultConfigurationName = Debug; };
-  DEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 14.0; SWIFT_VERSION = 5.0; PRODUCT_NAME = ReproApp; PRODUCT_BUNDLE_IDENTIFIER = dev.example.repro; INFOPLIST_FILE = ../shared/Info.plist; }; };
-  APP = {isa = PBXNativeTarget; name = ReproApp; productType = "com.apple.product-type.application"; buildConfigurationList = CONFIGS; buildPhases = (SOURCES); dependencies = (); };
+  DEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 14.0; SWIFT_VERSION = 5.0; PRODUCT_NAME = ReproApp; PRODUCT_BUNDLE_IDENTIFIER = dev.example.repro; INFOPLIST_FILE = ../shared/Info.plist; ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO; }; };
+  APP = {isa = PBXNativeTarget; name = ReproApp; productType = "com.apple.product-type.application"; buildConfigurationList = CONFIGS; buildPhases = (SOURCES, RESOURCES); dependencies = (); };
  };
  rootObject = ROOT;
 }

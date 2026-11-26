@@ -3621,7 +3621,7 @@ def _apple_workspace_absolute(path):
     return path if path.startswith("/") else workspace_root() + "/" + path
 
 def _apple_is_directory(path):
-    absolute = path if path.startswith("/") else workspace_root() + "/" + path
+    absolute = _apple_host_path(path)
     if not host_path_exists(absolute):
         return False
     return bool(host_command([host_which("find"), absolute, "-maxdepth", "0", "-type", "d"]).strip())
@@ -3630,18 +3630,18 @@ def _apple_resource_tree_files(path):
     files = [file for file in glob([path + "/**"]) if file != path]
     if files:
         return files
-    absolute = path if path.startswith("/") else workspace_root() + "/" + path
+    absolute = _apple_host_path(path)
     if not _apple_is_directory(path):
         return []
-    return [_apple_workspace_relative(file) for file in host_command([host_which("find"), absolute, "-type", "f"]).split("\n") if file]
+    return [path + file[len(absolute):] for file in host_command([host_which("find"), absolute, "-type", "f"]).split("\n") if file]
 
 def _apple_resource_models(path):
     if path.endswith(".xcdatamodeld") and _apple_is_directory(path):
         return [path]
     if not _apple_is_directory(path):
         return []
-    absolute = path if path.startswith("/") else workspace_root() + "/" + path
-    return [_apple_workspace_relative(model) for model in host_command([host_which("find"), absolute, "-type", "d", "-name", "*.xcdatamodeld"]).split("\n") if model]
+    absolute = _apple_host_path(path)
+    return [path + model[len(absolute):] for model in host_command([host_which("find"), absolute, "-type", "d", "-name", "*.xcdatamodeld"]).split("\n") if model]
 
 def _apple_resource_output_prefix(source, resource_root, preserve_root):
     if _apple_is_directory(resource_root):
@@ -3662,12 +3662,19 @@ def _apple_materialize_resources(ctx, raw_resources, destination, platform, mini
             resources.extend(glob([resolved]))
         elif resolved:
             resources.append(resolved)
-    resources = _unique(resources)
+    external = {}
+
+    def snapshot(path):
+        if path not in external:
+            external[path] = _apple_external_input(ctx, path)
+        return external[path]
+
+    resources = _unique([snapshot(resource) for resource in resources])
     structured_resources = {}
     for raw in raw_structured_resources:
         resolved = _apple_resource_path(ctx, raw)
         if resolved:
-            structured_resources[resolved] = True
+            structured_resources[snapshot(resolved)] = True
     if not resources:
         return []
 
@@ -3744,7 +3751,7 @@ def _apple_materialize_resources(ctx, raw_resources, destination, platform, mini
                 if xcstringstool == None:
                     xcstringstool = _resolve_xcstringstool(xcode_developer_dir)
                 output_dir = ctx["build_dir"] + "/" + destination
-                absolute_source = _apple_workspace_absolute(source)
+                absolute_source = _apple_host_path(source)
                 # Languages and plural forms determine the outputs during analysis.
                 host_file_sha256(absolute_source)
                 generated_paths = host_command([xcstringstool["path"], "compile", "--dry-run", "--output-directory", _apple_workspace_absolute(output_dir), absolute_source], env = xcstringstool["env"]).strip()
@@ -4452,7 +4459,7 @@ def _apple_mixed_framework_impl(ctx):
     )
     framework_files.extend(resource_files)
 
-    asset_catalogs = [_apple_resource_path(ctx, catalog) for catalog in (attrs.get("asset_catalogs") or [])]
+    asset_catalogs = [_apple_external_input(ctx, _apple_resource_path(ctx, catalog)) for catalog in (attrs.get("asset_catalogs") or [])]
     if asset_catalogs:
         actool = _resolve_actool(xcode_developer_dir)
         asset_car = declare_output(framework_dir + "/Assets.car")
@@ -5224,6 +5231,22 @@ def _apple_declared_source_paths(ctx):
 def _apple_external_input_name(path):
     return "/".join(["__parent__" if part == ".." else part for part in path.split("/")])
 
+def _apple_external_input(ctx, path):
+    # Actions only take workspace paths, so snapshot a resource that lives
+    # outside the workspace into the build directory. Analysis reads the
+    # original through `_apple_host_path`.
+    if not path.startswith("../"):
+        return path
+    absolute = workspace_root() + "/" + path
+    if not host_path_exists(absolute):
+        return path
+    snapshot = declare_output("external-inputs/" + _apple_external_input_name(path))
+    if _apple_is_directory(path):
+        materialize_host_tree(absolute, snapshot)
+    else:
+        materialize_host_file(absolute, snapshot)
+    return snapshot
+
 def _apple_swift_emits_single_object(flags):
     whole_module = False
     thread_count = "0"
@@ -5324,7 +5347,7 @@ def _apple_application_impl(ctx):
     # into the `Assets.car` the app loads at runtime. `actool` only emits the
     # Swift symbols when a compile pass runs, and only emits `Assets.car` when
     # the symbol pass is absent, so the two run as separate actions.
-    asset_catalogs = [_apple_resource_path(ctx, catalog) for catalog in (attrs.get("asset_catalogs") or [])]
+    asset_catalogs = [_apple_external_input(ctx, _apple_resource_path(ctx, catalog)) for catalog in (attrs.get("asset_catalogs") or [])]
     app_icon = attrs.get("app_icon") or ""
     accent_color = attrs.get("accent_color") or ""
     asset_car = ""
@@ -6780,7 +6803,7 @@ def _apple_test_bundle_impl(ctx):
     )
     resource_files = _unique(resource_files + prepackage_outputs)
 
-    asset_catalogs = [_apple_resource_path(ctx, catalog) for catalog in (attrs.get("asset_catalogs") or [])]
+    asset_catalogs = [_apple_external_input(ctx, _apple_resource_path(ctx, catalog)) for catalog in (attrs.get("asset_catalogs") or [])]
     asset_files = []
     if asset_catalogs:
         actool = _resolve_actool(xcode_developer_dir)

@@ -576,3 +576,62 @@ result = repr([_apple_declared_source_paths(ctx), _apple_header_inputs(ctx, ["..
         .collect::<Vec<_>>();
     assert_eq!(sources, vec![shared.join("Shared.swift"), shared]);
 }
+
+#[test]
+fn apple_resources_and_asset_catalogs_outside_the_workspace_are_snapshotted() {
+    let root = TempDir::new().unwrap();
+    let workspace = root.path().join("app");
+    let shared = root.path().join("shared");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::create_dir_all(shared.join("Folder/Nested")).unwrap();
+    std::fs::create_dir_all(shared.join("Assets.xcassets")).unwrap();
+    std::fs::write(shared.join("greeting.txt"), "hello\n").unwrap();
+    std::fs::write(shared.join("Folder/Nested/one.txt"), "one\n").unwrap();
+    std::fs::write(shared.join("Assets.xcassets/Contents.json"), "{}\n").unwrap();
+    let source = format!(
+        r#"{}
+ctx = {{"label": {{"package": "", "name": "ReproApp", "id": "ReproApp"}}, "attr": {{}}, "build_dir": ".struo/out/ReproApp"}}
+files = _apple_materialize_resources(ctx, ["../shared/greeting.txt", "../shared/Folder"], "ReproApp.app/Contents/Resources", "macos", "14.0", "", "ReproApp", "apple_app_ReproApp")
+catalog = _apple_external_input(ctx, _apple_resource_path(ctx, "../shared/Assets.xcassets"))
+result = repr([sorted(files), catalog, _apple_is_directory(catalog)])
+"#,
+        apple_prelude_source()
+    );
+    let (store, result) = with_active_store(store_for(&workspace, ""), || {
+        eval_prelude_source_to_repr(source)
+    });
+    let result = result.unwrap();
+    assert_eq!(
+        result,
+        r#"[[".struo/out//ReproApp.app/Contents/Resources/Nested/one.txt", ".struo/out//ReproApp.app/Contents/Resources/greeting.txt"], ".struo/out//external-inputs/__parent__/shared/Assets.xcassets", True]"#
+    );
+    for action in &store.actions {
+        for path in action.inputs.iter().chain(action.outputs.iter()) {
+            assert!(
+                struo_core::WorkspacePath::try_from(path.as_str()).is_ok(),
+                "{path}"
+            );
+        }
+    }
+    let mut snapshots = store
+        .actions
+        .iter()
+        .filter_map(|action| match &action.operation {
+            Some(
+                DeclaredActionOperation::MaterializeHostFile { source, .. }
+                | DeclaredActionOperation::MaterializeHostTree { source, .. },
+            ) => Some(std::fs::canonicalize(source).unwrap()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    snapshots.sort();
+    let shared = std::fs::canonicalize(shared).unwrap();
+    assert_eq!(
+        snapshots,
+        vec![
+            shared.join("Assets.xcassets"),
+            shared.join("Folder"),
+            shared.join("greeting.txt"),
+        ]
+    );
+}

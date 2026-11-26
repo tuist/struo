@@ -99,7 +99,14 @@ def _apple_artifact_icon_readable(path):
     return not path.endswith(".png") or not host_file_contains(path, "CgBI")
 
 def _apple_host_path(path):
-    return path if path.startswith("/") else workspace_root() + "/" + path
+    if path.startswith("/"):
+        return path
+    marker = "/external-inputs/__parent__/"
+    index = path.find(marker)
+    if path.startswith(".struo/") and index >= 0:
+        original = path[index + len("/external-inputs/"):]
+        return workspace_root() + "/" + "/".join([".." if part == "__parent__" else part for part in original.split("/")])
+    return workspace_root() + "/" + path
 
 def _apple_artifact_icon(spec, plist, inputs):
     sources = [source for source in _apple_artifact_icon_sources(spec, plist, inputs) if _apple_artifact_icon_readable(_apple_host_path(source))]
