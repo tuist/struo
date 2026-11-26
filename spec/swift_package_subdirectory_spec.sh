@@ -35,17 +35,7 @@ final class HelloTests: XCTestCase {
     func testGreeting() { XCTAssertEqual(greeting, "hello") }
 }
 SWIFT
-  }
-
-  # A Linux host with a registered Darwin SDK, reduced to what graph loading
-  # asks of it: compiler discovery, SDK configuration, and the manifest dump
-  # the real `swift package dump-package` would print for Package.swift.
-  install_stub_darwin_toolchain() {
-    toolchain="$SPEC_ROOT/toolchain"
-    sdk="$toolchain/sdk/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
-    resources="$toolchain/sdk/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift"
-    mkdir -p "$toolchain/bin" "$toolchain/lib/swift" "$sdk" "$resources" "$toolchain/sdk/toolset/bin"
-    cat > "$toolchain/dump-package.json" <<'JSON'
+    cat > "$SPEC_ROOT/dump-package.json" <<'JSON'
 {"name":"Hello","toolsVersion":{"_version":"5.10.0"},"platforms":[{"platformName":"macos","version":"14.0","options":[]}],"dependencies":[],
 "products":[{"name":"Hello","targets":["Hello"],"type":{"executable":null},"settings":[]}],
 "targets":[
@@ -53,6 +43,45 @@ SWIFT
 {"name":"HelloKit","type":"regular","path":"Sources/HelloKit","dependencies":[],"exclude":[],"resources":[],"settings":[]},
 {"name":"HelloTests","type":"test","path":"Tests/HelloTests","dependencies":[{"byName":["HelloKit",null]}],"exclude":[],"resources":[],"settings":[]}]}
 JSON
+  }
+
+  write_sqlite_package() {
+    package="$WORKSPACE/sqlite"
+    mkdir -p "$package/Sources/SQLiteKitSQLite3" "$package/Sources/SQLiteKit"
+    cat > "$package/Package.swift" <<'SWIFT'
+// swift-tools-version: 5.10
+import PackageDescription
+
+let package = Package(
+    name: "SQLiteKit",
+    products: [.library(name: "SQLiteKit", targets: ["SQLiteKit"])],
+    targets: [
+        .systemLibrary(name: "SQLiteKitSQLite3", providers: [.apt(["libsqlite3-dev"])]),
+        .target(name: "SQLiteKit", dependencies: ["SQLiteKitSQLite3"]),
+    ]
+)
+SWIFT
+    printf 'module SQLiteKitSQLite3 [system] {\n  header "shim.h"\n  link "sqlite3"\n  export *\n}\n' > "$package/Sources/SQLiteKitSQLite3/module.modulemap"
+    printf '#include <sqlite3.h>\n' > "$package/Sources/SQLiteKitSQLite3/shim.h"
+    printf 'import SQLiteKitSQLite3\n' > "$package/Sources/SQLiteKit/SQLiteKit.swift"
+    cat > "$SPEC_ROOT/dump-package.json" <<'JSON'
+{"name":"SQLiteKit","toolsVersion":{"_version":"5.10.0"},"platforms":[],"dependencies":[],
+"products":[{"name":"SQLiteKit","targets":["SQLiteKit"],"type":{"library":["automatic"]},"settings":[]}],
+"targets":[
+{"name":"SQLiteKitSQLite3","type":"system","dependencies":[],"exclude":[],"resources":[],"settings":[],"providers":[{"apt":[["libsqlite3-dev"]]}]},
+{"name":"SQLiteKit","type":"regular","dependencies":[{"byName":["SQLiteKitSQLite3",null]}],"exclude":[],"resources":[],"settings":[]}]}
+JSON
+  }
+
+  # A Linux host with a registered Darwin SDK, reduced to what graph loading
+  # asks of it: compiler discovery, SDK configuration, and the manifest dump
+  # the real `swift package dump-package` would print for the Package.swift
+  # the package writer created.
+  install_stub_darwin_toolchain() {
+    toolchain="$SPEC_ROOT/toolchain"
+    sdk="$toolchain/sdk/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+    resources="$toolchain/sdk/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift"
+    mkdir -p "$toolchain/bin" "$toolchain/lib/swift" "$sdk" "$resources" "$toolchain/sdk/toolset/bin"
     cat > "$toolchain/bin/swift" <<SH
 #!/bin/sh
 case "\$1 \$2" in
@@ -60,7 +89,7 @@ case "\$1 \$2" in
   '--version '*) echo 'Stub Swift version 6.3' ;;
   'sdk list') echo darwin ;;
   'sdk configure') printf 'sdkRootPath: %s\nswiftResourcesPath: %s\n' '$sdk' '$resources' ;;
-  'package '*) cat '$toolchain/dump-package.json' ;;
+  'package '*) cat '$SPEC_ROOT/dump-package.json' ;;
   *) echo "unexpected swift invocation: \$*" >&2; exit 1 ;;
 esac
 SH
@@ -82,6 +111,20 @@ SH
     When call parent_graph
     The status should be success
     The output should equal '[["packages/hello/SwiftPackage_Hello_Hello","apple_application",["Sources/Hello/main.swift"]],["packages/hello/SwiftPackage_Hello_HelloKit","apple_library",["Sources/HelloKit/HelloKit.swift"]],["packages/hello/SwiftPackage_Hello_HelloTests","apple_test_bundle",["Tests/HelloTests/HelloTests.swift"]]]'
+  End
+
+  sqlite_graph() {
+    write_sqlite_package
+    install_stub_darwin_toolchain
+    STRUO_CHANGE_TRACKER=0 struo --format json query 'MATCH (t:Target) RETURN t.id, t.kind, t.srcs, t.deps' > "$SPEC_ROOT/query.json" || return
+    jq -c '[.rows[] | select(.[0] | startswith("sqlite/SwiftPackage_SQLiteKit_")) | select(.[0] | endswith("_MacroHost") | not)] | sort' "$SPEC_ROOT/query.json"
+  }
+
+  It 'resolves a system library module map under the subdirectory when loaded from the parent'
+    Skip if 'stubs the Linux Darwin SDK toolchain' linux_host_unavailable
+    When call sqlite_graph
+    The status should be success
+    The output should equal '[["sqlite/SwiftPackage_SQLiteKit_SQLiteKit","apple_library",["Sources/SQLiteKit/SQLiteKit.swift"],["sqlite/SwiftPackage_SQLiteKit_SQLiteKitSQLite3"]],["sqlite/SwiftPackage_SQLiteKit_SQLiteKitSQLite3","apple_system_module",["Sources/SQLiteKitSQLite3/module.modulemap","Sources/SQLiteKitSQLite3/shim.h"],[]]]'
   End
 
   It 'builds and tests the package from the parent directory'
