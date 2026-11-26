@@ -324,8 +324,7 @@ result = repr(native_entry_point(ctx, "native_workspace", "entry", [
     assert_eq!(entry_point("[]").unwrap(), "None");
 
     let error = entry_point(r#"["apps/tool/B.proj/build.v2.manifest", "apps/tool/A.proj/build.manifest", "apps/tool/Main.suite/other.manifest"]"#)
-        .unwrap_err()
-        .to_string();
+        .unwrap_err();
     assert!(
         error.contains(r#""code":"native_entry_point_ambiguous""#),
         "{error}"
