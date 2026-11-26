@@ -293,11 +293,11 @@ const ROOT_EXCLUDES: &str =
 fn cargo_workspace_bounds_each_package_by_cargo_rules() {
     let result = root_package_workspace("[workspace]", "{}").unwrap();
     for expected in [
-        format!(r#"["cargo_app", {ROOT_EXCLUDES}, None, None]"#),
+        format!(r#"["cargo_app", {ROOT_EXCLUDES}, ["-Cembed-bitcode=no"], None]"#),
         // A crate no manifest refers to, such as a test fixture, stays an
         // input of the package around it.
-        r#"["cargo_util", ["crates/util/leaf/**", "crates/util/target/**"], ["-Ccodegen-units=1"], None]"#.to_string(),
-        r#"["cargo_leaf", ["crates/util/leaf/target/**"], None, None]"#.to_string(),
+        r#"["cargo_util", ["crates/util/leaf/**", "crates/util/target/**"], ["-Ccodegen-units=1", "-Cembed-bitcode=no"], None]"#.to_string(),
+        r#"["cargo_leaf", ["crates/util/leaf/target/**"], ["-Cembed-bitcode=no"], None]"#.to_string(),
     ] {
         assert!(result.contains(&expected), "missing {expected} in {result}");
     }
@@ -323,15 +323,15 @@ overflow-checks = false
     for expected in [
         // `package."*"` reaches dependencies but not workspace members, and
         // rustc ties overflow checks to debug assertions.
-        r#"["serde", None, ["-Copt-level=2", "-Cdebuginfo=line-tables-only", "-Cdebug-assertions=on"], None]"#.to_string(),
+        r#"["serde", None, ["-Copt-level=2", "-Cdebuginfo=line-tables-only", "-Cdebug-assertions=on", "-Cembed-bitcode=no"], None]"#.to_string(),
         // Turning debug assertions off keeps overflow checks on, as Cargo does.
-        r#"["zstd_sys", None, ["-Copt-level=s", "-Cdebuginfo=line-tables-only", "-Coverflow-checks=on"], None]"#.to_string(),
+        r#"["zstd_sys", None, ["-Copt-level=s", "-Cdebuginfo=line-tables-only", "-Coverflow-checks=on", "-Cembed-bitcode=no"], None]"#.to_string(),
         // Host crates drop the base debug info; `"*"` outranks `build-override`.
-        r#"["quote", None, ["-Copt-level=2", "-Cdebuginfo=0", "-Cdebug-assertions=on", "-Coverflow-checks=off"], None]"#.to_string(),
-        format!(r#"["cargo_app", {ROOT_EXCLUDES}, ["-Copt-level=3", "-Cdebuginfo=line-tables-only", "-Cdebug-assertions=on"], None]"#),
-        r#"["cargo_leaf", ["crates/util/leaf/target/**"], ["-Cdebuginfo=line-tables-only"], None]"#.to_string(),
+        r#"["quote", None, ["-Copt-level=2", "-Cdebuginfo=0", "-Cdebug-assertions=on", "-Coverflow-checks=off", "-Cembed-bitcode=no"], None]"#.to_string(),
+        format!(r#"["cargo_app", {ROOT_EXCLUDES}, ["-Copt-level=3", "-Cdebuginfo=line-tables-only", "-Cdebug-assertions=on", "-Cembed-bitcode=no"], None]"#),
+        r#"["cargo_leaf", ["crates/util/leaf/target/**"], ["-Cdebuginfo=line-tables-only", "-Cembed-bitcode=no"], None]"#.to_string(),
         // A workspace proc macro takes `build-override` but not `"*"`.
-        r#"["cargo_derive", ["crates/derive/target/**"], ["-Copt-level=1", "-Cdebuginfo=0", "-Cdebug-assertions=on", "-Coverflow-checks=off"], None]"#.to_string(),
+        r#"["cargo_derive", ["crates/derive/target/**"], ["-Copt-level=1", "-Cdebuginfo=0", "-Cdebug-assertions=on", "-Coverflow-checks=off", "-Cembed-bitcode=no"], None]"#.to_string(),
     ] {
         assert!(result.contains(&expected), "missing {expected} in {result}");
     }
@@ -355,12 +355,29 @@ opt-level = 1
         // Cargo's built-in `build-override` resets the optimization level,
         // codegen units, and debug info of proc macros, external and
         // workspace alike.
-        r#"["quote", None, ["-Cdebuginfo=0"], None]"#.to_string(),
-        r#"["cargo_derive", ["crates/derive/target/**"], ["-Cdebuginfo=0"], None]"#.to_string(),
+        r#"["quote", None, ["-Cdebuginfo=0", "-Cembed-bitcode=no"], None]"#.to_string(),
+        r#"["cargo_derive", ["crates/derive/target/**"], ["-Cdebuginfo=0", "-Cembed-bitcode=no"], None]"#.to_string(),
         // A `name@version` override applies only to that version.
-        r#"["serde", None, ["-Copt-level=3", "-Cdebuginfo=0", "-Cdebug-assertions=on", "-Ccodegen-units=4"], None]"#.to_string(),
-        format!(r#"["cargo_app", {ROOT_EXCLUDES}, ["-Copt-level=3", "-Cdebug-assertions=on", "-Ccodegen-units=4"], None]"#),
-        format!(r#"["cargo_app_unit_tests", {ROOT_EXCLUDES}, ["-Copt-level=1", "-Cdebug-assertions=on", "-Ccodegen-units=4"], None]"#),
+        r#"["serde", None, ["-Copt-level=3", "-Cdebuginfo=0", "-Cdebug-assertions=on", "-Ccodegen-units=4", "-Cembed-bitcode=no"], None]"#.to_string(),
+        format!(r#"["cargo_app", {ROOT_EXCLUDES}, ["-Copt-level=3", "-Cdebug-assertions=on", "-Ccodegen-units=4", "-Cembed-bitcode=no"], None]"#),
+        format!(r#"["cargo_app_unit_tests", {ROOT_EXCLUDES}, ["-Copt-level=1", "-Cdebug-assertions=on", "-Ccodegen-units=4", "-Cembed-bitcode=no"], None]"#),
+    ] {
+        assert!(result.contains(&expected), "missing {expected} in {result}");
+    }
+}
+
+#[test]
+fn cargo_keeps_bitcode_only_where_the_profile_enables_lto() {
+    let manifest = r#"[workspace]
+[profile.dev]
+lto = "thin"
+"#;
+    let result = root_package_workspace(manifest, "{}").unwrap();
+    for expected in [
+        r#"["serde", None, None, None]"#.to_string(),
+        format!(r#"["cargo_app", {ROOT_EXCLUDES}, None, None]"#),
+        // Cargo never runs LTO for crates compiled for the execution host.
+        r#"["quote", None, ["-Cdebuginfo=0", "-Cembed-bitcode=no"], None]"#.to_string(),
     ] {
         assert!(result.contains(&expected), "missing {expected} in {result}");
     }
@@ -371,12 +388,12 @@ fn cargo_build_script_data_reaches_only_the_named_build_script_package() {
     let result = root_package_workspace("[workspace]", r#"{"app": ["proto/**"]}"#).unwrap();
     assert!(
         result.contains(&format!(
-            r#"["cargo_app", {ROOT_EXCLUDES}, None, ["proto/**"]]"#
+            r#"["cargo_app", {ROOT_EXCLUDES}, ["-Cembed-bitcode=no"], ["proto/**"]]"#
         )),
         "{result}"
     );
     assert!(
-        result.contains(r#"["cargo_util", ["crates/util/leaf/**", "crates/util/target/**"], ["-Ccodegen-units=1"], None]"#),
+        result.contains(r#"["cargo_util", ["crates/util/leaf/**", "crates/util/target/**"], ["-Ccodegen-units=1", "-Cembed-bitcode=no"], None]"#),
         "{result}"
     );
 

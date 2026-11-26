@@ -3038,7 +3038,7 @@ def _cargo_merge_profile(base, override):
             merged[key] = value
     return merged
 
-_CARGO_PROFILE_KEYS = ("opt-level", "debug", "debug-assertions", "overflow-checks", "codegen-units")
+_CARGO_PROFILE_KEYS = ("opt-level", "debug", "debug-assertions", "overflow-checks", "codegen-units", "lto")
 
 def _cargo_package_profile(profile, name, host, workspace_member, version = ""):
     settings = {}
@@ -3054,7 +3054,7 @@ def _cargo_package_profile(profile, name, host, workspace_member, version = ""):
         # workspace proc macro twice, as its own target and as a dependency,
         # and its dependents load the second, so Struo's single proc-macro
         # target takes these settings.
-        for key in ("opt-level", "codegen-units"):
+        for key in ("opt-level", "codegen-units", "lto"):
             if key in settings:
                 settings.pop(key)
         settings["debug"] = False
@@ -3095,6 +3095,10 @@ def _cargo_profile_rustc_flags(settings):
         flags.append("-Coverflow-checks=" + ("on" if overflow_checks else "off"))
     if "codegen-units" in settings:
         flags.append("-Ccodegen-units=" + str(settings["codegen-units"]))
+    # Without LTO, Cargo keeps LLVM bitcode out of objects, which roughly
+    # halves their size.
+    if settings.get("lto", False) in (False, "false"):
+        flags.append("-Cembed-bitcode=no")
     return flags
 
 def _cargo_shared_attrs(ctx):

@@ -560,7 +560,9 @@ requests.
   in `build_script_data`. Struo does not narrow them using `rerun-if-changed`
   directives.
 - Only the `dev` and `test` profiles are read. `--release` and custom
-  profiles, `panic`, `lto`, and `strip` settings are not applied.
+  profiles, `panic`, `lto`, and `strip` settings are not applied. As in Cargo,
+  objects leave out LLVM bitcode unless the profile enables `lto`, which keeps
+  build outputs and the cache roughly half the size.
 - A `debug` setting is applied only when a profile names it. Without one,
   crates compile without debug info, while Cargo's `dev` profile includes it.
 - Build scripts themselves compile without profile settings, so
