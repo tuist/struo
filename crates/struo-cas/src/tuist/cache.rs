@@ -61,6 +61,10 @@ const ENDPOINT_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// service, which their network policy allows, while the public Kura ingress
 /// that discovery returns can be unreachable from inside the runner network.
 const TUIST_CACHE_ENDPOINT_ENV: &str = "TUIST_CACHE_ENDPOINT";
+/// Execution endpoint that replaces the one the Tuist server advertises, for
+/// clients that reach the execution service from inside its own network, such
+/// as Tuist runners, where the public endpoint can be unreachable.
+const TUIST_EXECUTION_ENDPOINT_ENV: &str = "TUIST_EXECUTION_ENDPOINT";
 const GRPC_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long a `ByteStream` transfer may go without moving. `GRPC_REQUEST_TIMEOUT`
 /// only lasts until response headers arrive. A write's headers come after its
@@ -115,6 +119,7 @@ pub struct TuistCache {
     auth: TuistAuth,
     auth_token_cache: Arc<Recovering<String>>,
     endpoint_override: Option<String>,
+    execution_endpoint_override: Option<String>,
     execution_cache: Arc<Recovering<execution::TuistExecution>>,
     /// A credential resolved again after the service rejected the cached one.
     /// Shared by every clone, so one refresh serves the whole process.
@@ -176,6 +181,7 @@ impl TuistCache {
             auth,
             auth_token_cache: Arc::default(),
             endpoint_override: env_token(TUIST_CACHE_ENDPOINT_ENV),
+            execution_endpoint_override: env_token(TUIST_EXECUTION_ENDPOINT_ENV),
             execution_cache: Arc::default(),
             refreshed_token: Arc::default(),
         })

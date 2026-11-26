@@ -142,10 +142,10 @@ kind = "distributed"
 }
 
 async fn build(root: &Path, home: &Path) -> Output {
-    build_with(root, home, &[]).await
+    build_with(root, home, &[], &[]).await
 }
 
-async fn build_with(root: &Path, home: &Path, global: &[&str]) -> Output {
+async fn build_with(root: &Path, home: &Path, global: &[&str], env: &[(&str, &str)]) -> Output {
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_struo"));
     command
         .current_dir(root)
@@ -158,7 +158,8 @@ async fn build_with(root: &Path, home: &Path, global: &[&str]) -> Output {
         .env("XDG_CONFIG_HOME", home.join("config"))
         .env("XDG_STATE_HOME", home.join("state"))
         .env("TUIST_TOKEN", "test-token")
-        .env("STRUO_CHANGE_TRACKER", "0");
+        .env("STRUO_CHANGE_TRACKER", "0")
+        .envs(env.iter().copied());
     command.output().await.unwrap()
 }
 
@@ -218,7 +219,7 @@ distributed = target_kind(capabilities = [capability("build", ["default"])], imp
 
 #[tokio::test(flavor = "multi_thread")]
 async fn graph_actions_run_on_the_tuist_execution_service_and_restore_from_its_cache() {
-    let server = tuist_execution::start_with(None, 4, true).await;
+    let server = tuist_execution::start_with(None, 4, true, true).await;
     let root = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
     std::fs::create_dir(root.path().join("modules")).unwrap();
@@ -401,6 +402,39 @@ async fn a_pinned_image_must_match_and_an_unpinned_one_follows_the_service() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_execution_endpoint_override_replaces_an_unreachable_advertised_one() {
+    let server = tuist_execution::start_with(None, 4, false, false).await;
+    let root = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("modules")).unwrap();
+    std::fs::write(root.path().join("modules/distributed.star"), MODULE).unwrap();
+    std::fs::write(
+        root.path().join("struo.toml"),
+        manifest(&server.url, tuist_execution::IMAGE),
+    )
+    .unwrap();
+    std::fs::write(root.path().join("input.txt"), b"input").unwrap();
+    std::fs::create_dir(root.path().join("prune")).unwrap();
+
+    let output = build(root.path(), home.path()).await;
+    assert!(
+        !output.status.success(),
+        "the advertised endpoint is unreachable"
+    );
+    assert!(server.service.state.lock().await.executed.is_empty());
+
+    let output = build_with(
+        root.path(),
+        home.path(),
+        &[],
+        &[("TUIST_EXECUTION_ENDPOINT", &server.grpc)],
+    )
+    .await;
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(!server.service.state.lock().await.executed.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::too_many_lines)]
 async fn redirected_streams_and_outputs_outside_cwd_are_restored_and_cached() {
     use std::os::unix::fs::PermissionsExt as _;
@@ -520,7 +554,7 @@ distributed = target_kind(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn parallel_actions_respect_the_advertised_concurrency_and_upload_only_changed_inputs() {
-    let server = tuist_execution::start_with(None, 1, false).await;
+    let server = tuist_execution::start_with(None, 1, false, true).await;
     let root = workspace(&server.url, PARALLEL, PIECES);
     let home = tempfile::tempdir().unwrap();
     for name in ["a", "b", "c"] {
@@ -588,7 +622,7 @@ async fn more_remote_actions_run_at_once_than_the_host_capture_budget_holds() {
         )
         .unwrap();
     }
-    let server = tuist_execution::start_with(None, stems.len(), false).await;
+    let server = tuist_execution::start_with(None, stems.len(), false, true).await;
     let module = PARALLEL.replace("\"tr a-z", "\"sleep 2; tr a-z");
     let root = workspace(&server.url, &module, &pieces);
     let home = tempfile::tempdir().unwrap();
@@ -596,7 +630,7 @@ async fn more_remote_actions_run_at_once_than_the_host_capture_budget_holds() {
         std::fs::write(root.path().join(format!("{stem}.in")), stem).unwrap();
     }
 
-    let output = build_with(root.path(), home.path(), &["--cpu-limit", "1"]).await;
+    let output = build_with(root.path(), home.path(), &["--cpu-limit", "1"], &[]).await;
     assert!(output.status.success(), "{}", stderr(&output));
     let state = server.service.state.lock().await;
     assert_eq!(state.executed.len(), stems.len());
@@ -606,7 +640,7 @@ async fn more_remote_actions_run_at_once_than_the_host_capture_budget_holds() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn remote_actions_use_the_advertised_concurrency_not_local_cpu_slots() {
-    let server = tuist_execution::start_with(None, 3, false).await;
+    let server = tuist_execution::start_with(None, 3, false, true).await;
     let module = PARALLEL.replace("\"tr a-z", "\"sleep 1; tr a-z").replace(
         "identifier = stem,",
         "identifier = stem,\n        resources = {\"cpu_slots\": 8} if stem == \"a\" else {},",
@@ -617,7 +651,7 @@ async fn remote_actions_use_the_advertised_concurrency_not_local_cpu_slots() {
         std::fs::write(root.path().join(format!("{name}.in")), name).unwrap();
     }
 
-    let output = build_with(root.path(), home.path(), &["--cpu-limit", "1"]).await;
+    let output = build_with(root.path(), home.path(), &["--cpu-limit", "1"], &[]).await;
     assert!(output.status.success(), "{}", stderr(&output));
     let state = server.service.state.lock().await;
     assert_eq!(state.executed.len(), 3);
@@ -817,7 +851,7 @@ fn worker_image() -> String {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires Docker and STRUO_TUIST_WORKER_IMAGE"]
 async fn graph_actions_run_in_a_simulated_linux_tuist_worker() {
-    let server = tuist_execution::start_with(Some(worker_image()), 4, false).await;
+    let server = tuist_execution::start_with(Some(worker_image()), 4, false, true).await;
     let root = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
     std::fs::create_dir(root.path().join("modules")).unwrap();

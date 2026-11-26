@@ -155,7 +155,18 @@ impl TuistCache {
                     "the Tuist server did not advertise an absolute execution root; update the server to one that supports Struo remote execution",
                 )
             })?;
-        let executor = grpc_endpoint(&capabilities.endpoint)
+        let endpoint = match &self.execution_endpoint_override {
+            Some(endpoint) => {
+                tracing::debug!(
+                    execution_override = %redact::endpoint(endpoint),
+                    advertised = %redact::endpoint(&capabilities.endpoint),
+                    "TUIST_EXECUTION_ENDPOINT replaces the execution endpoint the service advertises"
+                );
+                endpoint
+            }
+            None => &capabilities.endpoint,
+        };
+        let executor = grpc_endpoint(endpoint)
             .map_err(|message| status::remote(operation, ErrorKind::Misconfigured, message))?
             .http2_keep_alive_interval(Duration::from_secs(30))
             .keep_alive_while_idle(true)
@@ -165,7 +176,7 @@ impl TuistCache {
             .as_deref()
             .unwrap_or(&capabilities.cas_endpoint);
         tracing::debug!(
-            executor = %redact::endpoint(&capabilities.endpoint),
+            executor = %redact::endpoint(endpoint),
             cas = %redact::endpoint(cas_endpoint),
             image = %capabilities.image,
             "resolved Tuist remote execution"

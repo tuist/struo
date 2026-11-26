@@ -306,6 +306,11 @@ Links must not escape the workspace or expose undeclared coordinator files.
 Keep `TUIST_CACHE_ENDPOINT` unset unless you need an override. If you set it,
 choose an endpoint reachable by the coordinator that the workers also read from.
 
+`TUIST_EXECUTION_ENDPOINT` likewise replaces the execution endpoint Tuist
+advertises, for coordinators that reach the execution service from inside its
+own network, such as Tuist runners. It changes only where Struo connects; the
+credential and project stay the same.
+
 ### Cache failures
 
 Struo retries transient cache failures up to three times. Interrupted uploads
