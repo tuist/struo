@@ -186,7 +186,7 @@ def host_command(argv, env = None):
     return '{"name": "Root", "dependencies": [], "products": [], "targets": []}'
 def _swift_package_metadata(argv, absolute, env = {}, check = True):
     return host_command(argv, env = env)
-def _xcode_local_swift_package_specs(ctx, packages, platform, minimum_os, variant, root_identities = None):
+def _xcode_local_swift_package_specs(ctx, packages, platform, minimum_os, variant, root_identities = None, owner_package = None):
     return {"specs": [{"kind": "apple_library", "attrs": {}, "deps": ["./Declared"]}, {"kind": "archive_download", "attrs": {}}], "products": {}, "modules": {}}
 graph = _swift_package_workspace_resolver({
     "attrs": {"explicit_modules": True, "dependency_check": "error"},

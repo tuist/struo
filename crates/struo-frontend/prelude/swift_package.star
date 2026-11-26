@@ -28,7 +28,7 @@ def _swift_package_workspace_resolver(ctx):
     remote_dependencies = any([dependency.get("sourceControl") or dependency.get("registry") for local in local_packages for dependency in local["info"].get("dependencies") or []])
     remote_packages = _swift_package_remote_infos(ctx, info, swift, swiftc["env"], absolute_package_path, package_dir, cache = swift_info_cache, remote_dependencies = remote_dependencies)
     packages = _xcode_expand_swift_package_infos(ctx, local_packages + remote_packages, cache = swift_info_cache, follow_resolved = False)
-    graph = _xcode_local_swift_package_specs(ctx, packages, attrs.get("platform") or "macos", attrs.get("minimum_os") or "13.0", attrs.get("sdk_variant") or "simulator", root_identities = [package["identity"]])
+    graph = _xcode_local_swift_package_specs(ctx, packages, attrs.get("platform") or "macos", attrs.get("minimum_os") or "13.0", attrs.get("sdk_variant") or "simulator", root_identities = [package["identity"]], owner_package = ctx["label"]["package"])
     for spec in graph["specs"]:
         if spec["kind"] in ["apple_library", "apple_framework", "apple_application", "apple_executable", "apple_test_bundle", "swift_macro"]:
             if attrs.get("explicit_modules"):

@@ -115,7 +115,7 @@ def _swiftpm_absolute_package_path(ctx, path):
     return "/workspace"
 def _swift_package_metadata(argv, absolute, env = {}, check = True):
     return '{"name":"Root","dependencies":[],"products":[],"targets":[]}'
-def _xcode_local_swift_package_specs(ctx, packages, platform, minimum_os, variant, root_identities = None):
+def _xcode_local_swift_package_specs(ctx, packages, platform, minimum_os, variant, root_identities = None, owner_package = None):
     return {"specs": [], "products": {}, "modules": {}}
 result = repr(_swift_package_workspace_resolver({
     "attrs": {"platform": "ios", "sdk_variant": "device"},

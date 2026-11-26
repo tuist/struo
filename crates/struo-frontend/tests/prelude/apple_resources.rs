@@ -21,7 +21,7 @@ def _swiftpm_absolute_package_path(ctx, path):
     return workspace_root()
 def _swift_package_metadata(argv, absolute, env = {{}}, check = True):
     return '{{"name":"Coverage","targets":[]}}'
-def _xcode_local_swift_package_specs(ctx, packages, platform, minimum_os, variant, root_identities = None):
+def _xcode_local_swift_package_specs(ctx, packages, platform, minimum_os, variant, root_identities = None, owner_package = None):
     return {{"products": {{}}, "modules": {{}}, "specs": [
         {{"name":"Product", "kind":"apple_library", "srcs":["Product/**/*"], "deps":["Native", "Macro"], "attrs":{{"swift_flags":["-DKEEP"]}}}},
         {{"name":"Native", "kind":"apple_library", "srcs":["Native/**/*"], "deps":[], "attrs":{{}}}},

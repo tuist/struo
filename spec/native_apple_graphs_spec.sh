@@ -155,6 +155,56 @@ SWIFT
     [ "$("$WORKSPACE/.struo/out/SwiftPackage_ArtifactBundles_Probe/Probe.app/Contents/MacOS/Probe")" = 42 ]
   }
 
+  exercise_sibling_path_package() {
+    mkdir -p "$WORKSPACE/PackageA/Sources/PackageA" "$WORKSPACE/PackageA/Sources/PackageAMacros" "$WORKSPACE/PackageB/Sources/PackageBSupport" "$WORKSPACE/PackageB/Sources/PackageBMacroSupport"
+    cat > "$WORKSPACE/PackageA/Package.swift" <<'SWIFT'
+// swift-tools-version: 5.9
+import CompilerPluginSupport
+import PackageDescription
+let package = Package(
+    name: "PackageA",
+    products: [.library(name: "PackageA", targets: ["PackageA"])],
+    dependencies: [.package(path: "../PackageB")],
+    targets: [
+        .target(name: "PackageA", dependencies: [.product(name: "PackageBSupport", package: "PackageB")]),
+        .macro(name: "PackageAMacros", dependencies: [.product(name: "PackageBMacroSupport", package: "PackageB")]),
+    ]
+)
+SWIFT
+    cat > "$WORKSPACE/PackageB/Package.swift" <<'SWIFT'
+// swift-tools-version: 5.9
+import PackageDescription
+let package = Package(
+    name: "PackageB",
+    products: [
+        .library(name: "PackageBSupport", targets: ["PackageBSupport"]),
+        .library(name: "PackageBMacroSupport", targets: ["PackageBMacroSupport"]),
+    ],
+    targets: [.target(name: "PackageBSupport"), .target(name: "PackageBMacroSupport")]
+)
+SWIFT
+    printf 'import PackageBSupport\n' > "$WORKSPACE/PackageA/Sources/PackageA/PackageA.swift"
+    printf 'import PackageBMacroSupport\n' > "$WORKSPACE/PackageA/Sources/PackageAMacros/Macros.swift"
+    printf 'public let support = 1\n' > "$WORKSPACE/PackageB/Sources/PackageBSupport/Support.swift"
+    printf 'public let macroSupport = 1\n' > "$WORKSPACE/PackageB/Sources/PackageBMacroSupport/MacroSupport.swift"
+
+    if STRUO_CHANGE_TRACKER=0 RUST_LOG=off "$STRUO_BIN" -C "$WORKSPACE/PackageA" --format json query targets > /dev/null 2> "$WORKSPACE/outside.err"; then
+      echo 'a sibling package outside the workspace loaded as an incomplete graph'
+      return 1
+    fi
+    grep -q 'swift_package_path_outside_workspace' "$WORKSPACE/outside.err" || { cat "$WORKSPACE/outside.err"; return 1; }
+    grep -qF "struo -C $(cd "$WORKSPACE" && pwd -P)" "$WORKSPACE/outside.err" || { cat "$WORKSPACE/outside.err"; return 1; }
+
+    graph_snapshot || return
+    graph_validate || return
+    jq -e '
+      (.["PackageA/SwiftPackage_PackageA_PackageA"].deps | index("PackageB/SwiftPackage_PackageB_PackageBSupport")) and
+      (.["PackageA/SwiftPackage_PackageA_PackageAMacros"].deps | index("PackageB/SwiftPackage_PackageB_PackageBMacroSupport_MacroHost")) and
+      (keys | all(ascii_downcase | startswith("packagea/swiftpackage_packageb") | not))
+    ' "$WORKSPACE/graph.json" >/dev/null || { jq 'with_entries(select(.key | startswith("PackageA/"))) | map_values(.deps)' "$WORKSPACE/graph.json"; return 1; }
+    graph_build PackageA/SwiftPackage_PackageA_PackageA
+  }
+
   exercise_vapor_graph() {
     cp "$REPO_ROOT/fixtures/native_graphs/vapor/Package.swift" "$WORKSPACE/"
     cp -R "$REPO_ROOT/fixtures/native_graphs/vapor/Sources" "$REPO_ROOT/fixtures/native_graphs/vapor/Tests" "$REPO_ROOT/fixtures/native_graphs/vapor/Dependencies" "$WORKSPACE/"
@@ -377,6 +427,13 @@ JSON
   It 'accepts local package spelling aliases without duplicating a native package target'
     Skip if 'requires Xcode' native_graph_toolchain_unavailable
     When call exercise_package_path_alias
+    The status should be success
+    The output should equal ''
+  End
+
+  It 'reports sibling path packages outside the workspace and follows them from a common parent'
+    Skip if 'requires Xcode' native_graph_toolchain_unavailable
+    When call exercise_sibling_path_package
     The status should be success
     The output should equal ''
   End

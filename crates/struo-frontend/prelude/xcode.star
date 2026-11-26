@@ -2916,6 +2916,8 @@ def _xcode_expand_swift_package_infos(ctx, initial_infos, cache = None, follow_r
             for dependency in package["info"].get("dependencies") or []:
                 for local in dependency.get("fileSystem") or []:
                     path = _xcode_workspace_input_path(local.get("path") or "")
+                    if not path:
+                        _xcode_fail_outside_workspace_package(package, local.get("path") or "")
                     identity = local.get("nameForTargetDependencyResolutionOnly") or local.get("identity") or _basename(path)
                     key = identity.lower()
                     path = _xcode_normalize_path(path)
@@ -2952,6 +2954,26 @@ def _xcode_expand_swift_package_infos(ctx, initial_infos, cache = None, follow_r
         infos.extend(discovered)
         pending = discovered
     return infos
+
+def _xcode_fail_outside_workspace_package(package, raw_path):
+    # Graph inputs must be workspace-relative, so a package outside the root
+    # would otherwise drop its products from the graph without any error.
+    root = workspace_root()
+    path = _xcode_normalize_path(raw_path)
+    if not path.startswith("/") or path == root or not host_file_exists(path + "/Package.swift"):
+        return
+    common = []
+    for left, right in zip(root.split("/"), path.split("/")):
+        if left != right:
+            break
+        common.append(left)
+    common = "/".join(common) or "/"
+    _diagnostic_fail(
+        "swift_package_path_outside_workspace",
+        "srcs",
+        "Swift package `" + (package.get("identity") or "") + "` depends on .package(path:) `" + path + "`, which is outside the workspace root `" + root + "`",
+        "Run Struo from a directory that contains both packages, such as `struo -C " + common + "`",
+    )
 
 def _xcode_swift_package_target_id(identity, target_name, target_prefix = "SwiftPackage"):
     return target_prefix + "_" + _xcode_sanitized_target_name(identity) + "_" + _xcode_sanitized_target_name(target_name)
@@ -3514,7 +3536,14 @@ def _xcode_swift_package_build_tools_spec(ctx, package, packages, target_name, t
         },
     }
 
-def _xcode_local_swift_package_specs(ctx, package_infos, platform, minimum_os, sdk_variant, configuration = "Debug", lazy_products = {}, lazy_dependency = "", target_prefix = "SwiftPackage", root_identities = None):
+def _xcode_swift_package_external_prefix(owner_package, path):
+    if not owner_package or path.startswith(".struo/"):
+        return ""
+    if path == owner_package or path.startswith(owner_package + "/"):
+        return ""
+    return "../" * len(owner_package.split("/")) + path + "/"
+
+def _xcode_local_swift_package_specs(ctx, package_infos, platform, minimum_os, sdk_variant, configuration = "Debug", lazy_products = {}, lazy_dependency = "", target_prefix = "SwiftPackage", root_identities = None, owner_package = None):
     # Lower source package targets as ordinary Apple libraries. Products group
     # one or more targets, so consumers receive the complete product closure.
     target_ids = {}
@@ -3526,18 +3555,24 @@ def _xcode_local_swift_package_specs(ctx, package_infos, platform, minimum_os, s
     resolved_traits = _xcode_swift_package_resolved_traits(package_infos, root_identities)
     for package in package_infos:
         identity = package["identity"]
+        # Sources are owner-relative, so an owner cannot lower a local package
+        # outside its directory. Depend on the targets that package's own
+        # native project emits instead, which it names after its manifest.
+        external = _xcode_swift_package_external_prefix(owner_package, package["path"])
+        id_identity = (package["info"].get("name") or _basename(package["path"])) if external else identity
         for target in package["info"].get("targets") or []:
             name = target.get("name") or ""
             if name:
-                target_id = _xcode_swift_package_target_id(identity, name, target_prefix)
-                host_target_id = target_id if (target.get("type") or "") in ["binary", "macro", "test", "system"] else _xcode_swift_package_host_target_id(identity, name, target_prefix)
+                target_id = external + _xcode_swift_package_target_id(id_identity, name, target_prefix)
+                host_target_id = target_id if (target.get("type") or "") in ["binary", "macro", "test", "system"] else external + _xcode_swift_package_host_target_id(id_identity, name, target_prefix)
                 if (target.get("type") or "") == "macro":
                     macro_target_ids[target_id] = True
                 target_ids[identity + "\x1f" + name] = target_id
                 target_ids[identity.lower() + "\x1f" + name] = target_id
                 host_target_ids[identity + "\x1f" + name] = host_target_id
                 host_target_ids[identity.lower() + "\x1f" + name] = host_target_id
-                module_ids[name] = target_id
+                if not external:
+                    module_ids[name] = target_id
         for product in package["info"].get("products") or []:
             targets = product.get("targets") or []
             if targets:
@@ -3564,6 +3599,8 @@ def _xcode_local_swift_package_specs(ctx, package_infos, platform, minimum_os, s
     package_configuration = _xcode_swift_package_configuration(configuration)
     debug_defines = ["DEBUG"] if package_configuration == "debug" else []
     for package in package_infos:
+        if _xcode_swift_package_external_prefix(owner_package, package["path"]):
+            continue
         identity = package["identity"]
         package_path = package["path"]
         package_traits = resolved_traits[identity.lower()]

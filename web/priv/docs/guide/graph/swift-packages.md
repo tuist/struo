@@ -111,6 +111,11 @@ including sibling packages and shared dependencies reached through several
 products. An entirely local graph needs no `Package.resolved` and does not run
 dependency resolution.
 
+A `.package(path:)` dependency outside the workspace root fails graph loading
+with `swift_package_path_outside_workspace` instead of omitting that package's
+products. Run Struo from a directory that contains both packages, for example
+`struo -C ..` from a package whose sibling it depends on.
+
 ### Remote packages
 
 Struo checks out each source-control dependency at the revision pinned in

@@ -175,6 +175,70 @@ result = products["Shared"]["path"]
 }
 
 #[test]
+fn swift_package_path_dependency_outside_the_workspace_reports_the_boundary() {
+    let source = format!(
+        r#"{}
+def workspace_root():
+    return "/repo/PackageA"
+def host_file_exists(path):
+    return path == "/repo/PackageB/Package.swift"
+def _xcode_swift_package_info(ctx, path, identity = "", cache = None, discovery = False):
+    fail("a package outside the workspace must not be loaded as a workspace package")
+result = repr(_xcode_expand_swift_package_infos({{}}, [{{"identity": "packagea", "path": "", "info": {{"dependencies": [{{"fileSystem": [{{"identity": "packageb", "path": "/repo/PackageB"}}]}}]}}}}], follow_resolved = False))
+"#,
+        xcode_prelude_source()
+    );
+    let error = eval_prelude_source_to_repr(source).unwrap_err();
+    assert!(
+        error.contains("swift_package_path_outside_workspace")
+            && error.contains("/repo/PackageB")
+            && error.contains("struo -C /repo"),
+        "{error}"
+    );
+}
+
+#[test]
+fn swift_package_owner_depends_on_sibling_package_targets_instead_of_copying_them() {
+    let workspace = TempDir::new().unwrap();
+    for (path, contents) in [
+        ("PackageA/Sources/App/App.swift", "import Support"),
+        (
+            "PackageB/Sources/Support/Support.swift",
+            "public let value = 1",
+        ),
+    ] {
+        let path = workspace.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+    }
+    let packages = serde_json::json!([
+        {"identity": "PackageA", "path": "PackageA", "info": {"targets": [
+            {"name": "App", "type": "regular", "dependencies": [{"product": ["Support", "PackageB", null, null]}]},
+        ]}},
+        {"identity": "packageb", "path": "PackageB", "info": {
+            "name": "BKit",
+            "products": [{"name": "Support", "targets": ["Support"]}],
+            "targets": [{"name": "Support", "type": "regular"}],
+        }},
+    ])
+    .to_string();
+    let source = format!(
+        r#"{}
+graph = _xcode_local_swift_package_specs({{"label": {{"package": "PackageA"}}, "attr": {{}}}}, json_decode({packages:?}), "macos", "13.0", "simulator", owner_package = "PackageA")
+result = _json_encode(sorted([[spec["name"], spec["deps"], spec["srcs"]] for spec in graph["specs"]]))
+"#,
+        xcode_prelude_source(),
+    );
+    let (_, result) = with_active_store(store_for(workspace.path(), "PackageA"), || {
+        eval_prelude_source_to_repr(source)
+    });
+    assert_eq!(
+        result.unwrap(),
+        r#"[["SwiftPackage_PackageA_App",["./../PackageB/SwiftPackage_BKit_Support"],["Sources/App/App.swift"]],["SwiftPackage_PackageA_App_MacroHost",["./../PackageB/SwiftPackage_BKit_Support_MacroHost"],["Sources/App/App.swift"]]]"#
+    );
+}
+
+#[test]
 fn swift_package_discovery_follows_explicit_paths_instead_of_first_duplicate_name() {
     let source = format!(
         r#"{}
