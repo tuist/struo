@@ -495,6 +495,56 @@ if (result.error) throw result.error;
 process.exit(result.status === null ? 1 : result.status);
 """
 
+# React Native 0.86 dropped `@react-native-community/cli` from its dependencies,
+# so `react-native/cli.js bundle` and `start` no longer exist in a default
+# project. Run those commands from `@react-native/community-cli-plugin`, which
+# `react-native` depends on, and parse their declared options like the CLI does.
+def _react_native_command_runner_source():
+    return """const path = require("node:path");
+const {createRequire} = require("node:module");
+const reactNativeManifest = require.resolve("react-native/package.json", {paths: [process.cwd()]});
+const requireFromReactNative = createRequire(reactNativeManifest);
+const [commandName, ...argv] = process.argv.slice(2);
+const command = requireFromReactNative("@react-native/community-cli-plugin")[`${commandName}Command`];
+if (!command) throw new Error(`@react-native/community-cli-plugin has no ${commandName} command`);
+const camelCase = flag => flag.replace(/^--/, "").replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+const options = command.options.map(option => {
+  const tokens = option.name.split(/[ ,]+/);
+  const flags = tokens.filter(token => token.startsWith("--"));
+  const value = tokens.find(token => token.startsWith("<") || token.startsWith("[")) || "";
+  const negate = flags.every(flag => flag.startsWith("--no-"));
+  const key = camelCase(flags[flags.length - 1].replace(/^--no-/, "--"));
+  return {...option, flags, key, value, negate, default: option.default ?? (negate ? true : undefined)};
+});
+const args = {};
+for (const option of options) {
+  if (option.default !== undefined) args[option.key] = option.default;
+}
+const given = new Set();
+for (let index = 0; index < argv.length; index++) {
+  const [flag, inline] = argv[index].split(/=(.*)/s);
+  const option = options.find(candidate => candidate.flags.includes(flag));
+  if (!option) throw new Error(`Unknown ${commandName} option: ${flag}`);
+  let value = inline ?? !option.negate;
+  if (inline === undefined && (option.value.startsWith("<") || (option.value.startsWith("[") && index + 1 < argv.length && !argv[index + 1].startsWith("--")))) {
+    value = argv[++index];
+  }
+  const previous = given.has(option.key) ? args[option.key] : undefined;
+  args[option.key] = option.parse && typeof value === "string" ? option.parse(value, previous) : value;
+  given.add(option.key);
+}
+const ctx = {
+  root: process.cwd(),
+  reactNativePath: path.dirname(reactNativeManifest),
+  reactNativeVersion: require(reactNativeManifest).version,
+  platforms: {ios: {}, android: {}},
+};
+command.func([], ctx, args).catch(error => {
+  console.error(error);
+  process.exit(1);
+});
+"""
+
 def _react_native_bundle_impl(ctx):
     tools = _react_native_tools(ctx)
     dependency = _react_native_dependency(ctx)
@@ -511,7 +561,8 @@ def _react_native_bundle_impl(ctx):
         files.append(metro_config_source)
     stage = _react_native_stage_project(ctx, dependency, _unique(files + [dependency["package_json"], dependency["lockfile"]]))
     staged_entry = stage + "/" + _react_native_relative_path(ctx, entry)
-    cli = stage + "/node_modules/react-native/cli.js"
+    command_runner = ctx["scratch_dir"] + "/run-react-native-command.js"
+    write_path(command_runner, _react_native_command_runner_source())
     bundle_name = _react_native_attr(ctx, "bundle_name", "main.jsbundle")
     bundle_dir = ctx["build_dir"] + "/bundle"
     assets = ctx["build_dir"] + "/assets"
@@ -530,7 +581,7 @@ def _react_native_bundle_impl(ctx):
     prepare_path(assets, kind = "directory", identifier = ctx["label"]["id"] + ":assets-prepare")
     argv = [
         tools["node"],
-        execution_path(cli),
+        execution_path(command_runner),
         "bundle",
         "--platform", platform,
         "--dev", "true" if dev else "false",
@@ -554,7 +605,7 @@ def _react_native_bundle_impl(ctx):
         presentation = _action_metadata(context = [_action_context("react-native.platform", platform)]),
         source_files = _action_source_files(files),
         argv = argv,
-        inputs = _unique([stage, dependency["node_modules"], metro_wrapper]),
+        inputs = _unique([stage, dependency["node_modules"], metro_wrapper, command_runner]),
         outputs = metro_outputs,
         create_dirs = [ctx["scratch_dir"] + "/home"],
         cwd = stage,
@@ -1193,11 +1244,12 @@ def _react_native_metro_impl(ctx):
         stage + "/node_modules",
         identifier = ctx["label"]["id"] + ":stage-node-modules",
     )
-    cli = stable_node_modules + "/react-native/cli.js"
+    command_runner = ctx["scratch_dir"] + "/run-react-native-command.js"
+    write_path(command_runner, _react_native_command_runner_source())
     project_root = _react_native_package_root(ctx)
     argv = [
         tools["node"],
-        execution_path(cli),
+        execution_path(command_runner),
         "start",
         "--config", execution_path(config),
         "--projectRoot", execution_path(project_root),
@@ -1211,7 +1263,7 @@ def _react_native_metro_impl(ctx):
         display_name = "Start Metro development server · " + ctx["label"]["name"],
         source_files = _action_source_files(_unique(glob(ctx["srcs"]) + [config, stage] + ([metro_config] if metro_config else []))),
         argv = argv,
-        inputs = _unique(glob(ctx["srcs"]) + [config, stage] + ([metro_config] if metro_config else [])),
+        inputs = _unique(glob(ctx["srcs"]) + [config, command_runner, stage] + ([metro_config] if metro_config else [])),
         outputs = [],
         create_dirs = [ctx["scratch_dir"] + "/home"],
         cwd = stage,
