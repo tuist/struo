@@ -39,7 +39,7 @@ Describe 'struo cache gc'
 
   trim_in_background() {
     env STRUO_CACHE_MAX_SIZE=0 "$STRUO_BIN" -C "$WORKSPACE" exec -e PATH=/usr/bin:/bin -- /bin/sh -c 'printf old' >/dev/null 2>&1
-    find "$XDG_CACHE_HOME/struo/cas" -type f -exec touch -d '3 days ago' {} +
+    find "$XDG_CACHE_HOME/struo/cas" -type f -exec touch -t 202001010000 {} +
     env STRUO_CACHE_MAX_SIZE=1 "$STRUO_BIN" -C "$WORKSPACE" exec -e PATH=/usr/bin:/bin -- /bin/sh -c 'printf new' >/dev/null 2>&1
     # The command returns before its detached collection finishes.
     for _ in $(seq 1 100); do
@@ -78,7 +78,7 @@ Describe 'struo cache gc'
 
   warn_twice_about_a_malformed_environment_cap() {
     env STRUO_CACHE_MAX_SIZE=0 "$STRUO_BIN" -C "$WORKSPACE" exec -e PATH=/usr/bin:/bin -- /bin/sh -c 'printf a' >/dev/null 2>&1
-    touch -d '2 hours ago' "$XDG_CACHE_HOME/struo/cas/gc.lock"
+    touch -t 202001010000 "$XDG_CACHE_HOME/struo/cas/gc.lock"
     for _ in 1 2; do
       env STRUO_CACHE_MAX_SIZE=lots "$STRUO_BIN" -C "$WORKSPACE" exec -e PATH=/usr/bin:/bin -- /bin/sh -c 'printf b' 2>&1 >/dev/null |
         grep -c 'skipped automatic cache cleanup' || true
