@@ -1,13 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
 use struo_cas::Digest;
 
 use crate::commands::change_tracker::ChangePosition;
+
+mod persistence;
+pub(crate) use persistence::stored_position;
+use persistence::CacheFileRef;
 
 const SCHEMA: &str = "struo.source-digests.v5";
 
@@ -91,7 +95,7 @@ struct Inner {
     output_entries: RwLock<BTreeMap<String, Entry>>,
     observed_digests: RwLock<BTreeMap<String, Digest>>,
     /// What the watcher says moved since these entries were written.
-    known_changes: RwLock<KnownChanges>,
+    known_changes: RwLock<Arc<KnownChanges>>,
     /// Watcher position to stamp on the way out, so the next invocation knows
     /// which window to ask about.
     position: RwLock<Option<ChangePosition>>,
@@ -136,36 +140,6 @@ struct Fingerprint {
     unsettled: Option<u128>,
 }
 
-#[derive(Deserialize, Serialize)]
-struct CacheFile {
-    schema: String,
-    entries: BTreeMap<String, Entry>,
-    #[serde(default)]
-    output_entries: BTreeMap<String, Entry>,
-    /// Watcher position when these entries were written. Absent when no watcher
-    /// was running, which leaves the next invocation nothing to ask about.
-    #[serde(default)]
-    position: Option<ChangePosition>,
-}
-
-#[derive(Serialize)]
-struct CacheFileRef<'a> {
-    schema: &'static str,
-    entries: &'a BTreeMap<String, Entry>,
-    output_entries: &'a BTreeMap<String, Entry>,
-    position: &'a Option<ChangePosition>,
-}
-
-/// The watcher position stamped on a workspace's cache, without loading it.
-///
-/// Read before the session exists, so the one snapshot an invocation takes can
-/// cover this cache's window as well as the build receipt's.
-pub(crate) fn stored_position(workspace: &Path) -> Option<ChangePosition> {
-    let path = workspace.join(".struo").join("source-digests.json");
-    let cache = serde_json::from_slice::<CacheFile>(&std::fs::read(path).ok()?).ok()?;
-    (cache.schema == SCHEMA).then_some(cache.position).flatten()
-}
-
 /// Whether a parent directory of `relative` is, or sits under, a symbolic link.
 fn reached_through_link(workspace: &Path, relative: &str) -> bool {
     let Some((parent, _)) = relative.rsplit_once('/') else {
@@ -182,35 +156,36 @@ fn reached_through_link(workspace: &Path, relative: &str) -> bool {
 
 impl SourceDigestCache {
     pub(crate) fn open(workspace: &Path) -> Self {
+        Self::open_with_position(workspace).0
+    }
+
+    pub(super) fn open_with_position(workspace: &Path) -> (Self, Option<ChangePosition>) {
         let path = workspace.join(".struo").join("source-digests.json");
-        let cache = std::fs::read(&path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<CacheFile>(&bytes).ok())
-            .filter(|cache| cache.schema == SCHEMA);
-        let (entries, output_entries) = cache.map_or_else(
-            || (BTreeMap::new(), BTreeMap::new()),
-            |cache| (cache.entries, cache.output_entries),
+        let (entries, output_entries, position) = persistence::load(&path).map_or_else(
+            || (BTreeMap::new(), BTreeMap::new(), None),
+            |cache| (cache.entries, cache.output_entries, cache.position),
         );
-        Self {
+        let cache = Self {
             inner: Arc::new(Inner {
                 path,
                 entries: RwLock::new(entries),
                 output_entries: RwLock::new(output_entries),
                 observed_digests: RwLock::new(BTreeMap::new()),
-                known_changes: RwLock::new(KnownChanges::Unknown),
+                known_changes: RwLock::new(Arc::new(KnownChanges::Unknown)),
                 position: RwLock::new(None),
                 dirty: AtomicBool::new(false),
             }),
-        }
+        };
+        (cache, position)
     }
 
     /// Tell the cache what a watcher observed since its entries were written.
-    pub(super) fn with_known_changes(&self, changes: KnownChanges) {
+    pub(super) fn with_known_changes(&self, changes: impl Into<Arc<KnownChanges>>) {
         *self
             .inner
             .known_changes
             .write()
-            .expect("known change lock poisoned") = changes;
+            .expect("known change lock poisoned") = changes.into();
     }
 
     /// Stamp the watcher position these entries now describe.
@@ -223,12 +198,11 @@ impl SourceDigestCache {
         self.inner.dirty.store(true, Ordering::Relaxed);
     }
 
-    fn known_changes(&self) -> KnownChanges {
+    fn known_changes(&self) -> RwLockReadGuard<'_, Arc<KnownChanges>> {
         self.inner
             .known_changes
             .read()
             .expect("known change lock poisoned")
-            .clone()
     }
 
     pub(super) fn digest(&self, workspace: &Path, relative: &str) -> std::io::Result<Digest> {
@@ -353,13 +327,17 @@ impl SourceDigestCache {
         cache: &struo_cas::CacheProvider,
         lease: Option<struo_core::ExecutionPermit>,
     ) -> struo_core::Result<()> {
-        let mut required = result.clone();
-        let mut selected = BTreeSet::new();
-        required.outputs.retain(|relative, expected| {
+        let mut required = struo_cas::ActionResult {
+            exit_code: result.exit_code,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            outputs: BTreeMap::new(),
+        };
+        for (relative, expected) in &result.outputs {
             let mut candidate = relative.as_str();
             let mut parent_selected = false;
             while let Some((parent, _)) = candidate.rsplit_once('/') {
-                if selected.contains(parent) {
+                if required.outputs.contains_key(parent) {
                     parent_selected = true;
                     break;
                 }
@@ -367,10 +345,9 @@ impl SourceDigestCache {
             }
             let restore = parent_selected || !self.output_matches(workspace, relative, *expected);
             if restore {
-                selected.insert(relative.clone());
+                required.outputs.insert(relative.clone(), *expected);
             }
-            restore
-        });
+        }
         if required.outputs.is_empty() {
             // Every output was already the one this action produced, which is
             // what the recorded description said. Describing them again to
@@ -567,9 +544,6 @@ impl Drop for Inner {
         let Some(parent) = self.path.parent() else {
             return;
         };
-        if std::fs::create_dir_all(parent).is_err() {
-            return;
-        }
         let Ok(position) = self.position.read() else {
             return;
         };
@@ -579,19 +553,10 @@ impl Drop for Inner {
             output_entries: &output_entries,
             position: &position,
         };
-        let Ok(bytes) = serde_json::to_vec(&cache) else {
+        let Ok(temporary) = super::cache_record::stage_json(parent, &cache) else {
             return;
         };
-        let temporary = self
-            .path
-            .with_extension(format!("json.tmp-{}", std::process::id()));
-        if std::fs::write(&temporary, bytes).is_err() {
-            return;
-        }
-        if std::fs::rename(&temporary, &self.path).is_err() {
-            let _ = std::fs::remove_file(&self.path);
-            let _ = std::fs::rename(&temporary, &self.path);
-        }
+        let _ = temporary.persist(&self.path);
     }
 }
 

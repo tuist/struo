@@ -11,6 +11,7 @@ use crate::InputFingerprintManifest;
 mod blocks;
 mod database;
 mod decoded_blocks;
+mod prepared;
 mod session;
 mod tree;
 use blocks::{Block, Branch, MAX_BLOCK_COMPONENTS};

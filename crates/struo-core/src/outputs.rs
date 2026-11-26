@@ -13,8 +13,8 @@ use crate::directory_blob::{
     write_directory_blob,
 };
 use crate::file_blob::{
-    digest_file_blob, digest_raw_file, file_blob_header, restore_file_blob_from_reader,
-    write_file_blob, FILE_BLOB_MAGIC,
+    digest_file_blob, digest_raw_file, file_blob_header, file_blob_len,
+    restore_file_blob_from_reader, write_file_blob, FILE_BLOB_MAGIC,
 };
 use crate::{Error, OutputSymlinkMode, Result, WorkspacePath};
 
@@ -464,6 +464,7 @@ async fn capture_scoped(
     let remote_cache = cache;
     let local = cache.local_tier();
     let cache = &local;
+    let header_len = if remote { REMOTE_OUTPUT_MAGIC.len() } else { 0 };
     let mut captured = BTreeMap::new();
     for rel in outputs {
         let abs = rel.resolve(workspace_root);
@@ -481,6 +482,8 @@ async fn capture_scoped(
                 });
             }
         };
+        let expected =
+            file_blob_len(&metadata).and_then(|size| size.checked_add(header_len as u64));
         let digest = if let Some(guard) = crate::resource_scope::current() {
             let produce = move |mut writer: &mut dyn Write| {
                 if remote {
@@ -494,10 +497,10 @@ async fn capture_scoped(
             };
             if let Some(extra) = guard.try_additional_default() {
                 cache
-                    .put_produced_pipelined((guard, extra), produce)
+                    .put_produced_pipelined_sized((guard, extra), expected, produce)
                     .await?
             } else {
-                cache.put_produced(guard, produce).await?
+                cache.put_produced_sized(guard, expected, produce).await?
             }
         } else if metadata.is_dir() {
             let staging = StagingDir::create(workspace_root)?;
@@ -548,7 +551,7 @@ async fn capture_scoped(
                     source,
                 })?;
             cache
-                .put_stream(tokio::io::AsyncReadExt::chain(header, file))
+                .put_stream_sized(tokio::io::AsyncReadExt::chain(header, file), expected)
                 .await?
         };
         captured.insert(rel.as_str().to_string(), digest);

@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["linux-posix-spawn"]
+linux-posix-spawn = ["struo-core/linux-posix-spawn"]
+
 [[bin]]
 name = "struo"
 path = "src/main.rs"

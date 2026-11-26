@@ -136,6 +136,21 @@ impl Queue {
         self.waiters.iter().filter(|waiter| !waiter.granted).count()
     }
 
+    pub(super) fn memory_pressure(&self, limits: &ResourceLimits) -> bool {
+        if limits.memory_bytes == 0 {
+            return false;
+        }
+        let mut free = limits.memory_bytes.saturating_sub(self.used.memory_bytes);
+        self.waiters
+            .iter()
+            .filter(|waiter| !waiter.granted)
+            .any(|waiter| {
+                let fits = waiter.request.memory_bytes <= free;
+                free = free.saturating_sub(waiter.request.memory_bytes);
+                !fits
+            })
+    }
+
     fn position(&self, id: u64) -> Option<usize> {
         self.waiters.iter().position(|waiter| waiter.id == id)
     }

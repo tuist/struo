@@ -910,6 +910,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "buildid"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d112c985702dc72085da9368d7f4348437d8b689a68fbd0b0a804589f0f19389"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "log",
+ "winapi",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3268,8 +3280,6 @@ dependencies = [
 [[package]]
 name = "libsqlite3-sys"
 version = "0.30.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149"
 dependencies = [
  "cc",
  "pkg-config",
@@ -6613,6 +6623,7 @@ dependencies = [
  "allocative",
  "anyhow",
  "base64 0.23.1",
+ "buildid",
  "futures",
  "glob",
  "hex",
@@ -6631,6 +6642,7 @@ dependencies = [
  "tokio",
  "toml",
  "toml_edit",
+ "tracing",
  "walkdir",
 ]
 

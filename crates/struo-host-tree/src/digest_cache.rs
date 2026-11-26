@@ -292,7 +292,7 @@ fn hash_stat_directory(
         ));
     }
     let mut children = std::fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>()?;
-    children.sort_by_key(std::fs::DirEntry::file_name);
+    children.sort_by_cached_key(std::fs::DirEntry::file_name);
     for child in children {
         let path = child.path();
         let metadata = std::fs::symlink_metadata(&path)?;

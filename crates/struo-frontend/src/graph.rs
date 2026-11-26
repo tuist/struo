@@ -188,7 +188,7 @@ impl TargetKindSchema {
 }
 
 /// External build-system concept related to a target kind.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct SourceReference {
     /// Name of the source build system or rule set.
     pub system: String,
@@ -225,13 +225,13 @@ pub struct TargetKindExample {
     pub source: TargetKindExampleSource,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct TargetKindExampleSource {
     pub root: TargetKindExampleRoot,
     pub path: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub enum TargetKindExampleRoot {
     BuiltInPrelude,
     Workspace { root: PathBuf },
@@ -277,7 +277,7 @@ impl TargetKindExampleFile {
 }
 
 /// Attribute metadata exposed by a target kind schema.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AttrSchema {
     /// Attribute name under `[target.attrs]`.
     pub name: String,
@@ -303,7 +303,7 @@ pub struct AttrSchema {
 }
 
 /// Dependency metadata exposed by a target kind schema.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct DepSchema {
     /// Dependency attribute name.
     pub name: String,
@@ -464,7 +464,14 @@ pub fn built_in_target_kind_schemas_result() -> Result<Vec<TargetKindSchema>> {
 }
 
 pub fn target_kind_schemas_for_workspace(root: &Path) -> Result<Vec<TargetKindSchema>> {
-    let mut schemas = starlark_prelude_target_kind_schemas()?;
+    let source = crate::modules::combined_module_source_for_workspace(root)?;
+    let exports = prelude_exports(&source);
+    let mut schemas = exports
+        .built_in_target_kinds
+        .as_ref()
+        .unwrap_or(&exports.target_kinds)
+        .clone()
+        .map_err(|message| prelude_message(crate::modules::BUILT_IN_MODULE_PATH, &message))?;
     schemas.extend(workspace_module_target_kind_schemas(root)?);
     validate_unique_target_kinds(&schemas)
         .map_err(|message| prelude_message(crate::modules::COMBINED_MODULE_PATH, &message))?;

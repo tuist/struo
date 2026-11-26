@@ -184,7 +184,8 @@ pub async fn build(
     // different moments: this target's receipt, and the workspace's recorded
     // digests. Ask about the window covering both, so one round trip serves
     // them. A window wider than either needs is only ever conservative.
-    let digest_position = analysis::recorded_digest_position(workspace);
+    let digest_position =
+        analysis::recorded_digest_position(workspace, resource_limits.memory_bytes);
     let prior_position = earliest_position(receipt_position, digest_position.as_ref());
     let initial_snapshot =
         crate::commands::change_tracker::snapshot(workspace, &xdg, &[], prior_position).await;

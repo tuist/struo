@@ -16,10 +16,35 @@ impl CacheProvider {
         W: FnOnce(&mut dyn Write) -> io::Result<()> + Send + 'static,
         G: Send + 'static,
     {
+        self.put_produced_sized(guard, None, produce).await
+    }
+
+    /// Like [`put_produced`](Self::put_produced), validating a known byte length
+    /// before publication and using it to size the compression workspace.
+    pub async fn put_produced_sized<W, G>(
+        &self,
+        guard: G,
+        expected: Option<u64>,
+        produce: W,
+    ) -> Result<Digest>
+    where
+        W: FnOnce(&mut dyn Write) -> io::Result<()> + Send + 'static,
+        G: Send + 'static,
+    {
         let digest = match self {
-            Self::Local(cas) => cas.put_produced(guard, produce).await?,
-            Self::Tuist(cache) => cache.local().put_produced(guard, produce).await?,
-            Self::Remote(cache) => cache.local().put_produced(guard, produce).await?,
+            Self::Local(cas) => cas.put_produced_sized(guard, expected, produce).await?,
+            Self::Tuist(cache) => {
+                cache
+                    .local()
+                    .put_produced_sized(guard, expected, produce)
+                    .await?
+            }
+            Self::Remote(cache) => {
+                cache
+                    .local()
+                    .put_produced_sized(guard, expected, produce)
+                    .await?
+            }
         };
         self.mirror_produced(digest).await
     }
@@ -36,10 +61,39 @@ impl CacheProvider {
         W: FnOnce(&mut dyn Write) -> io::Result<()> + Send + 'static,
         G: Send + 'static,
     {
+        self.put_produced_pipelined_sized(guard, None, produce)
+            .await
+    }
+
+    /// Like [`put_produced_pipelined`](Self::put_produced_pipelined), with a
+    /// known byte length validated before publication.
+    pub async fn put_produced_pipelined_sized<W, G>(
+        &self,
+        guard: G,
+        expected: Option<u64>,
+        produce: W,
+    ) -> Result<Digest>
+    where
+        W: FnOnce(&mut dyn Write) -> io::Result<()> + Send + 'static,
+        G: Send + 'static,
+    {
         let digest = match self {
-            Self::Local(cas) => cas.put_produced_pipelined(guard, produce).await?,
-            Self::Tuist(cache) => cache.local().put_produced_pipelined(guard, produce).await?,
-            Self::Remote(cache) => cache.local().put_produced_pipelined(guard, produce).await?,
+            Self::Local(cas) => {
+                cas.put_produced_pipelined_sized(guard, expected, produce)
+                    .await?
+            }
+            Self::Tuist(cache) => {
+                cache
+                    .local()
+                    .put_produced_pipelined_sized(guard, expected, produce)
+                    .await?
+            }
+            Self::Remote(cache) => {
+                cache
+                    .local()
+                    .put_produced_pipelined_sized(guard, expected, produce)
+                    .await?
+            }
         };
         self.mirror_produced(digest).await
     }

@@ -65,22 +65,32 @@ pub(crate) async fn to_cache_with_observer<R>(
 where
     R: AsyncRead + Unpin,
 {
+    let mut buf = [0_u8; 4 * 1024];
+    let mut n = reader.read(&mut buf).await.map_err(|source| Error::Wait {
+        program: "stream".to_string(),
+        source,
+    })?;
+    if n == 0 {
+        return cache
+            .put_stream(tokio::io::empty())
+            .await
+            .map_err(Error::from);
+    }
     let (mut pipe_reader, mut pipe_writer) = tokio::io::duplex(PIPE_CAPACITY);
     let forward = async {
-        let mut buf = [0_u8; 4 * 1024];
         loop {
-            let n = reader.read(&mut buf).await.map_err(|source| Error::Wait {
+            write_parent(&buf[..n], destination, stream_to_parent).await?;
+            if let Some(observer) = observer {
+                observer.observe(destination.into(), &buf[..n]);
+            }
+            write_pipe(&mut pipe_writer, &buf[..n]).await?;
+            n = reader.read(&mut buf).await.map_err(|source| Error::Wait {
                 program: "stream".to_string(),
                 source,
             })?;
             if n == 0 {
                 break;
             }
-            write_parent(&buf[..n], destination, stream_to_parent).await?;
-            if let Some(observer) = observer {
-                observer.observe(destination.into(), &buf[..n]);
-            }
-            write_pipe(&mut pipe_writer, &buf[..n]).await?;
         }
         shutdown_pipe(&mut pipe_writer).await
     };
@@ -185,5 +195,39 @@ mod tests {
         .unwrap();
 
         assert_eq!(cas.get_blob(&digest).await.unwrap(), payload);
+    }
+
+    #[tokio::test]
+    async fn observed_capture_preserves_delayed_output_and_empty_streams() {
+        #[derive(Default)]
+        struct Output(std::sync::Mutex<Vec<u8>>);
+        impl ActionOutputObserver for Output {
+            fn observe(&self, stream: ActionOutputStream, bytes: &[u8]) {
+                assert!(matches!(stream, ActionOutputStream::Stderr));
+                self.0.lock().unwrap().extend_from_slice(bytes);
+            }
+        }
+
+        let (_tmp, cas) = fresh_cas();
+        let cache = CacheProvider::Local(cas.clone());
+        for size in [0, 1, 4095, 4096, 4097, PIPE_CAPACITY * 2 + 123] {
+            let payload = (0..size)
+                .map(|i| u8::try_from(i % 251).unwrap())
+                .collect::<Vec<_>>();
+            let output = Output::default();
+            let (mut writer, reader) = tokio::io::duplex(17);
+            let send = async {
+                tokio::task::yield_now().await;
+                writer.write_all(&payload).await.unwrap();
+                writer.shutdown().await.unwrap();
+            };
+            let capture =
+                to_cache_with_observer(reader, Destination::Stderr, &cache, false, Some(&output));
+            let (digest, ()) = tokio::join!(capture, send);
+            let digest = digest.unwrap();
+            assert_eq!(digest, Digest::of_bytes(&payload));
+            assert_eq!(cas.get_blob(&digest).await.unwrap(), payload);
+            assert_eq!(*output.0.lock().unwrap(), payload);
+        }
     }
 }

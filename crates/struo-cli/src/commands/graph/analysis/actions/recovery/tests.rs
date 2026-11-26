@@ -305,6 +305,58 @@ impl Workspace {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn cached_output_readers_share_validation_but_recheck_after_writers() {
+    let workspace = Workspace::new();
+    let producers = Producers::default();
+    let outcome = workspace
+        .build_with(analysis(&counting("first")), &producers, None)
+        .await
+        .unwrap();
+    let digest = outcome.result.outputs[PRODUCED];
+    let readers = OutputLock::open_shared(workspace.path(), [PRODUCED]).unwrap();
+    assert!(try_lock_all(&readers).unwrap().is_none());
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        workspace.restore(&producers, digest),
+    )
+    .await
+    .expect("existing readers must not block validation")
+    .unwrap();
+    drop(readers);
+
+    for path in [PRODUCED, ".struo/out"] {
+        let writers = OutputLock::open_all(workspace.path(), digest, [path]).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(busy) = try_lock_all(&writers).unwrap() {
+                wait_for_action_lock(&writers[busy], digest).await.unwrap();
+            }
+        })
+        .await
+        .expect("writer must acquire the locks after restoration cleanup");
+        let restore = workspace.restore(&producers, digest);
+        tokio::pin!(restore);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut restore)
+                .await
+                .is_err()
+        );
+        std::fs::write(workspace.path().join(PRODUCED), b"replaced by writer").unwrap();
+        drop(writers);
+        tokio::time::timeout(Duration::from_secs(5), restore)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(workspace.read(PRODUCED), "first");
+    }
+
+    std::fs::remove_file(workspace.path().join(PRODUCED)).unwrap();
+    workspace.restore(&producers, digest).await.unwrap();
+    assert_eq!(workspace.read(PRODUCED), "first");
+    assert_eq!(workspace.runs(), 1);
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn an_output_replaced_by_a_later_action_is_restored_for_its_reader() {
     let workspace = Workspace::new();
 
@@ -621,7 +673,7 @@ async fn producers_that_need_each_other_fail_instead_of_waiting_forever() {
                     SandboxMode::Off,
                 )
                 .unwrap();
-                StoredAction::new(&action, action.digest()).unwrap()
+                producers.store_action(&action, action.digest()).unwrap()
             },
             setup: None,
             inputs: BTreeMap::from([(input.0.to_string(), input.1)]),

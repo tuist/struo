@@ -93,11 +93,19 @@ impl TryFrom<String> for WorkspacePath {
         if path.is_absolute() {
             return Err(WorkspacePathError::Absolute(raw));
         }
-        let mut parts: Vec<&str> = Vec::new();
+        let mut offset = 0;
+        let mut normalized = true;
         for comp in path.components() {
             match comp {
                 Component::Normal(s) => match s.to_str() {
-                    Some(s) => parts.push(s),
+                    Some(s) => {
+                        if offset > 0 {
+                            normalized &= raw.as_bytes().get(offset) == Some(&b'/');
+                            offset += 1;
+                        }
+                        normalized &= raw.get(offset..offset + s.len()) == Some(s);
+                        offset += s.len();
+                    }
                     None => return Err(WorkspacePathError::NonUtf8(raw)),
                 },
                 Component::CurDir => {}
@@ -106,7 +114,19 @@ impl TryFrom<String> for WorkspacePath {
                 }
             }
         }
-        Ok(Self(parts.join("/")))
+        if normalized && offset == raw.len() {
+            return Ok(Self(raw));
+        }
+        let mut normalized = String::with_capacity(raw.len());
+        for component in path.components() {
+            if let Component::Normal(component) = component {
+                if !normalized.is_empty() {
+                    normalized.push('/');
+                }
+                normalized.push_str(component.to_str().expect("validated component"));
+            }
+        }
+        Ok(Self(normalized))
     }
 }
 
@@ -161,8 +181,19 @@ mod tests {
 
     #[test]
     fn normalizes_dot_components() {
-        let p = WorkspacePath::try_from("./crates/./struo-cli").unwrap();
-        assert_eq!(p.as_str(), "crates/struo-cli");
+        for (raw, expected) in [
+            ("./crates/./struo-cli", "crates/struo-cli"),
+            ("crates//struo-cli/", "crates/struo-cli"),
+            ("./é/./文件//", "é/文件"),
+            ("é/文件", "é/文件"),
+            ("././", ""),
+        ] {
+            assert_eq!(WorkspacePath::try_from(raw).unwrap().as_str(), expected);
+            assert_eq!(
+                WorkspacePath::try_from(raw.to_owned()).unwrap().as_str(),
+                expected
+            );
+        }
     }
 
     #[test]

@@ -41,7 +41,7 @@ impl AnalysisEngine {
                     "label": {"id": target.label.id, "package": target.label.package},
                     "execution": self.options.execution,
                 });
-                let context = json_to_value(&eval, &context);
+                let context = json_to_value(eval.heap(), &context);
                 let returned = eval
                     .eval_function(callback, &[context], &[])
                     .map_err(|error| {

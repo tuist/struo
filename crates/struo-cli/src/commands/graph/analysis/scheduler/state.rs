@@ -3,16 +3,16 @@ use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use serde_json::Value as JsonValue;
 use struo_cas::Digest;
+use struo_frontend::analysis::SharedProvider;
 use struo_frontend::GraphTarget;
 
 use super::ranking::critical_depths;
 use super::{AvailableInput, BuildOutcome};
 
 pub(in super::super) struct DependencyInputs {
-    pub providers: Vec<Arc<JsonValue>>,
-    pub providers_by_role: BTreeMap<String, Vec<Arc<JsonValue>>>,
+    pub providers: Vec<SharedProvider>,
+    pub providers_by_role: BTreeMap<String, Vec<SharedProvider>>,
     pub action_digests: Vec<(String, Digest)>,
     pub available_inputs: BTreeMap<String, AvailableInput>,
 }
@@ -157,7 +157,7 @@ impl BuildState {
     fn read_dependency(
         &mut self,
         dep_id: &str,
-    ) -> Result<(Arc<JsonValue>, Digest, BTreeMap<String, AvailableInput>)> {
+    ) -> Result<(SharedProvider, Digest, BTreeMap<String, AvailableInput>)> {
         let remaining = self
             .remaining_readers
             .get_mut(dep_id)
@@ -182,7 +182,7 @@ impl BuildState {
                 .get(dep_id)
                 .with_context(|| format!("missing build outcome for dependency `{dep_id}`"))?;
             Ok((
-                Arc::clone(&outcome.provider),
+                outcome.provider.clone(),
                 outcome.action_digest,
                 outcome.available_inputs.clone(),
             ))

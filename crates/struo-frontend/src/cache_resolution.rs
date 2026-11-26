@@ -53,7 +53,7 @@ pub fn resolve_cache_provider(
     if let Some(config) = cache_provider_config_from_override(provider_override) {
         return resolve_provider_config(user_config_path, &workspace_config.providers, config);
     }
-    if let Some(config) = workspace_config.cache {
+    if let Some(config) = workspace_config.cache.clone() {
         return resolve_provider_config(user_config_path, &workspace_config.providers, config);
     }
 

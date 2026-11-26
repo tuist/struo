@@ -13,6 +13,7 @@
 //! event service keep the default signal behavior.
 
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use struo_cas::{TuistAuth, TuistCacheConfig, TUIST_OAUTH_CLIENT_ID_ENV};
@@ -103,6 +104,7 @@ pub async fn spawn_with_test_context(
     let terminal = crate::terminal::Policy::new(output);
     let workspace = workspace.to_path_buf();
     let bus_rx = bus.subscribe();
+    let config = resolve_config(&workspace, &xdg).ok();
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let (ready_tx, ready_rx) = oneshot::channel();
     let system_sampler = crate::bus_events::spawn_system_sampler(bus);
@@ -124,20 +126,24 @@ pub async fn spawn_with_test_context(
             let account = account.unwrap_or_default();
             let project = project.unwrap_or_default();
 
-            let Some(endpoint_url) = resolve_events(&workspace, &xdg).await else {
+            let Some(ResolvedCacheProviderConfig::Tuist(config)) = config else {
+                tracing::debug!("Struo live reporter: no events provider configured");
+                return Ok(0);
+            };
+            let provider_config = Arc::new(config);
+            let Some(endpoint_url) = resolve_events(&provider_config).await else {
                 tracing::debug!("Struo live reporter: no events endpoint configured");
                 return Ok(0);
             };
 
             // Resolving a token can run a blocking `OpenID Connect` exchange,
             // which must not run on this runtime.
-            let token_workspace = workspace.clone();
+            let token_config = Arc::clone(&provider_config);
             let token_xdg = xdg.clone();
-            let token =
-                tokio::task::spawn_blocking(move || auth_token(&token_workspace, &token_xdg))
-                    .await
-                    .ok()
-                    .flatten();
+            let token = tokio::task::spawn_blocking(move || read_token(&token_config, &token_xdg))
+                .await
+                .ok()
+                .flatten();
             let Some(token) = token else {
                 tracing::debug!("Struo live reporter: no credentials configured");
                 return Ok(0);
@@ -249,17 +255,16 @@ pub async fn spawn_with_test_context(
             let signals = SignalWatcher::install();
             let cancellation = RunCancellation::new();
             let _ = ready_tx.send(());
-            let renewal_workspace = workspace.clone();
             let renewal_xdg = xdg.clone();
             let transport = client
                 .with_metadata(metadata)
                 .with_source_files(source_snapshot)
                 .with_cancellation(cancellation.clone())
                 .with_token_provider(move || {
-                    let workspace = renewal_workspace.clone();
+                    let config = Arc::clone(&provider_config);
                     let xdg = renewal_xdg.clone();
                     async move {
-                        tokio::task::spawn_blocking(move || auth_token(&workspace, &xdg))
+                        tokio::task::spawn_blocking(move || read_token(&config, &xdg))
                             .await
                             .ok()
                             .flatten()
@@ -337,11 +342,7 @@ fn tuist_project_id(account: &str, project: &str) -> Option<String> {
     Some(format!("{account}/{project}"))
 }
 
-async fn resolve_events(workspace: &Path, xdg: &Xdg) -> Option<String> {
-    let ResolvedCacheProviderConfig::Tuist(config) = resolve_config(workspace, xdg).ok()? else {
-        return None;
-    };
-
+async fn resolve_events(config: &TuistCacheConfig) -> Option<String> {
     let base = config.url.trim_end_matches('/').to_string();
     match discovery::fetch(&base).await {
         Ok(Some(doc)) => {
@@ -387,13 +388,6 @@ fn normalize_grpc_url(url: &str) -> String {
     } else {
         url.to_string()
     }
-}
-
-fn auth_token(workspace: &Path, xdg: &Xdg) -> Option<String> {
-    let ResolvedCacheProviderConfig::Tuist(config) = resolve_config(workspace, xdg).ok()? else {
-        return None;
-    };
-    read_token(&config, xdg)
 }
 
 fn read_token(config: &TuistCacheConfig, xdg: &Xdg) -> Option<String> {

@@ -19,6 +19,8 @@ use super::{
     TargetKindExampleSource, TargetKindSchema, ToolRequirement,
 };
 
+mod cache;
+
 #[derive(Debug, Clone)]
 pub(super) struct TargetKindSchemaSource {
     example_root: TargetKindExampleRoot,
@@ -90,6 +92,7 @@ pub(super) fn parse_target_kind_schemas(path: &str, source: &str) -> Result<Vec<
 /// whose native project declarations are malformed still answers questions
 /// about target kinds, exactly as it did when the two were read separately.
 pub(crate) struct PreludeExports {
+    pub(crate) built_in_target_kinds: Option<std::result::Result<Vec<TargetKindSchema>, String>>,
     pub(crate) target_kinds: std::result::Result<Vec<TargetKindSchema>, String>,
     pub(crate) native_projects:
         std::result::Result<Vec<crate::native_project::NativeProjectSchema>, String>,
@@ -103,8 +106,9 @@ pub(crate) struct PreludeExports {
 /// answers are read out of the same module.
 ///
 /// Keyed by the source rather than by the path it was given, because the same
-/// text reaches this under two names. A failure is not remembered, so the
-/// caller that hit it reports it under its own path.
+/// text reaches this under two names. Successful evaluations are also cached
+/// on disk against the source and linked build identity, with a content-hash
+/// fallback when the binary has no usable linker identity.
 pub(crate) fn prelude_exports(source: &str) -> std::sync::Arc<PreludeExports> {
     use std::sync::{Arc, Mutex, OnceLock};
 
@@ -118,7 +122,7 @@ pub(crate) fn prelude_exports(source: &str) -> std::sync::Arc<PreludeExports> {
     {
         return Arc::clone(exports);
     }
-    let exports = Arc::new(evaluate_prelude_exports(source));
+    let exports = Arc::new(cache::load(source));
     evaluated
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -131,6 +135,7 @@ pub(super) fn evaluate_prelude_exports(source: &str) -> PreludeExports {
         let globals = crate::analysis::globals_for_prelude();
         let mut eval = Evaluator::new(&module);
         let chunks = crate::modules::prelude_source_chunks(source);
+        let mut built_in_target_kinds = None;
         // Built-in functions may reference helpers in a later source file.
         // Register their slots without keeping every file's AST live at once.
         if chunks.len() > 1 {
@@ -143,6 +148,7 @@ pub(super) fn evaluate_prelude_exports(source: &str) -> PreludeExports {
                     Err(error) => {
                         let message = format!("{error:?}");
                         return PreludeExports {
+                            built_in_target_kinds,
                             target_kinds: Err(message.clone()),
                             native_projects: Err(message),
                         };
@@ -152,11 +158,18 @@ pub(super) fn evaluate_prelude_exports(source: &str) -> PreludeExports {
             }
         }
         for (path, source) in chunks {
+            if path == crate::modules::COMBINED_MODULE_PATH {
+                built_in_target_kinds = Some(target_kind_schemas_from_exports(
+                    &crate::modules::exported_target_kind_values(&module),
+                    &TargetKindSchemaSource::built_in_prelude(),
+                ));
+            }
             let result = AstModule::parse(path, source.to_string(), &Dialect::Standard)
                 .and_then(|ast| eval.eval_module(ast, &globals));
             if let Err(error) = result {
                 let message = format!("{error:?}");
                 return PreludeExports {
+                    built_in_target_kinds,
                     target_kinds: Err(message.clone()),
                     native_projects: Err(message),
                 };
@@ -170,6 +183,7 @@ pub(super) fn evaluate_prelude_exports(source: &str) -> PreludeExports {
         };
         let native_projects = crate::native_project::native_project_schemas_from_module(&module);
         PreludeExports {
+            built_in_target_kinds,
             target_kinds,
             native_projects,
         }

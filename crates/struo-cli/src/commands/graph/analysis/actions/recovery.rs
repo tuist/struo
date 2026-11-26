@@ -34,11 +34,14 @@ use futures::future::{BoxFuture, FutureExt as _, Shared};
 use struo_cas::{ActionResult, CacheProvider, Digest};
 #[cfg(test)]
 use struo_core::ResourceRequest;
-use struo_core::{Action, ResourcePool, RunEvent, RunEventBus, TargetResult};
+use struo_core::{ResourcePool, RunEvent, RunEventBus, TargetResult};
 
 use super::legacy_outputs::{self, FingerprintKind};
-use super::output_locks::OutputLock;
+use super::output_locks::{LockPlanCache, OutputLock};
 use super::{restore_outputs, SourceDigestCache};
+
+mod snapshot;
+pub(super) use snapshot::StoredAction;
 
 /// The attempt a repair reports: the producer's first attempt was the run or
 /// cache hit that recorded it.
@@ -115,54 +118,6 @@ pub(in crate::commands::graph::analysis) struct Producer {
     pub(super) outputs: BTreeMap<String, Digest>,
 }
 
-/// A producer's action kept as compressed JSON. Lowered actions carry their
-/// whole flattened input closure, the registry keeps one per action for the
-/// rest of the build, and a re-run needs one only rarely.
-pub(in crate::commands::graph::analysis) struct StoredAction {
-    digest: Digest,
-    log_paths: Vec<String>,
-    json: Box<[u8]>,
-}
-
-impl StoredAction {
-    pub(in crate::commands::graph::analysis) fn new(
-        action: &Action,
-        digest: Digest,
-    ) -> Result<Self> {
-        let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), 1)?;
-        serde_json::to_writer(&mut encoder, action)?;
-        let log_paths = match action {
-            Action::RunCommand {
-                stdout_path,
-                stderr_path,
-                ..
-            } => stdout_path
-                .iter()
-                .chain(stderr_path)
-                .map(|path| path.as_str().to_string())
-                .collect(),
-            _ => Vec::new(),
-        };
-        Ok(Self {
-            digest,
-            log_paths,
-            json: encoder.finish()?.into_boxed_slice(),
-        })
-    }
-
-    fn load(&self) -> Result<Action> {
-        let action: Action =
-            serde_json::from_reader(zstd::stream::read::Decoder::new(&*self.json)?)
-                .with_context(|| format!("reading back action {}", self.digest))?;
-        anyhow::ensure!(
-            action.digest() == self.digest,
-            "action {} read back with a different digest",
-            self.digest
-        );
-        Ok(action)
-    }
-}
-
 /// What the producer's own events carried, so its repair reports the same
 /// action rather than unattributed work.
 #[derive(Default)]
@@ -202,6 +157,8 @@ pub(in crate::commands::graph::analysis) struct Producers {
 }
 
 struct ProducersInner {
+    snapshot_compressor: Mutex<Option<zstd::zstd_safe::CCtx<'static>>>,
+    lock_plans: OnceLock<Arc<LockPlanCache>>,
     by_output: Mutex<HashMap<(String, Digest), Arc<Producer>>>,
     fingerprints: Mutex<HashMap<(String, Digest), FingerprintEvidence>>,
     /// One repair per producer action, kept after it finishes so its answer
@@ -227,6 +184,8 @@ impl Producers {
     pub(in crate::commands::graph::analysis) fn with_limits(limits: RepairLimits) -> Self {
         Self {
             inner: Arc::new(ProducersInner {
+                snapshot_compressor: Mutex::new(None),
+                lock_plans: OnceLock::new(),
                 by_output: Mutex::new(HashMap::new()),
                 fingerprints: Mutex::new(HashMap::new()),
                 repairs: Mutex::new(HashMap::new()),
@@ -366,7 +325,8 @@ impl Producers {
         path: &str,
         digest: Digest,
     ) -> bool {
-        lock(&self.inner.fingerprints).contains_key(&(path.to_string(), digest))
+        let fingerprints = lock(&self.inner.fingerprints);
+        !fingerprints.is_empty() && fingerprints.contains_key(&(path.to_string(), digest))
     }
 
     pub(in crate::commands::graph) fn executors(
@@ -516,6 +476,30 @@ impl Repair<'_> {
 
     async fn restore_attempt(&self, result: &ActionResult) -> Result<()> {
         let resources = self.producers.executors(self.resources)?;
+        if let Some(cache) = self.source_digest_cache {
+            let plans = self
+                .producers
+                .inner
+                .lock_plans
+                .get_or_init(|| LockPlanCache::new(Arc::clone(resources.host())));
+            let locks = plans.open_shared(self.workspace, &result.outputs)?;
+            let matches = with_output_locks_and_permit(
+                locks,
+                Digest::of_bytes(b"output-validation"),
+                || resources.acquire_materialization(),
+                |lease| async move {
+                    let _lease = lease;
+                    Ok(result.outputs.iter().all(|(path, digest)| {
+                        !self.producers.has_fingerprint(path, *digest)
+                            && cache.output_matches(self.workspace, path, *digest)
+                    }))
+                },
+            )
+            .await?;
+            if matches {
+                return Ok(());
+            }
+        }
         with_action_lock_and_permit(
             self.workspace,
             Digest::of_bytes(b"output-restoration"),
@@ -889,7 +873,23 @@ where
     F: FnOnce(struo_core::ExecutionPermit) -> Fut,
     Fut: Future<Output = Result<T>>,
 {
-    let locks = Arc::new(OutputLock::open_all(workspace, digest, outputs)?);
+    let locks = OutputLock::open_all(workspace, digest, outputs)?;
+    with_output_locks_and_permit(locks, digest, acquire, work).await
+}
+
+async fn with_output_locks_and_permit<T, A, Admit, F, Fut>(
+    locks: Vec<OutputLock>,
+    digest: Digest,
+    acquire: A,
+    work: F,
+) -> Result<T>
+where
+    A: Fn() -> Admit,
+    Admit: Future<Output = struo_core::ExecutionPermit>,
+    F: FnOnce(struo_core::ExecutionPermit) -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    let locks = Arc::new(locks);
     let mut work = Some(work);
     loop {
         let permit = acquire().await;

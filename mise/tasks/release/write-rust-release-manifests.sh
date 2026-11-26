@@ -113,6 +113,7 @@ srcs = [
   "Cargo.toml",
   "Cargo.lock",
   "crates/*/Cargo.toml",
+  "third_party/libsqlite3-sys/Cargo.toml",
   "third_party/rust/src/formulas/**",
 ]
 

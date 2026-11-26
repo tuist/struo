@@ -10,16 +10,18 @@ use starlark::environment::{FrozenModule, Module};
 use starlark::eval::Evaluator;
 use starlark::syntax::{AstModule, Dialect};
 use starlark::values::dict::{AllocDict, DictRef};
+use starlark::values::list::AllocList;
 use starlark::values::Value;
 
 use sha2::Digest as _;
 
 use super::globals::{globals_for_prelude, UnchangedWorkspace};
+use super::provider::{ProviderValue, SharedProvider};
 use super::store::{
     with_active_store, with_store, AnalysisObservations, AnalysisStore, CachedToolCommand,
     CommandPolicy, DeclaredAction, HostCache, HostToolFailure,
 };
-use super::values::{attr_value_to_starlark, json_to_value, provider_json_to_value, value_to_json};
+use super::values::{attr_value_to_starlark, json_to_value, value_to_json};
 use crate::graph::{Diagnostic, GraphTarget, TargetKindSchema};
 use crate::Target;
 
@@ -27,7 +29,7 @@ mod expansion;
 
 /// Bump when the meaning of an analysis key or a stored analysis changes in a
 /// way an older record would not notice.
-const ANALYSIS_KEY_SCHEMA: &str = "struo.analysis.v1";
+const ANALYSIS_KEY_SCHEMA: &str = "struo.analysis.v2";
 
 /// Resolve a workspace root to one spelling, so two paths naming the same tree
 /// through a symlink or a relative prefix do not get separate records.
@@ -413,16 +415,11 @@ impl AnalysisEngine {
         dependency_providers: &BTreeMap<String, Vec<JsonValue>>,
         capability: &str,
     ) -> Result<AnalysisResult> {
-        let dep_providers = dep_providers.iter().collect::<Vec<_>>();
-        let dependency_providers = dependency_providers
-            .iter()
-            .map(|(role, providers)| (role.clone(), providers.iter().collect::<Vec<_>>()))
-            .collect::<BTreeMap<_, _>>();
-        self.analyze_target_capability_with_provider_refs(
+        self.analyze_target_capability_with_providers(
             target,
             workspace_root,
-            &dep_providers,
-            &dependency_providers,
+            dep_providers,
+            dependency_providers,
             capability,
         )
     }
@@ -431,25 +428,15 @@ impl AnalysisEngine {
         &self,
         target: &GraphTarget,
         workspace_root: &Path,
-        dep_providers: &[Arc<JsonValue>],
-        dependency_providers: &BTreeMap<String, Vec<Arc<JsonValue>>>,
+        dep_providers: &[SharedProvider],
+        dependency_providers: &BTreeMap<String, Vec<SharedProvider>>,
         capability: &str,
     ) -> Result<AnalysisResult> {
-        let dep_providers = dep_providers.iter().map(Arc::as_ref).collect::<Vec<_>>();
-        let dependency_providers = dependency_providers
-            .iter()
-            .map(|(role, providers)| {
-                (
-                    role.clone(),
-                    providers.iter().map(Arc::as_ref).collect::<Vec<_>>(),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
-        self.analyze_target_capability_with_provider_refs(
+        self.analyze_target_capability_with_providers(
             target,
             workspace_root,
-            &dep_providers,
-            &dependency_providers,
+            dep_providers,
+            dependency_providers,
             capability,
         )
     }
@@ -472,8 +459,8 @@ impl AnalysisEngine {
         &self,
         target: &GraphTarget,
         workspace_root: &Path,
-        dep_providers: &[Arc<JsonValue>],
-        dependency_providers: &BTreeMap<String, Vec<Arc<JsonValue>>>,
+        dep_providers: &[SharedProvider],
+        dependency_providers: &BTreeMap<String, Vec<SharedProvider>>,
         capability: &str,
         executable_identity: &str,
     ) -> Option<String> {
@@ -488,19 +475,21 @@ impl AnalysisEngine {
         part(self.source.as_bytes());
         part(canonical_root(workspace_root).to_string_lossy().as_bytes());
         part(capability.as_bytes());
-        part(&serde_json::to_vec(target).ok()?);
-        part(&serde_json::to_vec(&self.options).ok()?);
-        part(&serde_json::to_vec(&self.configuration).ok()?);
+        let mut buffer = serde_json::to_vec(target).ok()?;
+        part(&buffer);
+        part(json_bytes(&self.options, &mut buffer)?);
+        part(json_bytes(&self.configuration, &mut buffer)?);
         part(self.configuration_path_suffix.as_bytes());
         part(&(dep_providers.len() as u64).to_le_bytes());
         for provider in dep_providers {
-            part(&serde_json::to_vec(provider.as_ref()).ok()?);
+            part(provider.fingerprint()?);
         }
+        part(&(dependency_providers.len() as u64).to_le_bytes());
         for (role, providers) in dependency_providers {
             part(role.as_bytes());
             part(&(providers.len() as u64).to_le_bytes());
             for provider in providers {
-                part(&serde_json::to_vec(provider.as_ref()).ok()?);
+                part(provider.fingerprint()?);
             }
         }
         Some(hex::encode(hasher.finalize()))
@@ -554,12 +543,12 @@ impl AnalysisEngine {
             .map(|stale| stale.to_string())
     }
 
-    fn analyze_target_capability_with_provider_refs(
+    fn analyze_target_capability_with_providers<P: ProviderValue>(
         &self,
         target: &GraphTarget,
         workspace_root: &Path,
-        dep_providers: &[&JsonValue],
-        dependency_providers: &BTreeMap<String, Vec<&JsonValue>>,
+        dep_providers: &[P],
+        dependency_providers: &BTreeMap<String, Vec<P>>,
         capability: &str,
     ) -> Result<AnalysisResult> {
         let analysis = TargetAnalysis {
@@ -568,7 +557,7 @@ impl AnalysisEngine {
             dep_providers,
             dependency_providers,
             capability,
-            options: self.options.clone(),
+            options: &self.options,
             configuration: &self.configuration,
             configuration_path_suffix: &self.configuration_path_suffix,
         };
@@ -579,6 +568,12 @@ impl AnalysisEngine {
             &analysis,
         )
     }
+}
+
+fn json_bytes<'a>(value: &impl Serialize, buffer: &'a mut Vec<u8>) -> Option<&'a [u8]> {
+    buffer.clear();
+    serde_json::to_writer(&mut *buffer, value).ok()?;
+    Some(buffer)
 }
 
 /// Cached view of which target kinds declare executable impls.
@@ -621,22 +616,22 @@ pub fn analyze_target(
     AnalysisEngine::new()?.analyze_target(target, workspace_root, dep_providers)
 }
 
-struct TargetAnalysis<'a> {
+struct TargetAnalysis<'a, P> {
     target: &'a GraphTarget,
     workspace_root: &'a Path,
-    dep_providers: &'a [&'a JsonValue],
-    dependency_providers: &'a BTreeMap<String, Vec<&'a JsonValue>>,
+    dep_providers: &'a [P],
+    dependency_providers: &'a BTreeMap<String, Vec<P>>,
     capability: &'a str,
-    options: AnalysisOptions,
+    options: &'a AnalysisOptions,
     configuration: &'a crate::manifest::BuildConfiguration,
     configuration_path_suffix: &'a str,
 }
 
-fn analyze_target_with_host_cache(
+fn analyze_target_with_host_cache<P: ProviderValue>(
     module: &FrozenModule,
     target_kind_callbacks: &TargetKindCallbacks,
     host_cache: HostCache,
-    analysis: &TargetAnalysis<'_>,
+    analysis: &TargetAnalysis<'_, P>,
 ) -> Result<AnalysisResult> {
     let build_dir = format!(
         ".struo/out/{}{}",
@@ -728,10 +723,10 @@ fn compile_target_kind_callbacks(
     })
 }
 
-fn analyze_in_starlark(
+fn analyze_in_starlark<P: ProviderValue>(
     compiled_module: &FrozenModule,
     target_kind_callbacks: &TargetKindCallbacks,
-    analysis: &TargetAnalysis<'_>,
+    analysis: &TargetAnalysis<'_, P>,
     build_dir: &str,
     scratch_dir: &str,
 ) -> Result<JsonValue> {
@@ -984,27 +979,25 @@ fn build_resolver_ctx<'v>(
 ) -> Value<'v> {
     let heap = eval.heap();
     let label = heap.alloc(AllocDict([
-        ("package", heap.alloc(target.label.package.clone())),
-        ("name", heap.alloc(target.label.name.clone())),
-        ("id", heap.alloc(target.label.id.clone())),
+        ("package", heap.alloc(&target.label.package)),
+        ("name", heap.alloc(&target.label.name)),
+        ("id", heap.alloc(&target.label.id)),
     ]));
     let attr_pairs = target
         .attrs
         .iter()
-        .map(|(key, value)| (key.clone(), attr_value_to_starlark(eval, value)))
-        .collect::<Vec<_>>();
+        .map(|(key, value)| (key, attr_value_to_starlark(eval, value)));
     let attr = heap.alloc(AllocDict(attr_pairs));
     let file_pairs = files
         .iter()
-        .map(|(path, contents)| (path.clone(), heap.alloc(contents.clone())))
-        .collect::<Vec<_>>();
+        .map(|(path, contents)| (path, heap.alloc(contents)));
     let file_values = heap.alloc(AllocDict(file_pairs));
     let configuration = configuration_value(eval, configuration);
     heap.alloc(AllocDict([
         ("label", label),
         ("attr", attr),
         ("attrs", attr),
-        ("srcs", heap.alloc(target.srcs.clone())),
+        ("srcs", heap.alloc(AllocList(&target.srcs))),
         ("files", file_values),
         ("configuration", configuration),
         (
@@ -1014,40 +1007,39 @@ fn build_resolver_ctx<'v>(
     ]))
 }
 
-fn build_ctx<'v>(
+fn build_ctx<'v, P: ProviderValue>(
     eval: &Evaluator<'v, '_, '_>,
-    analysis: &TargetAnalysis<'_>,
+    analysis: &TargetAnalysis<'_, P>,
     build_dir: &str,
     scratch_dir: &str,
 ) -> Result<Value<'v>> {
     let heap = eval.heap();
     let label = heap.alloc(AllocDict([
-        ("package", heap.alloc(analysis.target.label.package.clone())),
-        ("name", heap.alloc(analysis.target.label.name.clone())),
-        ("id", heap.alloc(analysis.target.label.id.clone())),
+        ("package", heap.alloc(&analysis.target.label.package)),
+        ("name", heap.alloc(&analysis.target.label.name)),
+        ("id", heap.alloc(&analysis.target.label.id)),
     ]));
-    let attr_pairs: Vec<(String, Value<'v>)> = analysis
+    let attr_pairs = analysis
         .target
         .attrs
         .iter()
-        .map(|(key, value)| (key.clone(), attr_value_to_starlark(eval, value)))
-        .collect();
+        .map(|(key, value)| (key, attr_value_to_starlark(eval, value)));
     let attr = heap.alloc(AllocDict(attr_pairs));
-    let srcs_value = heap.alloc(analysis.target.srcs.clone());
+    let srcs_value = heap.alloc(AllocList(&analysis.target.srcs));
     let dep_values = analysis
         .dep_providers
         .iter()
-        .map(|provider| provider_json_to_value(eval, provider))
+        .map(|provider| provider.materialize(eval))
         .collect::<Result<Vec<Value<'v>>>>()?;
     let deps = heap.alloc(dep_values);
     let mut providers_by_role = Vec::with_capacity(analysis.dependency_providers.len() + 1);
-    providers_by_role.push(("deps".to_string(), deps));
+    providers_by_role.push(("deps", deps));
     for (role, providers) in analysis.dependency_providers {
         let values = providers
             .iter()
-            .map(|provider| provider_json_to_value(eval, provider))
+            .map(|provider| provider.materialize(eval))
             .collect::<Result<Vec<_>>>()?;
-        providers_by_role.push((role.clone(), heap.alloc(values)));
+        providers_by_role.push((role.as_str(), heap.alloc(values)));
     }
     let deps_by_role = heap.alloc(AllocDict(providers_by_role));
     let is_run = analysis.capability == "run";
@@ -1058,22 +1050,25 @@ fn build_ctx<'v>(
         ),
         (
             "args",
-            heap.alloc(if is_run {
-                analysis.options.run_arguments.clone()
+            heap.alloc(AllocList(if is_run {
+                analysis.options.run_arguments.as_slice()
             } else {
-                Vec::new()
-            }),
+                &[]
+            })),
         ),
     ]));
     let test = heap.alloc(AllocDict([
-        ("filters", heap.alloc(analysis.options.test_filters.clone())),
+        (
+            "filters",
+            heap.alloc(AllocList(&analysis.options.test_filters)),
+        ),
         (
             "batch_id",
             analysis
                 .options
                 .test_batch_id
                 .as_ref()
-                .map_or(Value::new_none(), |id| heap.alloc(id.clone())),
+                .map_or(Value::new_none(), |id| heap.alloc(id)),
         ),
     ]));
     let configuration = configuration_value(eval, analysis.configuration);
@@ -1083,9 +1078,9 @@ fn build_ctx<'v>(
         ("srcs", srcs_value),
         ("deps", deps),
         ("deps_by_role", deps_by_role),
-        ("build_dir", heap.alloc(build_dir.to_string())),
-        ("scratch_dir", heap.alloc(scratch_dir.to_string())),
-        ("capability", heap.alloc(analysis.capability.to_string())),
+        ("build_dir", heap.alloc(build_dir)),
+        ("scratch_dir", heap.alloc(scratch_dir)),
+        ("capability", heap.alloc(analysis.capability)),
         ("run", run),
         ("test", test),
         ("configuration", configuration),
@@ -1102,8 +1097,8 @@ fn configuration_value<'v>(
 ) -> Value<'v> {
     let heap = eval.heap();
     heap.alloc(AllocDict([
-        ("os", heap.alloc(configuration.os.clone())),
-        ("arch", heap.alloc(configuration.arch.clone())),
-        ("tokens", heap.alloc(configuration.tokens.clone())),
+        ("os", heap.alloc(&configuration.os)),
+        ("arch", heap.alloc(&configuration.arch)),
+        ("tokens", heap.alloc(AllocList(&configuration.tokens))),
     ]))
 }

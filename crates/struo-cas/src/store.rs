@@ -140,9 +140,37 @@ impl Cas {
     /// returned error or cancellation, temporary files are cleaned up.
     /// A process crash can leave scratch files that future cache invocations ignore.
     pub async fn put_stream<R: AsyncRead + Unpin>(&self, reader: R) -> Result<Digest> {
+        self.put_stream_sized(reader, None).await
+    }
+
+    /// Like [`put_stream`](Self::put_stream), validating a known byte length
+    /// before publication and using it to size the compression workspace.
+    pub async fn put_stream_sized<R: AsyncRead + Unpin>(
+        &self,
+        mut reader: R,
+        expected: Option<u64>,
+    ) -> Result<Digest> {
         let scratch = self.scratch_dir();
+        let mut first = [0_u8; 1];
+        if reader.read(&mut first).await.map_err(|source| Error::Io {
+            path: scratch.clone(),
+            source,
+        })? == 0
+        {
+            if expected.is_some_and(|size| size != 0) {
+                return Err(Error::Io {
+                    path: scratch,
+                    source: io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "blob does not match declared size",
+                    ),
+                });
+            }
+            return self.put_blob(&[]).await;
+        }
+        let reader = first.as_slice().chain(reader);
         ensure_dir(&scratch).await?;
-        let (stored, digest, file) = stream::prepare(&scratch, reader).await?;
+        let (stored, digest, file) = stream::prepare(&scratch, reader, expected).await?;
         let final_path = self.blob_path(&digest);
         if fs::try_exists(&final_path).await.unwrap_or(false) {
             mark_used(vec![final_path]).await;

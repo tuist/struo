@@ -11,9 +11,11 @@ use crate::target::{AttrValue, Target};
 use crate::target_ref::{normalize_manifest_target, validate_target_name};
 use crate::TOML_BUILD_FILE_NAME;
 
+type Manifest = ManifestData<Vec<TargetToml>>;
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-struct Manifest {
+struct ManifestData<Targets> {
     workspace: WorkspaceToml,
     infrastructure: InfrastructureToml,
     infrastructures: BTreeMap<String, InfrastructureProviderToml>,
@@ -23,10 +25,10 @@ struct Manifest {
     modules: Option<ModulesToml>,
     rules: Option<ModulesToml>,
     trigger: Option<toml::Value>,
-    target: Vec<TargetToml>,
+    target: Targets,
 }
 
-impl Manifest {
+impl<Targets: Default + serde::de::DeserializeOwned> ManifestData<Targets> {
     fn parse(path: &str, src: &str, package: &str) -> Result<Self> {
         let manifest: Self = toml::from_str(src).map_err(|source| Error::Parse {
             path: path.to_string(),
@@ -367,7 +369,7 @@ pub fn load_infrastructure_toml_str(
     path: &str,
     src: &str,
 ) -> Result<crate::cache_provider::InfrastructureConfig> {
-    let manifest = Manifest::parse(path, src, "")?;
+    let manifest = ManifestData::<serde::de::IgnoredAny>::parse(path, src, "")?;
     let cache = if let Some(raw) = manifest.infrastructure.cache {
         Some(raw.into_config(path)?)
     } else {
@@ -417,7 +419,7 @@ pub(crate) fn load_module_paths_toml_str(path: &str, src: &str) -> Result<Vec<St
 }
 
 pub(crate) fn load_workspace_toml_str(path: &str, src: &str) -> Result<WorkspaceToml> {
-    let manifest = Manifest::parse(path, src, "")?;
+    let manifest = ManifestData::<serde::de::IgnoredAny>::parse(path, src, "")?;
     Ok(manifest.workspace)
 }
 
@@ -674,6 +676,34 @@ fn toml_value_to_attr_value(value: toml::Value) -> AttrValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn infrastructure_lookup_leaves_target_schema_validation_to_graph_loading() {
+        let source = r#"
+[infrastructure.execution]
+provider = "workers"
+properties = { capabilities = ["compile", "link"] }
+[[target]]
+name = "example"
+kind = "fixture"
+unknown_target_field = { nested = [1, 2, 3] }
+"#;
+        let config = load_infrastructure_toml_str("struo.toml", source).unwrap();
+        assert_eq!(config.execution.unwrap().name, "workers");
+        assert!(load_toml_str("struo.toml", source)
+            .unwrap_err()
+            .to_string()
+            .contains("unknown_target_field"));
+        for source in [
+            "unknown_root_field = true",
+            "[infrastructure]\nunknown_field = true",
+            "[infrastructure.execution]\nprovider = 42",
+            "[[target]]\nname = [",
+            "[[target]]\nname = 'first'\nname = 'duplicate'",
+        ] {
+            assert!(load_infrastructure_toml_str("struo.toml", source).is_err());
+        }
+    }
 
     #[test]
     fn execution_properties_are_generic_and_not_cache_configuration() {
@@ -1059,6 +1089,48 @@ exclude = ["fixtures/**"]
         let workspace = load_workspace_toml_str("struo.toml", src).unwrap();
         assert_eq!(workspace.include, vec!["crates/*/struo.toml"]);
         assert_eq!(workspace.exclude, vec!["fixtures/**"]);
+    }
+
+    #[test]
+    fn workspace_configuration_leaves_target_schema_validation_to_graph_loading() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("struo.toml");
+        let source = r#"
+[workspace.configuration]
+os = "linux"
+arch = "aarch64"
+tokens = ["optimized"]
+[[target]]
+name = "example"
+kind = "fixture"
+unknown_target_field = { nested = [1, 2, 3] }
+"#;
+        std::fs::write(&path, source).unwrap();
+        let configuration = load_workspace_configuration(root.path()).unwrap();
+        assert_eq!(configuration.os, "linux");
+        assert_eq!(configuration.arch, "aarch64");
+        assert!(configuration
+            .tokens
+            .iter()
+            .any(|token| token == "optimized"));
+        assert!(load_toml_str("struo.toml", source)
+            .unwrap_err()
+            .to_string()
+            .contains("unknown_target_field"));
+        for source in [
+            "unknown_root_field = true",
+            "[workspace]\nunknown_field = true",
+            "[workspace.configuration]\nos = 42",
+            "[workspace.configuration]\ntokens = ['']",
+            "[[target]]\nname = [",
+            "[[target]]\nname = 'first'\nname = 'duplicate'",
+        ] {
+            std::fs::write(&path, source).unwrap();
+            assert!(
+                load_workspace_configuration(root.path()).is_err(),
+                "{source}"
+            );
+        }
     }
 
     #[test]

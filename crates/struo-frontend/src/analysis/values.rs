@@ -4,8 +4,8 @@ use anyhow::anyhow;
 use serde_json::Value as JsonValue;
 use starlark::eval::Evaluator;
 use starlark::values::dict::{AllocDict, DictRef};
-use starlark::values::list::ListRef;
-use starlark::values::{Value, ValueLike};
+use starlark::values::list::{AllocList, ListRef};
+use starlark::values::{Heap, Value, ValueLike};
 
 use super::store::with_store;
 use super::transitive_set::{self, TransitiveSet};
@@ -17,29 +17,23 @@ pub(super) fn attr_value_to_starlark<'v>(
 ) -> Value<'v> {
     let heap = eval.heap();
     match value {
-        AttrValue::String(string) => heap.alloc(string.clone()),
+        AttrValue::String(string) => heap.alloc(string),
         AttrValue::Integer(integer) => heap.alloc(*integer),
         AttrValue::Float(float) => heap.alloc(*float),
         AttrValue::Bool(boolean) => Value::new_bool(*boolean),
-        AttrValue::List(items) => {
-            let values: Vec<Value<'v>> = items
+        AttrValue::List(items) => heap.alloc(AllocList(
+            items.iter().map(|item| attr_value_to_starlark(eval, item)),
+        )),
+        AttrValue::Map(entries) => heap.alloc(AllocDict(
+            entries
                 .iter()
-                .map(|item| attr_value_to_starlark(eval, item))
-                .collect();
-            heap.alloc(values)
-        }
-        AttrValue::Map(entries) => {
-            let pairs: Vec<(String, Value<'v>)> = entries
-                .iter()
-                .map(|(key, value)| (key.clone(), attr_value_to_starlark(eval, value)))
-                .collect();
-            heap.alloc(AllocDict(pairs))
-        }
+                .map(|(key, value)| (key, attr_value_to_starlark(eval, value))),
+        )),
     }
 }
 
-pub(super) fn json_to_value<'v>(eval: &Evaluator<'v, '_, '_>, json: &JsonValue) -> Value<'v> {
-    match convert_json(eval, json, &mut |_| {
+pub(super) fn json_to_value<'v>(heap: Heap<'v>, json: &JsonValue) -> Value<'v> {
+    match convert_json(heap, json, &mut |_| {
         None::<Result<_, std::convert::Infallible>>
     }) {
         Ok(value) => value,
@@ -53,29 +47,31 @@ pub(super) fn provider_json_to_value<'v>(
     eval: &Evaluator<'v, '_, '_>,
     json: &JsonValue,
 ) -> anyhow::Result<Value<'v>> {
-    let heap = eval.heap();
-    convert_json(eval, json, &mut |entries| {
+    convert_json(eval.heap(), json, &mut |entries| {
         let hex = transitive_set::reference(entries)?;
-        Some(
-            with_store(|store| {
-                let store =
-                    store.ok_or_else(|| anyhow!("transitive sets resolve only during analysis"))?;
-                store
-                    .host_cache
-                    .transitive_sets
-                    .resolve(&store.workspace_root, hex)
-            })
-            .map(|node| heap.alloc(TransitiveSet(node))),
-        )
+        Some(resolve_provider_reference(eval, hex))
     })
 }
 
-fn convert_json<'v, E>(
+pub(super) fn resolve_provider_reference<'v>(
     eval: &Evaluator<'v, '_, '_>,
+    hex: &str,
+) -> anyhow::Result<Value<'v>> {
+    with_store(|store| {
+        let store = store.ok_or_else(|| anyhow!("transitive sets resolve only during analysis"))?;
+        store
+            .host_cache
+            .transitive_sets
+            .resolve(&store.workspace_root, hex)
+    })
+    .map(|node| eval.heap().alloc(TransitiveSet(node)))
+}
+
+fn convert_json<'v, E>(
+    heap: Heap<'v>,
     json: &JsonValue,
     object: &mut impl FnMut(&serde_json::Map<String, JsonValue>) -> Option<Result<Value<'v>, E>>,
 ) -> Result<Value<'v>, E> {
-    let heap = eval.heap();
     Ok(match json {
         JsonValue::Null => Value::new_none(),
         JsonValue::Bool(boolean) => Value::new_bool(*boolean),
@@ -88,11 +84,11 @@ fn convert_json<'v, E>(
                 Value::new_none()
             }
         }
-        JsonValue::String(string) => heap.alloc(string.clone()),
+        JsonValue::String(string) => heap.alloc(string),
         JsonValue::Array(items) => {
             let values = items
                 .iter()
-                .map(|item| convert_json(eval, item, object))
+                .map(|item| convert_json(heap, item, object))
                 .collect::<Result<Vec<_>, E>>()?;
             heap.alloc(values)
         }
@@ -102,8 +98,8 @@ fn convert_json<'v, E>(
             }
             let pairs = entries
                 .iter()
-                .map(|(key, value)| Ok((key.clone(), convert_json(eval, value, object)?)))
-                .collect::<Result<Vec<(String, Value<'v>)>, E>>()?;
+                .map(|(key, value)| Ok((key, convert_json(heap, value, object)?)))
+                .collect::<Result<Vec<_>, E>>()?;
             heap.alloc(AllocDict(pairs))
         }
     })

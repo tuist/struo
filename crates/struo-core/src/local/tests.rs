@@ -6,6 +6,9 @@ use tempfile::TempDir;
 use super::{execute_command, Invocation, Redirect};
 use crate::{Error, NetworkPolicy};
 
+#[cfg(unix)]
+mod configuration;
+
 fn setup() -> (TempDir, CacheProvider) {
     let workspace = TempDir::new().unwrap();
     let cache = CacheProvider::Local(Cas::open(workspace.path().join(".struo/cas")));

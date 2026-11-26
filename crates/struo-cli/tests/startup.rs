@@ -105,3 +105,46 @@ fn failed_dispatch_preserves_structured_errors_and_session_log_targets() {
     assert_event_target(&records, "session started");
     assert_event_target(&records, "session failed");
 }
+
+#[test]
+fn schema_queries_survive_restarts_source_edits_and_corrupt_cache_entries() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("struo.toml"),
+        "[modules]\npaths = [\"module.star\"]\n",
+    )
+    .unwrap();
+    let module = root.path().join("module.star");
+    std::fs::write(&module, "fixture = target_kind(docs = \"First\")\n").unwrap();
+    let query = || {
+        let output = invoke(
+            root.path(),
+            &["query", "schema", "fixture", "--format", "json"],
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let first = query();
+    assert_eq!(first["docs"], "First");
+    let cache = root.path().join("cache/struo/schemas");
+    assert!(std::fs::read_dir(&cache).unwrap().next().is_some());
+    assert_eq!(query(), first);
+    for entry in std::fs::read_dir(&cache).unwrap() {
+        std::fs::write(entry.unwrap().path(), "{truncated").unwrap();
+    }
+    assert_eq!(query(), first);
+    std::fs::write(&module, "fixture = target_kind(docs = \"Second\")\n").unwrap();
+    let second = query();
+    assert_eq!(second["docs"], "Second");
+    assert_eq!(query(), second);
+    std::fs::write(&module, "fixture = target_kind(").unwrap();
+    let invalid = invoke(
+        root.path(),
+        &["query", "schema", "fixture", "--format", "json"],
+    );
+    assert!(!invalid.status.success());
+}

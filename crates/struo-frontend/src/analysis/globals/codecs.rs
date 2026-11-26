@@ -22,7 +22,7 @@ pub(super) fn codec_globals(builder: &mut GlobalsBuilder) {
     /// Dates become RFC 3339 strings and data becomes base64 strings.
     fn plist_decode<'v>(src: &str, eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
         let value = crate::analysis::property_list::plist_to_json(src)?;
-        Ok(json_to_value(eval, &value))
+        Ok(json_to_value(eval.heap(), &value))
     }
 
     /// Encode Starlark dictionaries/lists/scalars as an XML property list,
@@ -36,6 +36,6 @@ pub(super) fn codec_globals(builder: &mut GlobalsBuilder) {
     /// resolution commands.
     fn json_decode<'v>(src: &str, eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
         let value: JsonValue = serde_json::from_str(src)?;
-        Ok(json_to_value(eval, &value))
+        Ok(json_to_value(eval.heap(), &value))
     }
 }

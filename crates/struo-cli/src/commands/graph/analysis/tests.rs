@@ -875,7 +875,7 @@ async fn a_reused_outcome_needs_its_absent_intermediate_outputs_in_the_local_cac
     let snapshot = ".struo/out/image/instructions/2/image";
     let digest = Digest::of_bytes(b"snapshot");
     let outcome = BuildOutcome {
-        provider: Arc::new(serde_json::json!({})),
+        provider: serde_json::json!({}).into(),
         action_digest: Digest::of_bytes(b"action"),
         input_digest: None,
         input_fingerprint: None,

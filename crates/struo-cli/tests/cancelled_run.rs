@@ -246,9 +246,18 @@ fn spawn_once(workspace: &Path, home: &Path) -> StruoProcess {
     spawn_once_with(workspace, home, Command::new(env!("CARGO_BIN_EXE_struo")))
 }
 
-fn spawn_once_with(workspace: &Path, home: &Path, mut command: Command) -> StruoProcess {
+fn spawn_once_with(workspace: &Path, home: &Path, command: Command) -> StruoProcess {
+    spawn_with_args(workspace, home, command, &["exec", "--", "sleep", "60"])
+}
+
+fn spawn_with_args(
+    workspace: &Path,
+    home: &Path,
+    mut command: Command,
+    args: &[&str],
+) -> StruoProcess {
     let mut child = command
-        .args(["exec", "--", "sleep", "60"])
+        .args(args)
         .current_dir(workspace)
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
@@ -369,6 +378,66 @@ async fn sigterm_reports_a_cancelled_run_before_exiting() {
     assert_eq!(completions[0].result, RunResult::Cancelled as i32);
     assert_eq!(completions[0].cancellation_reason, "SIGTERM");
     assert!(completions[0].wall_ms > 0);
+}
+
+#[tokio::test]
+async fn cancelling_a_cached_action_stops_its_leader_and_descendant() {
+    for (name, signal) in [("TERM", libc::SIGTERM), ("INT", libc::SIGINT)] {
+        let collector = Collector::default();
+        let url = serve(collector.clone()).await;
+        let workspace = workspace(Some(&url));
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            workspace.path().join("build.sh"),
+            "#!/bin/sh\n# struo output \"pids\"\n/bin/sleep 60 &\nprintf '%s\\n' \"$$\" \"$!\" > pids\nwait\n",
+        )
+        .unwrap();
+        let mut child = spawn_with_args(
+            workspace.path(),
+            home.path(),
+            Command::new(env!("CARGO_BIN_EXE_struo")),
+            &[
+                "exec",
+                "--sandbox",
+                "off",
+                "--script",
+                "--",
+                "/bin/sh",
+                "build.sh",
+            ],
+        );
+        wait_until(Duration::from_secs(30), || {
+            assert!(
+                child.child.try_wait().unwrap().is_none(),
+                "{}",
+                child.stderr()
+            );
+            std::fs::read_to_string(workspace.path().join("pids"))
+                .is_ok_and(|pids| pids.lines().count() == 2)
+        })
+        .await;
+        let pids = std::fs::read_to_string(workspace.path().join("pids")).unwrap();
+        assert_eq!(pids.lines().count(), 2);
+        send(&child, name);
+        let (status, _, stderr) = wait_for_exit(child, Duration::from_secs(10)).await;
+        assert_eq!(status.signal(), Some(signal), "{stderr}");
+        let completions = collector.completions();
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].result, RunResult::Cancelled as i32);
+        assert_eq!(completions[0].cancellation_reason, format!("SIG{name}"));
+        wait_until(Duration::from_secs(3), || {
+            pids.lines().all(|pid| {
+                let output = Command::new("ps")
+                    .args(["-o", "stat=", "-p", pid])
+                    .output()
+                    .unwrap();
+                let state = String::from_utf8_lossy(&output.stdout);
+                let state = state.trim();
+                state.is_empty() || state.starts_with('Z')
+            })
+        })
+        .await;
+    }
 }
 
 #[tokio::test]

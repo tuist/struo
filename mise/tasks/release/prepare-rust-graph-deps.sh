@@ -39,6 +39,7 @@ fingerprint="$(
   {
     printf '%s\n' "${target}"
     "${sha256[@]}" Cargo.lock Cargo.toml crates/*/Cargo.toml "${BASH_SOURCE[0]}"
+    find third_party/libsqlite3-sys -type f -exec "${sha256[@]}" {} + | LC_ALL=C sort
   } | "${sha256[@]}" | awk '{print $1}'
 )"
 prepared_file="third_party/rust/.prepared"
@@ -76,6 +77,7 @@ cargo_vendor() {
 rm -rf third_party/rust/vendor
 mkdir -p third_party/rust
 retry_command "cargo vendor" cargo_vendor
+cp -R third_party/libsqlite3-sys third_party/rust/vendor/libsqlite3-sys-0.30.1
 
 metadata_args=(metadata --locked --format-version 1)
 if [[ -n "${target}" ]]; then

@@ -27,10 +27,12 @@ impl Writer {
         encoded.write_all(blob::ZSTD_BLOB_MAGIC)?;
         encoded.write_all(&0_u64.to_le_bytes())?;
         let mut output = Self::raw(raw, expected);
-        output.encoded = Some(zstd::stream::write::Encoder::new(
+        let mut compressor = zstd::stream::write::Encoder::new(
             BufWriter::with_capacity(512 * 1024, encoded),
             blob::ZSTD_LEVEL,
-        )?);
+        )?;
+        compressor.set_pledged_src_size(expected)?;
+        output.encoded = Some(compressor);
         Ok(output)
     }
 
@@ -75,7 +77,7 @@ impl Writer {
         if self.expected.is_some_and(|expected| self.size > expected) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "remote blob exceeds declared size",
+                "blob exceeds declared size",
             ));
         }
         self.hasher.update(bytes)?;
@@ -100,7 +102,7 @@ impl Writer {
         if self.expected.is_some_and(|expected| self.size != expected) {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
-                "remote blob does not match declared size",
+                "blob does not match declared size",
             ));
         }
         if let Some((hasher, expected)) = self.sha256.take() {

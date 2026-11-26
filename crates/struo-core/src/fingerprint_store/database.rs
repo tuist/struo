@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{ensure, Context, Result};
-use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
+use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension, TransactionBehavior};
 use struo_cas::Digest;
 
 use super::MAX_NODE_BYTES;
@@ -21,7 +21,7 @@ pub(super) fn open(workspace: &Path, create: bool) -> Result<Connection> {
         )?;
         flags |= OpenFlags::SQLITE_OPEN_CREATE;
     }
-    let connection = Connection::open_with_flags(&path, flags)
+    let mut connection = Connection::open_with_flags(&path, flags)
         .with_context(|| format!("opening fingerprint database `{}`", path.display()))?;
     connection.busy_timeout(Duration::from_secs(5))?;
     connection.set_prepared_statement_cache_capacity(4);
@@ -51,10 +51,46 @@ pub(super) fn open(workspace: &Path, create: bool) -> Result<Connection> {
             "CREATE TABLE IF NOT EXISTS nodes (
                 digest BLOB PRIMARY KEY NOT NULL,
                 data BLOB NOT NULL
-             ) WITHOUT ROWID;",
+             );",
         )?;
     }
+    migrate(&mut connection).context("migrating fingerprint storage")?;
     Ok(connection)
+}
+
+fn without_rowid(connection: &Connection) -> Result<bool> {
+    Ok(connection
+        .query_row(
+            "SELECT wr FROM pragma_table_list('nodes') WHERE schema='main'",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .optional()?
+        .unwrap_or(false))
+}
+
+fn migrate(connection: &mut Connection) -> Result<()> {
+    if without_rowid(connection)? {
+        let started = Instant::now();
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if without_rowid(&transaction)? {
+            transaction.execute_batch(
+                "CREATE TABLE nodes_rowid (
+                    digest BLOB PRIMARY KEY NOT NULL,
+                    data BLOB NOT NULL
+                 );
+                 INSERT INTO nodes_rowid (digest, data) SELECT digest, data FROM nodes;
+                 DROP TABLE nodes;
+                 ALTER TABLE nodes_rowid RENAME TO nodes;",
+            )?;
+            transaction.commit()?;
+            tracing::debug!(
+                duration_ms = started.elapsed().as_millis(),
+                "migrated fingerprint storage to rowid"
+            );
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn read_node(connection: &Connection, digest: Digest) -> Result<Vec<u8>> {
@@ -80,3 +116,6 @@ pub(super) fn read_node(connection: &Connection, digest: Digest) -> Result<Vec<u
     );
     Ok(bytes)
 }
+
+#[cfg(test)]
+mod tests;

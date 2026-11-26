@@ -46,38 +46,49 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<ExitCode> {
     let workspace = native
         .as_ref()
         .map_or(&directory, |invocation| &invocation.workspace);
-    let total_memory_bytes = resource_limits.memory_bytes;
-    let uses_remote_cache = matches!(
-        crate::cache_provider::resolve_config(workspace, &xdg),
-        Ok(crate::cache_provider::ResolvedCacheProviderConfig::Tuist(_))
-    );
-    let cache_memory_bytes =
-        cache_budget::configure(&mut resource_limits, &command, uses_remote_cache)?;
-    tracing::debug!(
-        memory_limit_bytes = total_memory_bytes,
-        action_memory_budget_bytes = resource_limits.memory_bytes,
-        cache_memory_budget_bytes = cache_memory_bytes,
-        default_action_memory_bytes = resource_limits.default_action_memory_bytes,
-        cpu_slots = resource_limits.cpu_slots,
-        "resolved local resource limits"
-    );
-    let runs_actions = command_runs_actions(&command);
-    let result = struo_frontend::analysis::with_analysis_resources(
-        Arc::new(ResourcePool::new(resource_limits.clone())),
-        Box::pin(run_command(
-            workspace,
-            &xdg,
-            output,
-            &resource_limits,
-            command,
-            native.as_ref(),
-        )),
-    )
-    .await;
-    if runs_actions {
-        cache_retention::spawn_if_due(&xdg, workspace, output);
+    let infrastructure = if command_runs_actions(&command) {
+        struo_frontend::InfrastructureSnapshot::load(workspace).ok()
+    } else {
+        None
+    };
+    let run = async {
+        let total_memory_bytes = resource_limits.memory_bytes;
+        let uses_remote_cache = matches!(
+            crate::cache_provider::resolve_config(workspace, &xdg),
+            Ok(crate::cache_provider::ResolvedCacheProviderConfig::Tuist(_))
+        );
+        let cache_memory_bytes =
+            cache_budget::configure(&mut resource_limits, &command, uses_remote_cache)?;
+        tracing::debug!(
+            memory_limit_bytes = total_memory_bytes,
+            action_memory_budget_bytes = resource_limits.memory_bytes,
+            cache_memory_budget_bytes = cache_memory_bytes,
+            default_action_memory_bytes = resource_limits.default_action_memory_bytes,
+            cpu_slots = resource_limits.cpu_slots,
+            "resolved local resource limits"
+        );
+        let runs_actions = command_runs_actions(&command);
+        let result = struo_frontend::analysis::with_analysis_resources(
+            Arc::new(ResourcePool::new(resource_limits.clone())),
+            Box::pin(run_command(
+                workspace,
+                &xdg,
+                output,
+                &resource_limits,
+                command,
+                native.as_ref(),
+            )),
+        )
+        .await;
+        if runs_actions {
+            cache_retention::spawn_if_due(&xdg, workspace, output);
+        }
+        result
+    };
+    match infrastructure {
+        Some(infrastructure) => infrastructure.scope(run).await,
+        None => run.await,
     }
-    result
 }
 
 /// Whether this command runs actions, and so writes their results to the

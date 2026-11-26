@@ -296,7 +296,7 @@ impl RunEventBus {
                         at_epoch_ms,
                         target_id: target_id.clone(),
                         stream,
-                        bytes: bytes.slice(start..end),
+                        bytes: bytes::Bytes::copy_from_slice(&bytes[start..end]),
                     });
                 }
             }
@@ -369,6 +369,36 @@ mod tests {
 
     fn started(at_epoch_ms: i64) -> RunEvent {
         RunEvent::RunStarted { at_epoch_ms }
+    }
+
+    #[tokio::test]
+    async fn a_retained_log_tail_does_not_keep_the_oversized_allocation_alive() {
+        struct Payload(Arc<Vec<u8>>);
+        impl AsRef<[u8]> for Payload {
+            fn as_ref(&self) -> &[u8] {
+                &self.0
+            }
+        }
+
+        let bus = RunEventBus::new(1);
+        let mut rx = bus.subscribe();
+        let payload = Arc::new(vec![b'x'; RunEventBus::MAX_LOG_CHUNK_BYTES * 8 + 1]);
+        let owner = Arc::downgrade(&payload);
+        bus.publish(RunEvent::LogChunk {
+            at_epoch_ms: 1,
+            target_id: "target".into(),
+            stream: LogStream::Stdout,
+            bytes: bytes::Bytes::from_owner(Payload(payload)),
+        });
+        assert!(owner.upgrade().is_none());
+        assert!(matches!(
+            rx.recv().await,
+            Err(broadcast::error::RecvError::Lagged(8))
+        ));
+        let RunEvent::LogChunk { bytes, .. } = rx.recv().await.unwrap() else {
+            panic!("expected log tail")
+        };
+        assert_eq!(bytes.as_ref(), b"x");
     }
 
     #[tokio::test]

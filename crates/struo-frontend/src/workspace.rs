@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use glob::Pattern;
 use walkdir::WalkDir;
@@ -10,8 +11,8 @@ use walkdir::WalkDir;
 use crate::cache_provider::{CacheProviderConfig, InfrastructureConfig};
 use crate::error::{Error, Result};
 use crate::manifest::{
-    load_cache_provider_toml_str, load_infrastructure_toml_str, load_local_cache_max_size_toml_str,
-    load_toml_with, load_toml_with_configuration, load_workspace_toml_str, BuildConfiguration,
+    load_infrastructure_toml_str, load_local_cache_max_size_toml_str, load_toml_with,
+    load_toml_with_configuration, load_workspace_toml_str, BuildConfiguration,
 };
 use crate::target::Target;
 use crate::TOML_BUILD_FILE_NAME;
@@ -252,25 +253,19 @@ fn compile_patterns(path: &str, field: &str, values: &[String]) -> Result<Vec<Pa
 /// Load the workspace-level cache provider config from the root
 /// `struo.toml`.
 pub fn load_cache_provider_override(root: &Path) -> Result<Option<CacheProviderConfig>> {
-    let path = root.join(TOML_BUILD_FILE_NAME);
-    let src = match std::fs::read_to_string(&path) {
-        Ok(src) => src,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(None);
-        }
-        Err(source) => {
-            return Err(Error::Read {
-                path: path.display().to_string(),
-                source,
-            });
-        }
-    };
-    load_cache_provider_toml_str(TOML_BUILD_FILE_NAME, &src)
+    Ok(load_infrastructure_config(root)?.cache.clone())
 }
 
 /// Load the workspace-level infrastructure config from the root
-/// `struo.toml`.
-pub fn load_infrastructure_config(root: &Path) -> Result<InfrastructureConfig> {
+/// `struo.toml`, borrowing the command's immutable snapshot when scoped.
+pub fn load_infrastructure_config(root: &Path) -> Result<Arc<InfrastructureConfig>> {
+    match crate::infrastructure_snapshot::current(root) {
+        Some(config) => Ok(config),
+        None => read_infrastructure_config(root).map(Arc::new),
+    }
+}
+
+pub(crate) fn read_infrastructure_config(root: &Path) -> Result<InfrastructureConfig> {
     let path = root.join(TOML_BUILD_FILE_NAME);
     let src = match std::fs::read_to_string(&path) {
         Ok(src) => src,

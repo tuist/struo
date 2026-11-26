@@ -87,10 +87,11 @@ fn open_redirect_file(path: &WorkspacePath, workspace_root: &Path) -> Result<std
     })
 }
 
-/// Point the command's stdout/stderr at redirect files where requested,
-/// leaving unredirected streams piped so they can be captured into the
-/// CAS. Streams sharing a destination path share a single file handle.
-fn apply_redirect(command: &mut Command, redirect: Redirect, workspace_root: &Path) -> Result<()> {
+/// Streams sharing a destination path share a single file handle.
+fn open_redirects(
+    redirect: Redirect,
+    workspace_root: &Path,
+) -> Result<(Option<std::fs::File>, Option<std::fs::File>)> {
     let stdout_file = match redirect.stdout {
         Some(path) => Some(open_redirect_file(path, workspace_root)?),
         None => None,
@@ -111,9 +112,27 @@ fn apply_redirect(command: &mut Command, redirect: Redirect, workspace_root: &Pa
         }),
         None => None,
     };
-    command.stdout(stdout_file.map_or_else(Stdio::piped, Stdio::from));
-    command.stderr(stderr_file.map_or_else(Stdio::piped, Stdio::from));
-    Ok(())
+    Ok((stdout_file, stderr_file))
+}
+
+fn spawn(
+    command: &mut Command,
+    network: NetworkPolicy,
+    stdout: Option<std::fs::File>,
+    stderr: Option<std::fs::File>,
+) -> std::io::Result<GroupChild> {
+    #[cfg(all(feature = "linux-posix-spawn", target_os = "linux", target_env = "gnu"))]
+    if !network.is_denied() {
+        if let Some(child) =
+            GroupChild::spawn_native(command.as_std(), stdout.as_ref(), stderr.as_ref())?
+        {
+            return Ok(child);
+        }
+    }
+    let _ = network;
+    command.stdout(stdout.map_or_else(Stdio::piped, Stdio::from));
+    command.stderr(stderr.map_or_else(Stdio::piped, Stdio::from));
+    GroupChild::spawn(command)
 }
 
 pub(crate) async fn execute_command(
@@ -197,7 +216,7 @@ async fn spawn_and_capture(
         command.env(k, v);
     }
     command.stdin(Stdio::null());
-    apply_redirect(&mut command, redirect, workspace_root)?;
+    let (stdout, stderr) = open_redirects(redirect, workspace_root)?;
     let command_cwd = cwd.map_or_else(
         || workspace_root.to_path_buf(),
         |c| c.resolve(workspace_root),
@@ -213,10 +232,11 @@ async fn spawn_and_capture(
         "spawning local command"
     );
 
-    let mut group = GroupChild::spawn(&mut command).map_err(|source| Error::Spawn {
-        program: program.clone(),
-        source,
-    })?;
+    let mut group =
+        spawn(&mut command, network, stdout, stderr).map_err(|source| Error::Spawn {
+            program: program.clone(),
+            source,
+        })?;
     let stdout_pipe = group.take_stdout();
     let stderr_pipe = group.take_stderr();
     let pipes = capture::capture_pipes(capture, cache, stdout_pipe, stderr_pipe);

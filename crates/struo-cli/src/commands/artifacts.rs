@@ -167,7 +167,7 @@ fn resolve_provider(
 ) -> Result<(NamedCacheProviderConfig, InfrastructureProviderConfig)> {
     let config = struo_frontend::load_infrastructure_config(workspace)?;
     let binding = explicit.map(|name| NamedCacheProviderConfig { name: name.into(), account: None, project: None })
-        .or(config.artifacts).context("artifact publication is not configured; set [infrastructure.artifacts] name = <provider>, or pass --provider local")?;
+        .or_else(|| config.artifacts.clone()).context("artifact publication is not configured; set [infrastructure.artifacts] name = <provider>, or pass --provider local")?;
     let provider = if binding.name == "local" {
         InfrastructureProviderConfig::Local
     } else {

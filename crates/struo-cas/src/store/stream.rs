@@ -42,8 +42,16 @@ pub(super) async fn ingest<R: AsyncRead + Unpin>(
 pub(super) async fn prepare<R: AsyncRead + Unpin>(
     scratch: &Path,
     reader: R,
+    expected: Option<u64>,
 ) -> Result<(tempfile::TempPath, Digest, std::fs::File)> {
-    ingest_impl(scratch, reader, None, (), true).await
+    ingest_impl(
+        scratch,
+        reader,
+        expected.map(|size| (size, false, None)),
+        (),
+        true,
+    )
+    .await
 }
 
 pub(super) async fn ingest_remote<R: AsyncRead + Unpin, G: Send + 'static>(

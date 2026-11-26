@@ -129,14 +129,15 @@ impl ExecutorResources {
 
     /// Cache lookup and output restoration only need the host, not a worker.
     pub async fn acquire_materialization(&self) -> ExecutionPermit {
+        let host = self
+            .host
+            .acquire_client(MATERIALIZATION_MEMORY_BYTES, BTreeMap::default())
+            .await;
         ExecutionPermit {
             staging: self.staging.clone(),
-            io_limits: self.io_limits.for_memory(MATERIALIZATION_MEMORY_BYTES),
+            io_limits: self.io_limits.for_memory(host.request().memory_bytes),
             leases: Arc::new(Leases {
-                host: self
-                    .host
-                    .acquire_client(MATERIALIZATION_MEMORY_BYTES, BTreeMap::default())
-                    .await,
+                host,
                 _remote: None,
             }),
             owners: Vec::new(),
@@ -265,6 +266,18 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(1), resources.acquire_materialization())
                 .await
                 .unwrap();
+    }
+
+    #[tokio::test]
+    async fn restore_io_limits_follow_the_granted_memory() {
+        for budget in [16 * 1024, MATERIALIZATION_MEMORY_BYTES * 2] {
+            let resources = resources(1, budget);
+            let permit = resources.acquire_materialization().await;
+            let granted = budget.min(MATERIALIZATION_MEMORY_BYTES);
+            assert_eq!(permit.host_request().memory_bytes, granted);
+            assert_eq!(permit.io_limits().max_response_bytes, granted / 16);
+            assert_eq!(permit.io_limits().max_metadata_bytes, granted / 4);
+        }
     }
 
     #[test]

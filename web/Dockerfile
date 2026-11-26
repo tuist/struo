@@ -26,6 +26,7 @@ RUN apt-get update -y && apt-get install -y libcap-ng-dev libasound2-dev pkg-con
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
+COPY third_party/libsqlite3-sys third_party/libsqlite3-sys
 RUN cargo build --locked --release -p struo-cli
 
 # ---- Elixir builder ----

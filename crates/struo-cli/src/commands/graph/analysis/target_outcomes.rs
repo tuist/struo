@@ -30,7 +30,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use struo_cas::{ActionResult, Digest};
 use struo_core::{EvidenceCacheState, FingerprintStore, SandboxMode};
-use struo_frontend::analysis::{AnalysisObservations, DeclaredInputs, Observation, TransitiveSets};
+use struo_frontend::analysis::{
+    AnalysisObservations, DeclaredInputs, Observation, SharedProvider, TransitiveSets,
+};
 use struo_frontend::GraphTarget;
 
 use super::source_digest_cache::KnownChanges;
@@ -67,7 +69,7 @@ struct Record {
     /// patterns would have selected it counts as a change.
     expansions: Vec<Expansion>,
     outputs: Vec<String>,
-    provider: JsonValue,
+    provider: SharedProvider,
     action_digest: Digest,
     input_digest: Option<Digest>,
     input_fingerprint: Option<JsonValue>,
@@ -334,9 +336,9 @@ impl TargetOutcomes {
             tracing::trace!(target = %target.label.id, "target or a dependency of it moved");
             return None;
         }
-        if !self
-            .sets
-            .provider_available(&self.workspace, &record.provider)
+        if !record
+            .provider
+            .transitive_sets_available(&self.workspace, &self.sets)
         {
             tracing::trace!(target = %target.label.id, "a transitive set the provider names is gone");
             return None;
@@ -384,10 +386,12 @@ impl TargetOutcomes {
             declared_inputs,
             &BTreeMap::new(),
             outcome,
+            &struo_frontend::analysis::analysis_resource_pool(),
         );
     }
 
     /// Remember what building `target` on top of `dependency_inputs` produced.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn record_with_inputs(
         &self,
         target: &GraphTarget,
@@ -396,6 +400,7 @@ impl TargetOutcomes {
         declared_inputs: &DeclaredInputs,
         dependency_inputs: &BTreeMap<String, AvailableInput>,
         outcome: &BuildOutcome,
+        resources: &std::sync::Arc<struo_core::ResourcePool>,
     ) {
         if !self.enabled
             || !self.persisted
@@ -410,7 +415,10 @@ impl TargetOutcomes {
         let input_fingerprint = match outcome
             .input_fingerprint
             .as_ref()
-            .map(|fingerprint| self.fingerprints.encode(fingerprint))
+            .map(|fingerprint| {
+                self.fingerprints
+                    .encode_with_resources(fingerprint, resources)
+            })
             .transpose()
         {
             Ok(fingerprint) => fingerprint,
@@ -594,7 +602,7 @@ impl Record {
             input.materialized = false;
         }
         Some(BuildOutcome {
-            provider: std::sync::Arc::new(self.provider),
+            provider: self.provider,
             action_digest: self.action_digest,
             input_digest: self.input_digest,
             input_fingerprint,

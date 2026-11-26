@@ -97,7 +97,9 @@ pub use reproducibility::{
     verify_reproducible, ReproducibilityDifference, ReproducibilityReport, ReproducibilityTrial,
 };
 pub use resource_scope::{with_execution_permit, with_resource_permit};
-pub use resources::{ResourceLimits, ResourcePermit, ResourcePool, ResourceRequest};
+pub use resources::{
+    EvictableCache, ResourceLimits, ResourcePermit, ResourcePool, ResourceRequest,
+};
 pub use runner::{
     materialize_outputs, materialize_outputs_admitted, run, run_uncached, run_uncached_admitted,
     run_uncached_contract, run_uncached_observed, run_with_cache, run_with_cache_streaming,

@@ -28,7 +28,9 @@ Describe 'release SDK packaging scripts'
       "$WORKSPACE/crates/struo-presentation" \
       "$WORKSPACE/crates/struo" \
       "$WORKSPACE/crates/struo-cli" \
-      "$WORKSPACE/crates/struo-events-client"
+      "$WORKSPACE/crates/struo-events-client" \
+      "$WORKSPACE/third_party/libsqlite3-sys"
+    printf 'sqlite source' > "$WORKSPACE/third_party/libsqlite3-sys/sqlite3.c"
     touch \
       "$WORKSPACE/Cargo.toml" \
       "$WORKSPACE/crates/struo/Cargo.toml" \
@@ -94,7 +96,7 @@ LOCK
     It "prepares dependencies with only $1 available"
       Skip if "$1 is unavailable" test -z "$(command -v "$1")"
       setup_dependency_preparation
-      for tool in bash awk mkdir rm head jq "$1"; do
+      for tool in bash awk mkdir rm head jq find sort cp "$1"; do
         ln -s "$(command -v "$tool")" "$WORKSPACE/bin/$tool"
       done
 
@@ -117,12 +119,14 @@ LOCK
     The status should be success
     The stderr should include 'reusing prepared dependencies'
     The contents of file third_party/rust/vendor/retained should equal retained
+    The contents of file third_party/rust/vendor/libsqlite3-sys-0.30.1/sqlite3.c should equal 'sqlite source'
   End
 
   Describe 'prepared dependency invalidation'
     Parameters
       lockfile
       manifest
+      sqlite
       target
       missing-vendor
     End
@@ -135,6 +139,7 @@ LOCK
       case "$1" in
         lockfile) printf '\n# changed\n' >> Cargo.lock ;;
         manifest) printf '\n# changed\n' >> crates/struo/Cargo.toml ;;
+        sqlite) printf '\n/* changed */\n' >> third_party/libsqlite3-sys/sqlite3.c ;;
         target) next_target=aarch64-unknown-linux-gnu ;;
         missing-vendor) rm -rf third_party/rust/vendor ;;
       esac

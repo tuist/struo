@@ -11,6 +11,7 @@ mod error;
 mod examples;
 mod graph;
 mod infrastructure_editor;
+mod infrastructure_snapshot;
 mod manifest;
 mod manifest_editor;
 mod module_contract;
@@ -62,6 +63,7 @@ pub use graph::{
     TargetKindExampleRoot, TargetKindExampleSource, TargetKindSchema, TargetLabel, ToolRequirement,
 };
 pub use infrastructure_editor::{apply_infrastructure_binding, InfrastructureBinding};
+pub use infrastructure_snapshot::InfrastructureSnapshot;
 pub use manifest::{
     load_cache_provider_toml_str, load_infrastructure_toml_str, load_toml_str,
     load_workspace_configuration, parse_size, BuildConfiguration, ConfigurationOverrides,

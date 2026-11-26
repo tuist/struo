@@ -18,6 +18,7 @@ mod globals;
 mod metadata;
 mod presentation;
 mod property_list;
+mod provider;
 mod repository;
 mod resources;
 
@@ -45,6 +46,7 @@ pub use globals::expansion_could_differ;
 pub use globals::globals_for_prelude;
 pub use globals::StaleObservation;
 pub use globals::UnchangedWorkspace;
+pub use provider::SharedProvider;
 pub use store::{
     with_active_store, AnalysisObservations, AnalysisStore, CachedToolCommand, CommandPolicy,
     DeclaredAction, DeclaredActionOperation, DeclaredArchiveEntry, DeclaredArchiveEntryKind,

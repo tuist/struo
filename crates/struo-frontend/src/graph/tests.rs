@@ -380,6 +380,16 @@ capabilities = [],
     let err = target_kind_schemas_for_workspace(tmp.path()).unwrap_err();
 
     assert!(err.to_string().contains("declared more than once"));
+
+    std::fs::write(
+        tmp.path().join("modules/other.star"),
+        "c_library = target_kind(docs = \"Shadowing a built-in kind\")\n",
+    )
+    .unwrap();
+    let err = target_kind_schemas_for_workspace(tmp.path()).unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("target kind `c_library` is declared more than once"));
 }
 
 #[test]

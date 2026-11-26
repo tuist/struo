@@ -51,6 +51,7 @@ pub(in crate::store) async fn produce<W, G>(
     guard: G,
     produce: W,
     pipelined: bool,
+    expected: Option<u64>,
 ) -> Result<Digest>
 where
     W: FnOnce(&mut dyn Write) -> io::Result<()> + Send + 'static,
@@ -68,7 +69,7 @@ where
     let worker = tokio::task::spawn_blocking(move || {
         let _guard = guard;
         let mut sink = Sink {
-            output: output::Writer::new(raw, encoded, None)?,
+            output: output::Writer::new(raw, encoded, expected)?,
             cancelled,
             pipelined,
         };

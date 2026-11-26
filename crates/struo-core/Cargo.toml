@@ -9,6 +9,7 @@ repository.workspace = true
 [features]
 default = []
 remote-microsandbox = ["dep:microsandbox"]
+linux-posix-spawn = []
 
 [dependencies]
 struo-cas.workspace = true

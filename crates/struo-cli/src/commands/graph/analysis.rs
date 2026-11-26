@@ -42,7 +42,8 @@ use struo_core::{
     ResourcePool, SandboxMode,
 };
 use struo_frontend::analysis::{
-    AnalysisEngine, AnalysisOptions, CachedToolCommand, CommandPolicy, UnchangedWorkspace,
+    AnalysisEngine, AnalysisOptions, CachedToolCommand, CommandPolicy, SharedProvider,
+    UnchangedWorkspace,
 };
 use struo_frontend::ConfigurationOverrides;
 use struo_frontend::GraphTarget;
@@ -103,7 +104,7 @@ use super::configuration::ResolvedConfiguration;
 /// (also a move via `outcomes.remove`).
 #[derive(Debug)]
 pub(super) struct BuildOutcome {
-    pub provider: Arc<JsonValue>,
+    pub provider: SharedProvider,
     pub action_digest: Digest,
     pub input_digest: Option<Digest>,
     pub input_fingerprint: Option<InputFingerprintManifest>,
@@ -353,6 +354,8 @@ impl BuildSession {
     ) -> Self {
         let module_source_digest = Digest::of_bytes(analyzer.module_source().as_bytes());
         let sets = analyzer.transitive_sets();
+        let (source_digest_cache, digest_position) =
+            SourceDigestCache::open_with_position(workspace);
         Self {
             workspace: workspace.to_path_buf(),
             cache: cache.clone(),
@@ -369,7 +372,7 @@ impl BuildSession {
             tool_cache_fingerprint: None,
             cached_tool_commands: Arc::from([]),
             resources: struo_frontend::analysis::analysis_resource_pool(),
-            source_digest_cache: SourceDigestCache::open(workspace),
+            source_digest_cache,
             analysis_memo: AnalysisMemo::open(workspace, sets.clone()),
             resolution: None,
             unchanged: Arc::new(UnchangedWorkspace::Unknown),
@@ -379,7 +382,7 @@ impl BuildSession {
                 "build",
                 sandbox,
                 "",
-                recorded_digest_position(workspace).as_ref(),
+                digest_position.as_ref(),
                 sets,
             )),
             uncached_work: AtomicBool::new(false),
@@ -494,8 +497,9 @@ impl BuildSession {
     /// were written, so unchanged paths need not be looked at again.
     pub(super) fn with_known_changes(&mut self, changes: KnownChanges) {
         self.unchanged = Arc::new(changes.unchanged_workspace());
-        self.changes = Arc::new(changes.clone());
-        self.source_digest_cache.with_known_changes(changes);
+        self.changes = Arc::new(changes);
+        self.source_digest_cache
+            .with_known_changes(Arc::clone(&self.changes));
     }
 
     /// Write back what building this graph produced, against the position it
@@ -1087,8 +1091,8 @@ fn analyze_with_memo(
     precomputed_key: Option<&str>,
     target: &GraphTarget,
     workspace: &Path,
-    dep_providers: &[Arc<JsonValue>],
-    dependency_providers: &BTreeMap<String, Vec<Arc<JsonValue>>>,
+    dep_providers: &[SharedProvider],
+    dependency_providers: &BTreeMap<String, Vec<SharedProvider>>,
     capability: &str,
 ) -> Result<struo_frontend::analysis::AnalysisResult> {
     let key = if memo.is_enabled() {
@@ -1347,6 +1351,7 @@ async fn build_one(
                 &declared_inputs,
                 &available_inputs,
                 &outcome,
+                &resources,
             );
         }
     }

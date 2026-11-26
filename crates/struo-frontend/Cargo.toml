@@ -28,7 +28,11 @@ thiserror.workspace = true
 tokio.workspace = true
 toml.workspace = true
 toml_edit = "0.25"
+tracing.workspace = true
 walkdir.workspace = true
+
+[target.'cfg(any(all(target_os = "linux", target_pointer_width = "64"), target_os = "macos", windows))'.dependencies]
+buildid = "1.1"
 
 [lints]
 workspace = true

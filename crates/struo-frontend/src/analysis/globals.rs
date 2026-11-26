@@ -63,7 +63,7 @@ pub(super) fn selected_execution_context<'v>(eval: &Evaluator<'v, '_, '_>) -> Va
             .and_then(|store| store.execution.as_ref())
             .map_or(Value::new_none(), |execution| {
                 json_to_value(
-                    eval,
+                    eval.heap(),
                     &serde_json::to_value(execution).expect("execution is JSON"),
                 )
             })

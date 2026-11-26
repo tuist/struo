@@ -61,6 +61,11 @@ pub(super) struct TerminationSignalsHeld {
 }
 
 impl TerminationSignalsHeld {
+    #[cfg(all(feature = "linux-posix-spawn", target_os = "linux", target_env = "gnu"))]
+    pub(super) fn previous(&self) -> &libc::sigset_t {
+        &self.previous
+    }
+
     pub(super) fn new() -> io::Result<Self> {
         // SAFETY: `sigset_t` is plain old data, initialised by `sigemptyset`
         // before use.

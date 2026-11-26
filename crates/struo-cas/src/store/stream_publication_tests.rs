@@ -27,8 +27,65 @@ async fn existing_content_still_requires_successful_stream_eof() {
     let cas = Cas::open(root.path());
     let digest = cas.put_blob(b"existing").await.unwrap();
     assert!(cas.put_stream(ErrorAfterBody(b"existing")).await.is_err());
+    assert!(cas
+        .put_stream_sized(ErrorAfterBody(b"existing"), Some(8))
+        .await
+        .is_err());
     assert_eq!(cas.get_blob(&digest).await.unwrap(), b"existing");
     assert_eq!(std::fs::read_dir(cas.scratch_dir()).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn sized_streams_and_producers_validate_length_before_publication() {
+    let mut magic = blob::ZSTD_BLOB_MAGIC.to_vec();
+    magic.extend(vec![7; STREAM_CHUNK + 19]);
+    for bytes in [Vec::new(), b"asymmetric small payload".to_vec(), magic] {
+        let length = bytes.len() as u64;
+        for expected in [
+            Some(length),
+            Some(length + 1),
+            Some(length.saturating_sub(1)),
+            None,
+        ] {
+            for kind in 0..3 {
+                let root = tempfile::tempdir().unwrap();
+                let cas = Cas::open(root.path());
+                let provider = crate::CacheProvider::Local(cas.clone());
+                let produced = bytes.clone();
+                let result = match kind {
+                    0 => provider.put_stream_sized(bytes.as_slice(), expected).await,
+                    1 => {
+                        provider
+                            .put_produced_sized((), expected, move |writer| {
+                                writer.write_all(&produced)
+                            })
+                            .await
+                    }
+                    _ => {
+                        provider
+                            .put_produced_pipelined_sized((), expected, move |writer| {
+                                writer.write_all(&produced)
+                            })
+                            .await
+                    }
+                };
+                let digest = Digest::of_bytes(&bytes);
+                if expected.is_none_or(|expected| expected == length) {
+                    assert_eq!(result.unwrap(), digest);
+                    assert_eq!(cas.get_blob(&digest).await.unwrap(), bytes);
+                } else {
+                    assert!(
+                        result.is_err(),
+                        "kind={kind} length={length} expected={expected:?}"
+                    );
+                    assert!(!cas.has_blob(&digest).await.unwrap());
+                }
+                if cas.scratch_dir().exists() {
+                    assert_eq!(std::fs::read_dir(cas.scratch_dir()).unwrap().count(), 0);
+                }
+            }
+        }
+    }
 }
 
 #[tokio::test]
@@ -60,7 +117,7 @@ async fn existing_raw_and_encoded_blobs_are_not_replaced_by_stream_scratch() {
 async fn prepared_stream_keeps_its_original_write_handle_for_durable_publication() {
     use std::os::unix::fs::PermissionsExt;
     let root = tempfile::tempdir().unwrap();
-    let (path, digest, file) = stream::prepare(root.path(), b"prepared".as_slice())
+    let (path, digest, file) = stream::prepare(root.path(), b"prepared".as_slice(), None)
         .await
         .unwrap();
     file.set_permissions(std::fs::Permissions::from_mode(0o400))

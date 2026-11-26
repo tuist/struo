@@ -13,6 +13,18 @@ available across families; toolchain-specific helpers do not need to be loaded
 for unrelated targets. This keeps analysis work proportional to the graph
 without changing the schemas available through discovery.
 
+Struo caches evaluated target-kind and native-project schemas between
+invocations. Changes to module source or the Struo executable invalidate these
+records. Missing, corrupt, or unwritable cache entries do not prevent schema
+queries or builds: Struo evaluates the modules again. Clearing the cache also
+forces evaluation on the next invocation.
+
+Workspace schema discovery shares one built-in prelude evaluation between
+target-kind and native-project discovery. Struo records built-in target kinds
+before evaluating workspace declarations, so a workspace declaration cannot
+hide a duplicate built-in kind. Workspace examples still resolve relative to
+their module package.
+
 Bazel workspace seeds accept a nonconfigurable `env` map, forwarded to
 discovery, analysis, generated targets, and execution. Empty values override
 inherited host variables, while native action environments from `aquery` take
@@ -712,6 +724,13 @@ An implementation receives `ctx` with generic graph data:
 The implementation returns a dictionary of provider fields. Downstream
 target kinds should read provider fields from `ctx["deps"]` or
 `ctx["deps_by_role"]` instead of inspecting target identities.
+
+Each dependency occurrence has its own mutable provider lists and dictionaries,
+including nested containers. You can mutate them without affecting another
+consumer, another occurrence of the dependency, or a different dependency role.
+Within one invocation, `ctx["deps"]` and `ctx["deps_by_role"]["deps"]` share the
+same providers. Struo reuses immutable provider values across consumers and
+resolves transitive-set references in the consuming workspace.
 
 ### Selected execution context
 

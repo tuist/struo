@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -51,7 +52,8 @@ pub(super) async fn restore(
                 None => struo_core::materialize_outputs(&result, workspace, cache)
                     .await
                     .map_err(anyhow::Error::from),
-            }
+            }?;
+            Ok(result)
         },
     )
     .await
@@ -68,21 +70,24 @@ pub(super) async fn restore_admitted(
         pending,
         available,
         declared,
-        |result| async move { repair.restore(&result).await },
+        |result| async move {
+            repair.restore(&result).await?;
+            Ok(result)
+        },
     )
     .await
 }
 
-async fn restore_with<F, W>(
+async fn restore_with<'a, F, W>(
     workspace: &Path,
-    pending: PendingResults<'_>,
+    pending: PendingResults<'a>,
     available: &BTreeMap<String, AvailableInput>,
     declared: &DeclaredAction,
     restore: F,
 ) -> Result<Restoration>
 where
-    F: Fn(ActionResult) -> W,
-    W: std::future::Future<Output = Result<()>>,
+    F: Fn(Cow<'a, ActionResult>) -> W,
+    W: std::future::Future<Output = Result<Cow<'a, ActionResult>>>,
 {
     let required = declared
         .inputs
@@ -114,23 +119,30 @@ where
         || !super::super::materialization::disjoint_paths(workspace, &unselected, &required);
     let mut restored = BTreeSet::new();
     for result in pending.all() {
-        let outputs = result
-            .outputs
-            .iter()
-            .filter(|(path, _)| all || required.iter().any(|input| overlaps(path, input)))
-            .map(|(path, digest)| (path.clone(), *digest))
-            .collect::<BTreeMap<_, _>>();
-        if outputs.is_empty() {
+        let selected = |path: &str| all || required.iter().any(|input| overlaps(path, input));
+        let result = if result.outputs.keys().all(|path| selected(path)) {
+            Cow::Borrowed(result)
+        } else {
+            Cow::Owned(ActionResult {
+                exit_code: result.exit_code,
+                stdout: result.stdout,
+                stderr: result.stderr,
+                outputs: result
+                    .outputs
+                    .iter()
+                    .filter(|(path, _)| selected(path))
+                    .map(|(path, digest)| (path.clone(), *digest))
+                    .collect(),
+            })
+        };
+        if result.outputs.is_empty() {
             continue;
         }
-        let result = ActionResult {
-            exit_code: result.exit_code,
-            stdout: result.stdout,
-            stderr: result.stderr,
-            outputs,
-        };
-        restore(result.clone()).await?;
-        restored.extend(result.outputs.into_keys());
+        let result = restore(result).await?;
+        match result {
+            Cow::Borrowed(result) => restored.extend(result.outputs.keys().cloned()),
+            Cow::Owned(result) => restored.extend(result.outputs.into_keys()),
+        }
     }
     let reusable = if all {
         BTreeSet::new()
@@ -153,14 +165,17 @@ where
             stderr: None,
             outputs,
         };
-        restore(result.clone()).await?;
+        let result = restore(Cow::Owned(result)).await?;
         restored.retain(|path| {
             !result
                 .outputs
                 .keys()
                 .any(|parent| path != parent && Path::new(path).starts_with(parent))
         });
-        restored.extend(result.outputs.into_keys());
+        match result {
+            Cow::Borrowed(result) => restored.extend(result.outputs.keys().cloned()),
+            Cow::Owned(result) => restored.extend(result.outputs.into_keys()),
+        }
     }
     tracing::trace!(
         restored_outputs = restored.len(),
@@ -168,10 +183,9 @@ where
         ordered = declared.depends_on_prior_actions,
         "materialized declared action prerequisites"
     );
-    let ready = restored.union(&required).cloned().collect();
     Ok(Restoration {
+        ready: restored.union(&required).cloned().collect(),
         paths: restored,
-        ready,
     })
 }
 

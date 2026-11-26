@@ -63,3 +63,28 @@ fn sqlite_url(path: &Path) -> Result<String> {
         .ok_or_else(|| anyhow!("Struo database path must be UTF-8"))?;
     Ok(format!("sqlite://{path}?mode=rwc"))
 }
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn database_clients_share_sqlite_with_the_wal_reset_fix() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let database = WorkspaceStore::open(tmp.path()).connect().await.unwrap();
+        let row = database
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT sqlite_version() AS version".to_owned(),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        let version: String = row.try_get("", "version").unwrap();
+        assert_eq!(version, rusqlite::version());
+        assert!(rusqlite::version_number() >= 3_051_003);
+        database.close().await.unwrap();
+    }
+}

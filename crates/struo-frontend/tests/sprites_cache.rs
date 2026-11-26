@@ -22,7 +22,7 @@ name = "cloud"
     )
     .unwrap();
     let infrastructure = load_infrastructure_config(tmp.path()).unwrap();
-    assert_eq!(infrastructure.execution.unwrap().name, "cloud");
+    assert_eq!(infrastructure.execution.as_ref().unwrap().name, "cloud");
     let expected = SpritesProviderConfig {
         cache_max_size_bytes: 4096,
         read_only: true,

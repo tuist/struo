@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::task::{Poll, Waker};
 use std::time::Instant;
 
@@ -8,6 +8,9 @@ use tracing::debug;
 use super::queue::Queue;
 use super::{ResourceLimits, ResourceRequest};
 use crate::Result;
+
+mod cache;
+pub use cache::EvictableCache;
 
 /// Admission control over a [`ResourceLimits`] budget.
 ///
@@ -19,6 +22,7 @@ use crate::Result;
 pub struct ResourcePool {
     limits: ResourceLimits,
     queue: Mutex<Queue>,
+    caches: Mutex<Vec<Weak<dyn EvictableCache>>>,
 }
 
 impl ResourcePool {
@@ -31,6 +35,7 @@ impl ResourcePool {
         Self {
             limits,
             queue: Mutex::new(Queue::default()),
+            caches: Mutex::new(Vec::new()),
         }
     }
 
@@ -47,7 +52,7 @@ impl ResourcePool {
     /// Wait for `request`, treated as an estimate: dimensions larger than
     /// the pool are clamped so the request can always eventually run alone.
     pub async fn acquire(self: &Arc<Self>, request: ResourceRequest) -> ResourcePermit {
-        self.admit(request.bounded_by(&self.limits)).await
+        self.admit(request.bounded_by(&self.limits), true).await
     }
 
     /// Wait for `request`, treated as a minimum. A dimension the pool can
@@ -57,7 +62,7 @@ impl ResourcePool {
         request: ResourceRequest,
     ) -> Result<ResourcePermit> {
         let request = request.required_within(&self.limits)?;
-        Ok(self.admit(request).await)
+        Ok(self.admit(request, true).await)
     }
 
     pub(crate) async fn acquire_client(
@@ -73,16 +78,16 @@ impl ResourcePool {
         .bounded_by(&self.limits);
         // Client requests reserve buffers and host-wide slots, not guest CPUs.
         request.cpu_slots = 0;
-        self.admit(request).await
+        self.admit(request, true).await
     }
 
-    async fn admit(self: &Arc<Self>, request: ResourceRequest) -> ResourcePermit {
+    async fn admit(self: &Arc<Self>, request: ResourceRequest, evict: bool) -> ResourcePermit {
         let mut ticket = Ticket {
             pool: self,
             id: None,
             queued_at: Instant::now(),
         };
-        let wakers = {
+        let (wakers, pressure) = {
             let mut queue = self.lock();
             let id = queue.enqueue(request.clone());
             ticket.id = Some(id);
@@ -94,9 +99,12 @@ impl ResourcePool {
                 waiting = queue.waiting(),
                 "resource request queued"
             );
-            wakers
+            (wakers, evict && queue.memory_pressure(&self.limits))
         };
         wake(wakers);
+        if pressure {
+            self.evict_caches();
+        }
         std::future::poll_fn(|cx| ticket.poll(cx.waker())).await;
         ticket.id = None;
         debug!(

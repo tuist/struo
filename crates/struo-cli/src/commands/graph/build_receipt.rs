@@ -350,6 +350,12 @@ fn output_changes_are_our_own(
         };
         affected.insert(output.clone());
     }
+    if affected
+        .iter()
+        .any(|output| workspace.join(output).symlink_metadata().is_err())
+    {
+        return false;
+    }
     let recorded = crate::commands::graph::analysis::RecordedDigests::open(workspace);
     affected.iter().all(|output| {
         produced

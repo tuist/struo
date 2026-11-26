@@ -23,6 +23,8 @@ mod metadata;
 mod package_reuse;
 #[path = "tests/producer_history.rs"]
 mod producer_history;
+#[path = "tests/provider_materialization.rs"]
+mod provider_materialization;
 
 fn run(source: &str) -> starlark::Result<()> {
     Module::with_temp_heap(|module| {
@@ -2845,4 +2847,96 @@ custom = {"_struo_target_kind": True, "kind": "custom", "impl": impl}
             .unwrap(),
     );
     assert_eq!(keys.len(), 3);
+}
+
+#[test]
+fn provider_keys_preserve_content_order_multiplicity_and_roles() {
+    let engine = AnalysisEngine::from_source("").unwrap();
+    let target = target("custom");
+    let root = TempDir::new().unwrap();
+    let a: SharedProvider = serde_json::json!({"items": ["a", "λ\n"], "n": 17}).into();
+    let b: SharedProvider = serde_json::json!({"items": ["b"], "n": 19}).into();
+    let key = |deps: &[SharedProvider], roles: &BTreeMap<String, Vec<SharedProvider>>| {
+        engine
+            .analysis_key(&target, root.path(), deps, roles, "build", "executable")
+            .unwrap()
+    };
+    let restored: SharedProvider =
+        serde_json::from_slice::<serde_json::Value>(&serde_json::to_vec(a.as_ref()).unwrap())
+            .unwrap()
+            .into();
+    let empty = BTreeMap::new();
+    let baseline = key(&[a.clone(), b.clone()], &empty);
+    assert_eq!(baseline, key(&[restored, b.clone()], &empty));
+    assert_eq!(baseline, key(&[a.clone(), b.clone()], &empty));
+    let variants = [
+        key(&[b.clone(), a.clone()], &empty),
+        key(&[a.clone(), a.clone()], &empty),
+        key(std::slice::from_ref(&a), &empty),
+        key(
+            &[],
+            &BTreeMap::from([("tools".into(), vec![a.clone(), b.clone()])]),
+        ),
+        key(
+            &[],
+            &BTreeMap::from([("plugins".into(), vec![a.clone(), b.clone()])]),
+        ),
+        key(
+            &[a.clone(), b.clone()],
+            &BTreeMap::from([("tools".into(), vec![])]),
+        ),
+        key(&[a, b], &BTreeMap::from([("plugins".into(), vec![])])),
+    ];
+    let unique: BTreeSet<_> = std::iter::once(baseline).chain(variants).collect();
+    assert_eq!(unique.len(), 8);
+}
+
+#[test]
+fn analysis_key_namespace_invalidates_v1_even_without_providers() {
+    use sha2::{Digest, Sha256};
+
+    let engine = AnalysisEngine::from_source("").unwrap();
+    let target = target("custom");
+    let root = TempDir::new().unwrap();
+    let fields = [
+        b"executable".to_vec(),
+        crate::modules::BUILT_IN_MODULE_PATH.as_bytes().to_vec(),
+        Vec::new(),
+        root.path()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .as_bytes()
+            .to_vec(),
+        b"build".to_vec(),
+        serde_json::to_vec(&target).unwrap(),
+        serde_json::to_vec(&AnalysisOptions::default()).unwrap(),
+        serde_json::to_vec(&crate::BuildConfiguration::default()).unwrap(),
+        Vec::new(),
+        0_u64.to_le_bytes().to_vec(),
+    ];
+    let expected = |schema: &[u8], roles: bool| {
+        let mut digest = Sha256::new();
+        for field in std::iter::once(schema).chain(fields.iter().map(Vec::as_slice)) {
+            digest.update((field.len() as u64).to_le_bytes());
+            digest.update(field);
+        }
+        if roles {
+            digest.update(8_u64.to_le_bytes());
+            digest.update(0_u64.to_le_bytes());
+        }
+        hex::encode(digest.finalize())
+    };
+    let key = engine
+        .analysis_key(
+            &target,
+            root.path(),
+            &[],
+            &BTreeMap::new(),
+            "build",
+            "executable",
+        )
+        .unwrap();
+    assert_eq!(key, expected(b"struo.analysis.v2", true));
+    assert_ne!(key, expected(b"struo.analysis.v1", false));
 }

@@ -33,7 +33,7 @@ fn target(package: &str, name: &str) -> struo_frontend::GraphTarget {
 
 fn outcome(outputs: &[&str]) -> BuildOutcome {
     BuildOutcome {
-        provider: std::sync::Arc::new(serde_json::json!({"ok": true})),
+        provider: serde_json::json!({"ok": true}).into(),
         action_digest: Digest::of_bytes(b"action"),
         input_digest: None,
         input_fingerprint: None,

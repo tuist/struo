@@ -35,7 +35,7 @@ fn target(name: &str, deps: &[&str], roles: &[(&str, Vec<&str>)]) -> Arc<GraphTa
 fn outcome() -> BuildOutcome {
     let digest = Digest::of_bytes(b"output");
     BuildOutcome {
-        provider: Arc::new(serde_json::json!({"output": "out"})),
+        provider: serde_json::json!({"output": "out"}).into(),
         action_digest: Digest::of_bytes(b"action"),
         input_digest: None,
         input_fingerprint: None,
@@ -75,14 +75,16 @@ fn the_last_reader_moves_an_unretained_outcome() {
     let retained = HashSet::from(["root".to_string()]);
     let mut state = BuildState::new(&targets, &reachable, &retained).unwrap();
     let outcome = outcome();
-    let provider_pointer = Arc::as_ptr(&outcome.provider);
+    let provider_pointer = std::ptr::from_ref(outcome.provider.as_ref());
     state.record_completion("dep", outcome).unwrap();
 
     let inputs = state.dependency_inputs(&root, &reachable).unwrap();
 
     assert!(!state.outcomes.contains_key("dep"));
-    assert_eq!(Arc::as_ptr(&inputs.providers[0]), provider_pointer);
-    assert_eq!(Arc::strong_count(&inputs.providers[0]), 1);
+    assert_eq!(
+        std::ptr::from_ref(inputs.providers[0].as_ref()),
+        provider_pointer
+    );
     assert!(!inputs.available_inputs["out"].same_target);
     assert!(!inputs.available_inputs["out"].materialized);
     assert_eq!(state.ready.len(), 2);
@@ -109,7 +111,7 @@ fn repeated_roles_keep_an_outcome_alive_until_every_edge_is_read() {
     assert!(!state.outcomes.contains_key("dep"));
     assert!(inputs.providers_by_role["tools"]
         .iter()
-        .all(|provider| Arc::ptr_eq(provider, &inputs.providers[0])));
+        .all(|provider| std::ptr::eq(provider.as_ref(), inputs.providers[0].as_ref())));
 }
 
 #[test]
@@ -129,8 +131,8 @@ fn a_retained_outcome_survives_its_last_dependency_reader() {
     assert!(state.outcomes.contains_key("dep"));
     assert!(state.outcomes["dep"].available_inputs["out"].same_target);
     assert!(!inputs.available_inputs["out"].same_target);
-    assert!(Arc::ptr_eq(
-        &state.outcomes["dep"].provider,
-        &inputs.providers[0]
+    assert!(std::ptr::eq(
+        state.outcomes["dep"].provider.as_ref(),
+        inputs.providers[0].as_ref()
     ));
 }

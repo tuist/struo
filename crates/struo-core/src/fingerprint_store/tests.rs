@@ -310,6 +310,81 @@ fn unused_inline_and_empty_stores_do_not_create_database() {
     assert!(!tmp.path().join(".struo").exists());
 }
 
+#[tokio::test]
+async fn budgeted_encoding_preserves_storage_and_releases_reservations() {
+    use crate::{ResourceLimits, ResourcePool, ResourceRequest};
+    let pool = Arc::new(ResourcePool::new(ResourceLimits::new(4, 512 * 1024)));
+    let baseline = TempDir::new().unwrap();
+    let candidate = TempDir::new().unwrap();
+    let store = FingerprintStore::new(candidate.path());
+    for count in [0, 1, 64, 256] {
+        let original = manifest(
+            (0..count)
+                .map(|i| {
+                    let mut value = component(i);
+                    value.label.push_str("\0\n\"λ\\");
+                    value
+                })
+                .collect(),
+        );
+        let expected = encode_fingerprint(baseline.path(), &original).unwrap();
+        for exhausted in [false, true] {
+            let full = if exhausted {
+                Some(pool.acquire(ResourceRequest::new(4, 512 * 1024)).await)
+            } else {
+                None
+            };
+            let stored = store.encode_with_resources(&original, &pool).unwrap();
+            assert_eq!(stored, expected);
+            assert_eq!(
+                decode_fingerprint(candidate.path(), stored).unwrap(),
+                original
+            );
+            drop(full);
+            let released = tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                pool.acquire(ResourceRequest::new(4, 512 * 1024)),
+            )
+            .await
+            .unwrap();
+            drop(released);
+        }
+    }
+}
+
+#[test]
+fn prepared_encoding_rolls_back_failed_inserts_and_retries() {
+    let tmp = TempDir::new().unwrap();
+    let store = FingerprintStore::new(tmp.path());
+    let pool = Arc::new(crate::ResourcePool::new(crate::ResourceLimits::new(
+        4,
+        1024 * 1024,
+    )));
+    store.encode(&manifest(vec![component(999)])).unwrap();
+    let before = node_count(tmp.path());
+    let connection = Connection::open(database::path(tmp.path())).unwrap();
+    connection
+        .execute_batch(&format!(
+            "CREATE TRIGGER fail_insert BEFORE INSERT ON nodes
+         WHEN (SELECT count(*) FROM nodes) > {before}
+         BEGIN SELECT RAISE(ABORT, 'injected failure'); END;"
+        ))
+        .unwrap();
+    let original = manifest((0..64).map(component).collect());
+    assert!(store.encode_with_resources(&original, &pool).is_err());
+    assert_eq!(node_count(tmp.path()), before);
+    connection
+        .execute_batch("DROP TRIGGER fail_insert")
+        .unwrap();
+    let stored = store.encode_with_resources(&original, &pool).unwrap();
+    assert_eq!(
+        decode_fingerprint(tmp.path(), stored.clone()).unwrap(),
+        original
+    );
+    delete_blob(tmp.path(), root_digest(&stored));
+    assert!(store.decode(stored).is_err());
+}
+
 #[test]
 fn failed_encode_rolls_back_nodes_and_can_be_retried() {
     let tmp = TempDir::new().unwrap();

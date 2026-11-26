@@ -198,6 +198,9 @@ async fn put_stream_handles_empty_input() {
     let d = cas.put_stream(&b""[..]).await.unwrap();
     assert_eq!(d, Digest::of_bytes(b""));
     assert!(cas.get_blob(&d).await.unwrap().is_empty());
+    fs::remove_file(cas.blob_path(&d)).await.unwrap();
+    assert_eq!(cas.put_stream(tokio::io::empty()).await.unwrap(), d);
+    assert!(cas.get_blob(&d).await.unwrap().is_empty());
 }
 
 #[tokio::test]

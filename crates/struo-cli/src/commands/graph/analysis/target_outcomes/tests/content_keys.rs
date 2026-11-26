@@ -132,9 +132,10 @@ fn a_record_stores_only_what_the_target_changed_on_top_of_its_dependencies() {
         ("deps/tree/child".to_string(), available(b"child")),
     ]);
     let mut built = outcome(&[]);
-    built.provider = std::sync::Arc::new(serde_json::json!({
+    built.provider = serde_json::json!({
         "metadata": "λ\n\"".repeat(3_000),
-    }));
+    })
+    .into();
     built.available_inputs = BTreeMap::from([
         ("deps/untouched".to_string(), available(b"untouched")),
         ("deps/replaced".to_string(), own(b"replaced after")),
@@ -150,6 +151,7 @@ fn a_record_stores_only_what_the_target_changed_on_top_of_its_dependencies() {
             &inputs(&[]),
             &dependencies,
             &built,
+            &struo_frontend::analysis::analysis_resource_pool(),
         );
     });
     let raw = std::fs::read(reopened.record_path(&reopened.stored[&target.label.id])).unwrap();
@@ -172,6 +174,23 @@ fn a_record_stores_only_what_the_target_changed_on_top_of_its_dependencies() {
             |_| true,
         )
         .expect("an untouched target is reused");
+    let engine = struo_frontend::analysis::AnalysisEngine::from_source("").unwrap();
+    let consumer_key = |provider| {
+        engine
+            .analysis_key(
+                &target,
+                workspace.path(),
+                &[provider],
+                &BTreeMap::new(),
+                "build",
+                "executable",
+            )
+            .unwrap()
+    };
+    assert_eq!(
+        consumer_key(built.provider.clone()),
+        consumer_key(reused.provider.clone())
+    );
     let summary = |inputs: &BTreeMap<String, AvailableInput>| {
         inputs
             .iter()

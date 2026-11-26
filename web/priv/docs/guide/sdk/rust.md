@@ -77,6 +77,13 @@ them by digest from action results, manifests, or other integration state.
 Prefer the file and stream methods for logs, archives, compiler outputs, and
 other payloads whose size is not tightly bounded.
 
+If you know the exact byte count, use
+`cache.provider().put_stream_sized(reader, Some(length)).await`. The provider
+uses that length to reduce compression workspace allocations and rejects
+shorter or longer input before publication. Include any headers you write in
+the byte count. Pass `None` for an open-ended stream; the existing `put_stream`
+method keeps that behavior. A length mismatch does not replace an existing blob.
+
 ## Action keys and results
 
 `ActionKeyBuilder` gives cached automation a versioned, unambiguous identity.
@@ -183,6 +190,13 @@ No blob is published unless the producer and the final encoding succeed.
 Dropping the future removes scratch files immediately and makes later writes
 fail. Producers must bound their own buffers. Remote mirroring follows the same
 size limit as `put_stream`.
+
+Use `put_produced_sized(guard, Some(length), producer)` or
+`put_produced_pipelined_sized(guard, Some(length), producer)` when you know the
+producer's exact byte count. Both methods validate the count before publication
+and preserve the existing guard, cancellation, and remote-mirroring behavior.
+Pass `None` when you do not know the length. You still own the producer and its
+buffers; these methods do not collect its output in memory to determine its size.
 
 If your integration already owns capacity for two workers, use
 `put_produced_pipelined(guard, producer)` to overlap digest calculation with

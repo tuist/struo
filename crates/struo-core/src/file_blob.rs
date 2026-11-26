@@ -13,6 +13,14 @@ use crate::digest_writer::DigestWriter;
 use crate::{Error, Result};
 
 pub(crate) const FILE_BLOB_MAGIC: &[u8] = b"struo.file.v1\0";
+const FILE_BLOB_HEADER_LEN: usize = FILE_BLOB_MAGIC.len() + size_of::<u32>();
+
+pub(crate) fn file_blob_len(metadata: &std::fs::Metadata) -> Option<u64> {
+    metadata
+        .is_file()
+        .then(|| metadata.len().checked_add(FILE_BLOB_HEADER_LEN as u64))
+        .flatten()
+}
 
 #[cfg(test)]
 pub(crate) fn capture_file_blob(path: &Path) -> std::io::Result<Vec<u8>> {
@@ -57,7 +65,7 @@ pub(crate) fn file_blob_header(metadata: &std::fs::Metadata) -> Vec<u8> {
     #[cfg(not(unix))]
     let mode = 0o644_u32;
 
-    let mut header = Vec::with_capacity(FILE_BLOB_MAGIC.len() + 4);
+    let mut header = Vec::with_capacity(FILE_BLOB_HEADER_LEN);
     header.extend_from_slice(FILE_BLOB_MAGIC);
     header.extend_from_slice(&mode.to_le_bytes());
     header

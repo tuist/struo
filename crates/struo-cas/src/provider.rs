@@ -128,17 +128,27 @@ impl CacheProvider {
     /// on a slow upload. The mirror streams from the local copy rather than
     /// reading it into memory.
     pub async fn put_stream<R: AsyncRead + Unpin>(&self, reader: R) -> Result<Digest> {
+        self.put_stream_sized(reader, None).await
+    }
+
+    /// Like [`put_stream`](Self::put_stream), with a byte length validated
+    /// before publication and supplied to the local compression encoder.
+    pub async fn put_stream_sized<R: AsyncRead + Unpin>(
+        &self,
+        reader: R,
+        expected: Option<u64>,
+    ) -> Result<Digest> {
         match self {
-            Self::Local(cas) => cas.put_stream(reader).await,
+            Self::Local(cas) => cas.put_stream_sized(reader, expected).await,
             Self::Tuist(cache) => {
-                let digest = cache.local().put_stream(reader).await?;
+                let digest = cache.local().put_stream_sized(reader, expected).await?;
                 if cache.local().blob_size(&digest).await? <= STREAM_REMOTE_UPLOAD_LIMIT {
                     cache.publish_local_blob(&digest).await;
                 }
                 Ok(digest)
             }
             Self::Remote(cache) => {
-                let digest = cache.local().put_stream(reader).await?;
+                let digest = cache.local().put_stream_sized(reader, expected).await?;
                 if cache.local().blob_size(&digest).await? <= STREAM_REMOTE_UPLOAD_LIMIT {
                     cache.publish_local_blob(&digest).await;
                 }

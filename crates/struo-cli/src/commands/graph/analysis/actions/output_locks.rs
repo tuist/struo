@@ -5,60 +5,33 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use struo_cas::Digest;
 
+mod cache;
+pub(super) use cache::LockPlanCache;
+
 pub(super) struct OutputLock {
     file: File,
     exclusive: bool,
 }
 
 impl OutputLock {
+    #[cfg(test)]
+    pub(super) fn open_shared<'a>(
+        workspace: &Path,
+        outputs: impl IntoIterator<Item = &'a str>,
+    ) -> Result<Vec<Self>> {
+        let mut locks = Self::open_all(workspace, Digest::of_bytes(b"output-validation"), outputs)?;
+        for lock in &mut locks {
+            lock.exclusive = false;
+        }
+        Ok(locks)
+    }
+
     pub(super) fn open_all<'a>(
         workspace: &Path,
         digest: Digest,
         outputs: impl IntoIterator<Item = &'a str>,
     ) -> Result<Vec<Self>> {
-        let directory = workspace.join(".struo/locks/actions");
-        std::fs::create_dir_all(&directory)
-            .with_context(|| format!("creating action lock directory `{}`", directory.display()))?;
-        let mut paths = BTreeMap::<PathBuf, bool>::new();
-        for output in outputs {
-            let normalized = super::workspace_path(output, "action lock path")?;
-            let path = PathBuf::from(normalized.as_str());
-            paths.insert(path.clone(), true);
-            // Shared ancestor locks let siblings proceed, but exclude writers
-            // replacing a whole tree while one of its children is in use.
-            for ancestor in path
-                .ancestors()
-                .skip(1)
-                .filter(|p| !p.as_os_str().is_empty())
-            {
-                paths.entry(ancestor.to_path_buf()).or_insert(false);
-            }
-        }
-        let mut keys = paths
-            .into_iter()
-            .map(|(path, exclusive)| {
-                (
-                    Digest::of_bytes(path.as_os_str().as_encoded_bytes()),
-                    exclusive,
-                )
-            })
-            .collect::<Vec<_>>();
-        if keys.is_empty() {
-            keys.push((digest, true));
-        }
-        keys.into_iter()
-            .map(|(key, exclusive)| {
-                let path = directory.join(format!("{key}.lock"));
-                let file = OpenOptions::new()
-                    .create(true)
-                    .truncate(false)
-                    .read(true)
-                    .write(true)
-                    .open(&path)
-                    .with_context(|| format!("opening action lock `{}`", path.display()))?;
-                Ok(Self { file, exclusive })
-            })
-            .collect()
+        LockPlan::new(workspace, digest, outputs)?.open(false)
     }
 
     pub(super) fn try_lock(&self) -> std::result::Result<(), TryLockError> {
@@ -71,5 +44,85 @@ impl OutputLock {
 
     pub(super) fn unlock(&self) -> std::io::Result<()> {
         self.file.unlock()
+    }
+}
+
+#[derive(Debug)]
+struct LockPlan {
+    directory: PathBuf,
+    paths: Vec<(PathBuf, bool)>,
+}
+
+impl LockPlan {
+    fn new<'a>(
+        workspace: &Path,
+        digest: Digest,
+        outputs: impl IntoIterator<Item = &'a str>,
+    ) -> Result<Self> {
+        let directory = workspace.join(".struo/locks/actions");
+        let normalized = outputs
+            .into_iter()
+            .map(|output| super::workspace_path(output, "action lock path"))
+            .collect::<Result<Vec<_>>>()?;
+        let mut paths = BTreeMap::<&Path, bool>::new();
+        for output in &normalized {
+            let path = Path::new(output.as_str());
+            paths.insert(path, true);
+            // Shared ancestor locks let siblings proceed, but exclude writers
+            // replacing a whole tree while one of its children is in use.
+            for ancestor in path
+                .ancestors()
+                .skip(1)
+                .filter(|p| !p.as_os_str().is_empty())
+            {
+                paths.entry(ancestor).or_insert(false);
+            }
+        }
+        let mut paths = paths
+            .into_iter()
+            .map(|(path, exclusive)| {
+                let key = Digest::of_bytes(path.as_os_str().as_encoded_bytes());
+                (directory.join(format!("{key}.lock")), exclusive)
+            })
+            .collect::<Vec<_>>();
+        if paths.is_empty() {
+            paths.push((directory.join(format!("{digest}.lock")), true));
+        }
+        Ok(Self { directory, paths })
+    }
+
+    fn open(&self, shared: bool) -> Result<Vec<OutputLock>> {
+        std::fs::create_dir_all(&self.directory).with_context(|| {
+            format!(
+                "creating action lock directory `{}`",
+                self.directory.display()
+            )
+        })?;
+        self.paths
+            .iter()
+            .map(|(path, exclusive)| {
+                let file = OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .read(true)
+                    .write(true)
+                    .open(path)
+                    .with_context(|| format!("opening action lock `{}`", path.display()))?;
+                Ok(OutputLock {
+                    file,
+                    exclusive: *exclusive && !shared,
+                })
+            })
+            .collect()
+    }
+
+    fn storage_bytes(&self) -> usize {
+        self.directory.capacity()
+            + self.paths.capacity() * size_of::<(PathBuf, bool)>()
+            + self
+                .paths
+                .iter()
+                .map(|(path, _)| path.capacity())
+                .sum::<usize>()
     }
 }

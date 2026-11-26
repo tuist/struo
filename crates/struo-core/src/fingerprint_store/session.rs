@@ -1,13 +1,15 @@
 use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use rusqlite::{Connection, TransactionBehavior};
 use serde_json::Value;
 use struo_cas::Digest;
 
-use crate::InputFingerprintManifest;
+use crate::{InputFingerprintManifest, ResourcePool};
+
+use super::prepared::Prepared;
 
 const VERIFIED_NODE_CAPACITY: usize = 65_536;
 
@@ -59,6 +61,24 @@ impl FingerprintStore {
     }
 
     pub fn encode(&self, manifest: &InputFingerprintManifest) -> Result<Value> {
+        self.encode_prepared(manifest, None)
+    }
+
+    /// Prepare small fingerprints within the caller's budget before locking storage.
+    /// Large fingerprints and unavailable reservations retain streaming encoding.
+    pub fn encode_with_resources(
+        &self,
+        manifest: &InputFingerprintManifest,
+        resources: &Arc<ResourcePool>,
+    ) -> Result<Value> {
+        self.encode_prepared(manifest, Prepared::new(manifest, resources))
+    }
+
+    fn encode_prepared(
+        &self,
+        manifest: &InputFingerprintManifest,
+        prepared: Option<Prepared>,
+    ) -> Result<Value> {
         if manifest.components.is_empty() {
             return super::encode_stored(manifest, |_, _| Ok(()));
         }
@@ -80,7 +100,7 @@ impl FingerprintStore {
             let stored = {
                 let mut insert = transaction
                     .prepare_cached("INSERT OR IGNORE INTO nodes (digest, data) VALUES (?1, ?2)")?;
-                super::encode_stored(manifest, |digest, bytes| {
+                let write = |digest: Digest, bytes: &[u8]| {
                     if !verified.digests.contains(&digest) {
                         insert.execute(rusqlite::params![digest.as_bytes().as_slice(), bytes])?;
                         verified.insert(digest);
@@ -89,7 +109,11 @@ impl FingerprintStore {
                             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
                     Ok(())
-                })?
+                };
+                match prepared {
+                    Some(prepared) => prepared.write(write)?,
+                    None => super::encode_stored(manifest, write)?,
+                }
             };
             transaction.commit()?;
             Ok(stored)

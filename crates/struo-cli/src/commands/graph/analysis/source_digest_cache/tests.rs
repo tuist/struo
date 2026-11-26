@@ -3,6 +3,107 @@ use std::sync::atomic::Ordering;
 
 use super::{KnownChanges, SourceDigestCache};
 
+#[test]
+fn cache_position_round_trips_without_republishing_a_stale_position() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("source.rs"), "one").unwrap();
+    let position = super::ChangePosition {
+        instance_id: "watcher".into(),
+        source_generation: 7,
+        output_generation: 19,
+    };
+    let cache = SourceDigestCache::open(workspace.path());
+    let digest = cache.digest(workspace.path(), "source.rs").unwrap();
+    cache.record_output(workspace.path(), "source.rs", digest);
+    cache.set_position(Some(position.clone()));
+    drop(cache);
+
+    assert_eq!(
+        super::stored_position(workspace.path(), 0),
+        Some(position.clone())
+    );
+    let (reopened, stored) = SourceDigestCache::open_with_position(workspace.path());
+    assert_eq!(stored, Some(position));
+    assert_eq!(reopened.recorded_output_digest("source.rs"), Some(digest));
+    assert_eq!(
+        reopened.digest(workspace.path(), "source.rs").unwrap(),
+        digest
+    );
+    std::fs::write(workspace.path().join("other.rs"), "two").unwrap();
+    reopened.digest(workspace.path(), "other.rs").unwrap();
+    drop(reopened);
+    assert_eq!(super::stored_position(workspace.path(), 0), None);
+}
+
+#[test]
+fn position_reads_validate_entries_and_the_complete_document() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("source.rs"), "one").unwrap();
+    let cache = SourceDigestCache::open(workspace.path());
+    let digest = cache.digest(workspace.path(), "source.rs").unwrap();
+    cache.record_output(workspace.path(), "source.rs", digest);
+    let position = super::ChangePosition {
+        instance_id: "watcher".into(),
+        source_generation: 7,
+        output_generation: 19,
+    };
+    cache.set_position(Some(position.clone()));
+    drop(cache);
+    let path = workspace.path().join(".struo/source-digests.json");
+    let assert_position = |expected: Option<super::ChangePosition>| {
+        let length = std::fs::metadata(&path).unwrap().len();
+        for budget in [0, 1, length, length + 1] {
+            assert_eq!(
+                super::stored_position(workspace.path(), budget),
+                expected,
+                "budget {budget}"
+            );
+        }
+    };
+    let valid: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_position(Some(position.clone()));
+    for field in ["entries", "output_entries"] {
+        for (pointer, value) in [
+            ("/digest", serde_json::json!("invalid")),
+            ("/digest", serde_json::json!("A".repeat(64))),
+            ("/fingerprint/len", serde_json::json!(-1)),
+            ("/fingerprint/modified_nanos", serde_json::json!(u64::MAX)),
+            ("/fingerprint", serde_json::json!({})),
+        ] {
+            let mut corrupt = valid.clone();
+            *corrupt[field]["source.rs"].pointer_mut(pointer).unwrap() = value;
+            std::fs::write(&path, serde_json::to_vec(&corrupt).unwrap()).unwrap();
+            assert_position(None);
+            assert_eq!(
+                SourceDigestCache::open_with_position(workspace.path()).1,
+                None
+            );
+        }
+    }
+    let json = serde_json::to_string(&valid).unwrap();
+    for invalid in [
+        json[..json.len() - 1].to_string(),
+        format!("{json} trailing"),
+        format!("{json}{json}"),
+        json.replacen("\"entries\":", "\"entries\":{},\"entries\":", 1),
+        json.replace(super::SCHEMA, "unknown"),
+    ] {
+        std::fs::write(&path, invalid).unwrap();
+        assert_position(None);
+    }
+    std::fs::write(&path, format!("{json}{}", " ".repeat(4 * 1024 * 1024))).unwrap();
+    assert_position(Some(position));
+    std::fs::write(&path, format!("{json}{}x", " ".repeat(4 * 1024 * 1024))).unwrap();
+    assert_position(None);
+    let mut legacy = valid;
+    legacy.as_object_mut().unwrap().remove("output_entries");
+    legacy.as_object_mut().unwrap().remove("position");
+    std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    let cache = SourceDigestCache::open(workspace.path());
+    assert_eq!(cache.digest(workspace.path(), "source.rs").unwrap(), digest);
+    assert_position(None);
+}
+
 #[tokio::test]
 async fn restoring_a_tree_preserves_a_matching_newer_child() {
     use struo_cas::{CacheProvider, Cas};

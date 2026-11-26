@@ -46,7 +46,8 @@ pub fn host_tree_sha256_hex(root: &Path) -> std::io::Result<String> {
     let root_canonical = root.canonicalize()?;
     let mut hasher = sha2::Sha256::new();
     hasher.update(b"struo.host_tree.v1\0");
-    hash_host_tree_directory(root, &root_canonical, root, &mut hasher)?;
+    let mut buffer = vec![0; 64 * 1024];
+    hash_host_tree_directory(root, &root_canonical, root, &mut hasher, &mut buffer)?;
     Ok(hex_lower(&hasher.finalize()))
 }
 
@@ -55,9 +56,10 @@ fn hash_host_tree_directory(
     root_canonical: &Path,
     directory: &Path,
     hasher: &mut sha2::Sha256,
+    buffer: &mut [u8],
 ) -> std::io::Result<()> {
     let mut children = std::fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>()?;
-    children.sort_by_key(std::fs::DirEntry::file_name);
+    children.sort_by_cached_key(std::fs::DirEntry::file_name);
     for child in children {
         let path = child.path();
         let mut metadata = std::fs::symlink_metadata(&path)?;
@@ -100,11 +102,11 @@ fn hash_host_tree_directory(
         if let Some(target) = &link_target {
             hasher.update(utf8_path(target)?.as_bytes());
         } else if metadata.is_file() {
-            hasher.update(file_sha256_hex(&path)?.as_bytes());
+            hasher.update(file_sha256_hex(&path, buffer)?.as_bytes());
         }
         hasher.update([0]);
         if metadata.is_dir() {
-            hash_host_tree_directory(root, root_canonical, &path, hasher)?;
+            hash_host_tree_directory(root, root_canonical, &path, hasher, buffer)?;
         }
     }
     Ok(())
@@ -180,19 +182,17 @@ pub(crate) fn portable_path(path: &Path) -> std::io::Result<String> {
     }
 }
 
-fn file_sha256_hex(path: &Path) -> std::io::Result<String> {
+fn file_sha256_hex(path: &Path, buffer: &mut [u8]) -> std::io::Result<String> {
     use std::io::Read;
 
-    let file = std::fs::File::open(path)?;
-    let mut reader = std::io::BufReader::new(file);
+    let mut file = std::fs::File::open(path)?;
     let mut hasher = sha2::Sha256::new();
-    let mut buf = vec![0u8; 64 * 1024];
     loop {
-        let read = reader.read(&mut buf)?;
+        let read = file.read(buffer)?;
         if read == 0 {
             break;
         }
-        hasher.update(&buf[..read]);
+        hasher.update(&buffer[..read]);
     }
     Ok(hex_lower(&hasher.finalize()))
 }
@@ -237,14 +237,35 @@ mod tests {
     fn digest_is_stable_and_order_independent() {
         let tmp = tempfile::TempDir::new().unwrap();
         std::fs::create_dir_all(tmp.path().join("sub")).unwrap();
-        std::fs::write(tmp.path().join("b.txt"), b"b").unwrap();
-        std::fs::write(tmp.path().join("a.txt"), b"a").unwrap();
+        std::fs::write(tmp.path().join("b.txt"), b"").unwrap();
+        let large: Vec<_> = (0..(64 * 1024 + 37))
+            .map(|i| u8::try_from(i % 251).unwrap())
+            .collect();
+        std::fs::write(tmp.path().join("a.txt"), &large).unwrap();
         std::fs::write(tmp.path().join("sub/c.txt"), b"c").unwrap();
 
+        let mut expected = sha2::Sha256::new();
+        expected.update(b"struo.host_tree.v1\0");
+        for (kind, relative, content) in [
+            (b'f', "a.txt", large.as_slice()),
+            (b'f', "b.txt", b"".as_slice()),
+            (b'd', "sub", b"".as_slice()),
+            (b'f', "sub/c.txt", b"c".as_slice()),
+        ] {
+            expected.update([kind]);
+            expected.update(relative.as_bytes());
+            expected.update([0]);
+            if kind == b'f' {
+                let metadata = std::fs::metadata(tmp.path().join(relative)).unwrap();
+                expected.update(host_file_mode(&metadata).to_le_bytes());
+                expected.update(hex_lower(&sha2::Sha256::digest(content)).as_bytes());
+            }
+            expected.update([0]);
+        }
         let first = host_tree_sha256_hex(tmp.path()).unwrap();
         let second = host_tree_sha256_hex(tmp.path()).unwrap();
         assert_eq!(first, second);
-        assert_eq!(first.len(), 64);
+        assert_eq!(first, hex_lower(&expected.finalize()));
     }
 
     #[cfg(unix)]

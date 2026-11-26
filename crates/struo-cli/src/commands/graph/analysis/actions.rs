@@ -245,7 +245,7 @@ impl DeclaredActionsState {
         let input_fingerprint =
             compose_target_input_fingerprint(input_digest, self.input_fingerprints);
         BuildOutcome {
-            provider: Arc::new(provider),
+            provider: provider.into(),
             action_digest: compose_target_action_digest(target_id, &self.action_digests),
             cache_keys: self.action_digests,
             input_digest,
@@ -1155,7 +1155,7 @@ fn record_producer(
     if result.outputs.is_empty() {
         return;
     }
-    let action = match recovery::StoredAction::new(action, digest) {
+    let action = match context.producers.store_action(action, digest) {
         Ok(action) => action,
         Err(error) => {
             tracing::warn!(%digest, error = %error, "could not keep action for recovery");

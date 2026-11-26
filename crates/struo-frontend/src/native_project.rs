@@ -3,7 +3,7 @@ use std::path::{Component, Path};
 
 use crate::error::{Error, Result};
 use crate::target::{AttrValue, Target};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use starlark::environment::Module;
 use starlark::values::dict::DictRef;
 use starlark::values::list::ListRef;
@@ -15,7 +15,7 @@ mod invocation;
 pub use export::{export_native_projects, ExportedNativeProject, NativeProjectExport};
 pub use invocation::{native_invocation, NativeInvocation};
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub(crate) struct NativeProjectSchema {
     pub(crate) name: String,
     pub(crate) docs: String,

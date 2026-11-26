@@ -14,6 +14,9 @@
 //! Live groups are recorded in the [`registry`], which a termination handler
 //! walks through [`signal_action_process_groups`].
 
+mod leader;
+#[cfg(all(feature = "linux-posix-spawn", target_os = "linux", target_env = "gnu"))]
+mod native;
 mod registry;
 mod sys;
 
@@ -22,7 +25,11 @@ mod tests;
 
 use std::process::ExitStatus;
 
-use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
+#[cfg(test)]
+use tokio::process::Child;
+use tokio::process::{ChildStderr, ChildStdin, ChildStdout, Command};
+
+use leader::Leader;
 
 /// A spawned action leader together with its process group.
 ///
@@ -32,7 +39,7 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 /// can outlive a timeout or cancellation. That is a known limitation, not a
 /// guarantee this type provides.
 pub struct GroupChild {
-    child: Child,
+    child: Leader,
     #[cfg(unix)]
     group: Option<registry::Registration>,
 }
@@ -61,7 +68,7 @@ impl GroupChild {
             group.assign(child.id())?;
             drop(held);
             Ok(Self {
-                child,
+                child: Leader::Tokio(child),
                 group: Some(group),
             })
         }
@@ -69,7 +76,7 @@ impl GroupChild {
         {
             command.kill_on_drop(true);
             Ok(Self {
-                child: command.spawn()?,
+                child: Leader::Tokio(command.spawn()?),
             })
         }
     }
@@ -79,22 +86,22 @@ impl GroupChild {
     /// [`GroupChild::take_stdout`] and its siblings instead.
     #[cfg(test)]
     pub(crate) fn child(&mut self) -> &mut Child {
-        &mut self.child
+        self.child.tokio()
     }
 
     /// The leader's stdin pipe, if it was piped and not taken yet.
     pub fn take_stdin(&mut self) -> Option<ChildStdin> {
-        self.child.stdin.take()
+        self.child.take_stdin()
     }
 
     /// The leader's stdout pipe, if it was piped and not taken yet.
     pub fn take_stdout(&mut self) -> Option<ChildStdout> {
-        self.child.stdout.take()
+        self.child.take_stdout()
     }
 
     /// The leader's stderr pipe, if it was piped and not taken yet.
     pub fn take_stderr(&mut self) -> Option<ChildStderr> {
-        self.child.stderr.take()
+        self.child.take_stderr()
     }
 
     /// Resolve once the leader has exited, without reaping it.
