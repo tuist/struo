@@ -13,6 +13,7 @@ def _swift_package_workspace_resolver(ctx):
     swiftc = _resolve_swiftc(manifest_platform, attrs.get("sdk_variant") or "simulator", attrs.get("xcode_developer_dir") or "")
     swift = _swiftpm_swift_executable(attrs.get("swift") or "swift", attrs.get("xcode_developer_dir") or "", swiftc["swiftc_path"])
     absolute_package_path = _swiftpm_absolute_package_path(ctx, attrs.get("package_path") or ".")
+    package_dir = _xcode_workspace_input_path(absolute_package_path)
     # Shared manifest-dedupe map: each `swift package dump-package` invocation
     # bootstraps Swift and can take a couple seconds, and the same package
     # directory is often visited more than once during resolution. Threading
@@ -20,12 +21,12 @@ def _swift_package_workspace_resolver(ctx):
     swift_info_cache = {}
     info = json_decode(_swift_package_metadata([swift, "package", "dump-package", "--package-path", absolute_package_path], absolute_package_path, env = swiftc["env"]))
     info = _xcode_swift_package_with_resolved_paths(info, swift, absolute_package_path, env = swiftc["env"])
-    info = _xcode_swift_package_with_implicit_resources(package_path, absolute_package_path, info)
+    info = _xcode_swift_package_with_implicit_resources(package_dir, absolute_package_path, info)
     swift_info_cache[absolute_package_path] = {"info": info}
-    package = {"identity": _basename(package_path) or info.get("name") or ctx["label"]["name"], "path": package_path, "info": info}
+    package = {"identity": _basename(package_path) or info.get("name") or ctx["label"]["name"], "path": package_dir, "info": info}
     local_packages = _xcode_expand_swift_package_infos(ctx, [package], cache = swift_info_cache, follow_resolved = False)
     remote_dependencies = any([dependency.get("sourceControl") or dependency.get("registry") for local in local_packages for dependency in local["info"].get("dependencies") or []])
-    remote_packages = _swift_package_remote_infos(ctx, info, swift, swiftc["env"], absolute_package_path, package_path, cache = swift_info_cache, remote_dependencies = remote_dependencies)
+    remote_packages = _swift_package_remote_infos(ctx, info, swift, swiftc["env"], absolute_package_path, package_dir, cache = swift_info_cache, remote_dependencies = remote_dependencies)
     packages = _xcode_expand_swift_package_infos(ctx, local_packages + remote_packages, cache = swift_info_cache, follow_resolved = False)
     graph = _xcode_local_swift_package_specs(ctx, packages, attrs.get("platform") or "macos", attrs.get("minimum_os") or "13.0", attrs.get("sdk_variant") or "simulator", root_identities = [package["identity"]])
     for spec in graph["specs"]:
