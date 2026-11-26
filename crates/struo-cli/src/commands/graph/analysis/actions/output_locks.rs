@@ -34,6 +34,27 @@ impl OutputLock {
         LockPlan::new(workspace, digest, outputs)?.open(false)
     }
 
+    /// Named slots stand for host resources, such as a simulator, so they
+    /// must also exclude other Struo processes: `struo test` runs each batch
+    /// in its own process with its own resource pool.
+    pub(super) fn open_slots(request: &struo_core::ResourceRequest) -> Result<Vec<Self>> {
+        if request.slots.is_empty() {
+            return Ok(Vec::new());
+        }
+        let directory = struo_core::Xdg::from_env()
+            .struo_runtime()
+            .join("locks/slots");
+        let paths = request
+            .slots
+            .keys()
+            .map(|name| {
+                let key = Digest::of_bytes(name.as_bytes());
+                (directory.join(format!("{key}.lock")), true)
+            })
+            .collect();
+        LockPlan { directory, paths }.open(false)
+    }
+
     pub(super) fn try_lock(&self) -> std::result::Result<(), TryLockError> {
         if self.exclusive {
             self.file.try_lock()

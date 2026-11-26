@@ -1257,6 +1257,7 @@ async fn resolve_cacheable_declared_action(
             .iter()
             .chain(&declared.clean_paths)
             .map(String::as_str),
+        action.resource_request(),
         || resources.acquire(executor, action.resource_request()),
         |lease| async move {
             // Another task or process may have produced the result since the
@@ -1538,6 +1539,7 @@ async fn run_uncacheable_declared_action(
             .iter()
             .chain(&declared.clean_paths)
             .map(String::as_str),
+        action.resource_request(),
         || resources.acquire(executor, action.resource_request()),
         |lease| {
             let context = &context;

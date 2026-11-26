@@ -1174,6 +1174,10 @@ and includes its identity in the action's cache key.
   Booleans, floats, strings, negative values, unknown keys, and invalid dictionary
   shapes fail analysis. For example,
   `resources = {"cpu_slots": 1, "memory_bytes": 2 * 1024 * 1024 * 1024, "slots": {"device": 1}}`.
+  A named slot stands for a host resource such as a device or simulator: two
+  actions that name the same slot never run at the same time, even in separate
+  Struo processes run by the same user, such as the parallel batches of
+  `struo test`.
   These are admission estimates, not guaranteed minimums: Struo clamps requests
   to the available host pool budget. Built-in compiler target kinds declare
   their own estimates, including 4 GiB for Swift compilation, 2 GiB for Rust

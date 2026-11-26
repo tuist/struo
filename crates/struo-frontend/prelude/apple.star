@@ -6750,6 +6750,7 @@ def _apple_test_bundle_impl(ctx):
             action_env["STRUO_TEST_TARGET"] = ctx["label"]["id"]
             action_env["STRUO_TEST_LOG"] = log
             action_env["STRUO_TEST_NATIVE_RESULTS"] = native_results
+        runner_slots = {}
         if platform == "macos" or platform == "macosx":
             if xctestrun_file:
                 runner_argv = [runner_xcodebuild, "test-without-building", "-xctestrun", xctestrun_file, "-destination", "platform=macOS,arch=" + arch, "-parallel-testing-enabled", "NO"]
@@ -6796,6 +6797,9 @@ DYLD_LIBRARY_PATH={usr_lib}${{DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}} DYLD_FALL
                 for selector in selectors:
                     hosted_argv.append("-only-testing:" + module_name + "/" + selector)
                 install_application = _apple_ui_test_install_script(runner_xcrun, host_application.get("bundle_id") or "", host_application["app_path"]) if ui_testing else ""
+                # Every batch picks the same booted simulator, and a second
+                # launch of the same host kills the first before it connects.
+                runner_slots["apple-simulator-host:" + (host_application.get("bundle_id") or host_application["app_path"])] = 1
                 runner_command = simulator_setup + install_application + """
 {command} -destination "id=$simulator_id"
 """.format(command = _shell_words(hosted_argv))
@@ -6895,6 +6899,7 @@ exit "$status"
             # signals that no input digest can capture, so a cache hit
             # would surface a stale pass or an unreproducible failure.
             cacheable = False,
+            resources = {"slots": runner_slots},
             toolchain_identity = "struo.apple." + runner_type + ".runner.v2\x00" + swiftc["identity"],
             identifier = "apple_" + runner_type + ":" + ctx["label"]["id"],
         )

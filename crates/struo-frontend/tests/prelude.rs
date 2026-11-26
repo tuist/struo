@@ -9067,12 +9067,23 @@ result = repr(provider["test_info"]["command"]["argv"])
             );
             assert!(!script.contains("simctl"), "{script}");
             assert!(!script.contains("simulator_id"), "{script}");
+            assert!(run.resources.slots.is_empty(), "{:?}", run.resources);
         } else {
             assert!(
                 script.contains("-destination \"id=$simulator_id\""),
                 "{script}"
             );
             assert!(script.contains("simctl bootstatus"), "{script}");
+            // Another bundle hosted by the same app would relaunch it on the
+            // same simulator and kill this run before it connects.
+            assert_eq!(
+                run.resources
+                    .slots
+                    .get("apple-simulator-host:dev.struo.App"),
+                Some(&1),
+                "{:?}",
+                run.resources
+            );
         }
         assert_eq!(run.inputs.contains(&app_plist), hosted);
         assert!(run

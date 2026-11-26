@@ -32,9 +32,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use futures::future::{BoxFuture, FutureExt as _, Shared};
 use struo_cas::{ActionResult, CacheProvider, Digest};
-#[cfg(test)]
-use struo_core::ResourceRequest;
-use struo_core::{ResourcePool, RunEvent, RunEventBus, TargetResult};
+use struo_core::{ResourcePool, ResourceRequest, RunEvent, RunEventBus, TargetResult};
 
 use super::legacy_outputs::{self, FingerprintKind};
 use super::output_locks::{LockPlanCache, OutputLock};
@@ -504,6 +502,7 @@ impl Repair<'_> {
             self.workspace,
             Digest::of_bytes(b"output-restoration"),
             result.outputs.keys().map(String::as_str),
+            &ResourceRequest::default(),
             || resources.acquire_materialization(),
             |lease| async move {
                 let fingerprints = self
@@ -688,6 +687,7 @@ impl Repair<'_> {
             self.workspace,
             digest,
             paths.map(String::as_str),
+            action.resource_request(),
             || resources.acquire(executor, action.resource_request()),
             |lease| async move {
                 let attempt = match reporting {
@@ -864,6 +864,7 @@ pub(super) async fn with_action_lock_and_permit<'a, T, A, Admit, F, Fut>(
     workspace: &Path,
     digest: Digest,
     outputs: impl IntoIterator<Item = &'a str>,
+    request: &ResourceRequest,
     acquire: A,
     work: F,
 ) -> Result<T>
@@ -873,7 +874,8 @@ where
     F: FnOnce(struo_core::ExecutionPermit) -> Fut,
     Fut: Future<Output = Result<T>>,
 {
-    let locks = OutputLock::open_all(workspace, digest, outputs)?;
+    let mut locks = OutputLock::open_all(workspace, digest, outputs)?;
+    locks.extend(OutputLock::open_slots(request)?);
     with_output_locks_and_permit(locks, digest, acquire, work).await
 }
 
