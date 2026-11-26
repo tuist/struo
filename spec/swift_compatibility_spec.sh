@@ -85,6 +85,30 @@ SWIFT
     [ "$("$binary")" = second:23 ]
   }
 
+  build_default_isolation_package() {
+    mkdir -p "$WORKSPACE/Sources/DefaultIsolation"
+    cat > "$WORKSPACE/Package.swift" <<'SWIFT'
+// swift-tools-version: 6.2
+import PackageDescription
+let package = Package(name: "DefaultIsolationRepro", platforms: [.macOS(.v14)], targets: [
+    .target(name: "DefaultIsolation", swiftSettings: [.defaultIsolation(MainActor.self)]),
+])
+SWIFT
+    cat > "$WORKSPACE/Sources/DefaultIsolation/DefaultIsolation.swift" <<'SWIFT'
+public final class MutableBox {
+    public var value: Int
+    public init(value: Int = 0) { self.value = value }
+}
+public enum GlobalState {
+    public static let shared = MutableBox()
+}
+SWIFT
+    struo --memory-limit 2GiB build SwiftPackage_DefaultIsolationRepro_DefaultIsolation --quiet > "$WORKSPACE/build.out" 2> "$WORKSPACE/build.err" || {
+      cat "$WORKSPACE/build.out" "$WORKSPACE/build.err"
+      return 1
+    }
+  }
+
   test_dependency_resources() {
     mkdir -p "$WORKSPACE/Sources/Data" "$WORKSPACE/Sources/Probe" "$WORKSPACE/Tests/DataTests" \
       "$WORKSPACE/Sources/CValue/include" "$WORKSPACE/Sources/CValue/Private/nested" \
@@ -290,6 +314,15 @@ SWIFT
     When call test_manifest_build_settings
     The status should be success
     The output should equal ''
+  End
+
+  It 'compiles a package target with its declared default isolation'
+    Skip if 'Apple Swift toolchain unavailable on this host' swift_package_tools_unavailable
+
+    When call build_default_isolation_package
+    The status should be success
+    The output should equal ''
+    The path "$WORKSPACE/.struo/out/SwiftPackage_DefaultIsolationRepro_DefaultIsolation/DefaultIsolation.swiftmodule" should be exist
   End
 
   It 'builds and tests a discovered Swift package without a Struo manifest'
