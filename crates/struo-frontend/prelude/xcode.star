@@ -1262,47 +1262,53 @@ def _xcode_identifier_modifier(value, modifier):
 def _xcode_expand_once(text, subs, depth, opening, closing):
     if depth > 16:
         return text
-    start = text.find(opening)
-    if start < 0:
-        return text
-    # Find the matching `closing` while accounting for nested `opening`
-    # tokens so `$(A_$(B))` resolves the outer name to `A_<value of B>`.
-    scan = start + len(opening)
-    nesting = 1
-    end = -1
-    for _ in range(len(text) - scan + 1):
-        if scan >= len(text):
+    # Scan left to right so an unknown reference stays in place without
+    # blocking later ones; `depth` only bounds nested and chained expansion.
+    out = []
+    pos = 0
+    for _ in range(len(text) + 1):
+        start = text.find(opening, pos)
+        if start < 0:
             break
-        if text[scan:scan + len(opening)] == opening:
-            nesting += 1
-            scan += len(opening)
-            continue
-        if text[scan:scan + len(closing)] == closing:
-            nesting -= 1
-            if nesting == 0:
-                end = scan
+        # Find the matching `closing` while accounting for nested `opening`
+        # tokens so `$(A_$(B))` resolves the outer name to `A_<value of B>`.
+        scan = start + len(opening)
+        nesting = 1
+        end = -1
+        for _ in range(len(text) - scan + 1):
+            if scan >= len(text):
                 break
-            scan += len(closing)
-            continue
-        scan += 1
-    if end < 0:
-        return text
-    expression = text[start + len(opening):end]
-    # Recursively expand any inner `$(...)` or `${...}` inside the
-    # captured expression before looking up the resulting name.
-    expression = _xcode_expand_once(expression, subs, depth + 1, opening, closing)
-    parts = expression.split(":")
-    name = parts[0]
-    head = text[:start]
-    tail = text[end + 1:]
-    if name in subs:
-        replacement = _xcode_expand_once(str(subs[name]), subs, depth + 1, opening, closing)
-        for modifier in parts[1:]:
-            if modifier == "rfc1034identifier" or modifier == "c99extidentifier":
-                replacement = _xcode_identifier_modifier(replacement, modifier)
-    else:
-        replacement = opening + expression + closing
-    return _xcode_expand_once(head + replacement + tail, subs, depth + 1, opening, closing)
+            if text[scan:scan + len(opening)] == opening:
+                nesting += 1
+                scan += len(opening)
+                continue
+            if text[scan:scan + len(closing)] == closing:
+                nesting -= 1
+                if nesting == 0:
+                    end = scan
+                    break
+                scan += len(closing)
+                continue
+            scan += 1
+        if end < 0:
+            break
+        # Recursively expand any inner `$(...)` or `${...}` inside the
+        # captured expression before looking up the resulting name.
+        expression = _xcode_expand_once(text[start + len(opening):end], subs, depth + 1, opening, closing)
+        parts = expression.split(":")
+        name = parts[0]
+        out.append(text[pos:start])
+        if name in subs:
+            replacement = _xcode_expand_once(str(subs[name]), subs, depth + 1, opening, closing)
+            for modifier in parts[1:]:
+                if modifier == "rfc1034identifier" or modifier == "c99extidentifier":
+                    replacement = _xcode_identifier_modifier(replacement, modifier)
+            out.append(replacement)
+        else:
+            out.append(opening + expression + closing)
+        pos = end + len(closing)
+    out.append(text[pos:])
+    return "".join(out)
 
 _XCODE_TOOLCHAIN_VERSION_STATE = {"parsed": None}
 
@@ -1359,7 +1365,7 @@ def _xcode_toolchain_version(ctx):
     _XCODE_TOOLCHAIN_VERSION_STATE["parsed"] = parsed
     return parsed
 
-def _xcode_setting_subs(ctx, target_name, product_name, sdkroot, settings = None, project_dir = "", configuration = "", project_name = ""):
+def _xcode_setting_subs(ctx, target_name, product_name, sdkroot, settings = None, project_dir = "", configuration = "", project_name = "", sdk_name = ""):
     package = (ctx.get("label") or {}).get("package") or ""
     target_build_dir = ".struo/out/" + ((package + "/") if package else "") + _xcode_sanitized_target_name(target_name)
     source_root = project_dir or "."
@@ -1398,6 +1404,32 @@ def _xcode_setting_subs(ctx, target_name, product_name, sdkroot, settings = None
     for key, value in (settings or {}).items():
         if key not in subs:
             subs[key] = _xcode_scalar(value)
+    # Xcode derives its developer, platform, and toolchain directories from
+    # the selected SDK; flags such as `-L$(DT_TOOLCHAIN_DIR)/usr/lib/swift`
+    # reference them. As in Xcode, `DT_TOOLCHAIN_DIR` is the default toolchain
+    # unless the environment overrides it, while `TOOLCHAIN_DIR` follows the
+    # toolchain that provides the compiler, such as one selected by `TOOLCHAINS`.
+    # Command Line Tools has no platform bundles and is its own toolchain.
+    sdkroot = sdkroot or ""
+    developer_dir = ""
+    if "/Platforms/" in sdkroot:
+        developer_dir = sdkroot.split("/Platforms/")[0]
+        default_toolchain = developer_dir + "/Toolchains/XcodeDefault.xctoolchain"
+        if "/Developer/SDKs/" in sdkroot:
+            subs.setdefault("PLATFORM_DIR", sdkroot.split("/Developer/SDKs/")[0])
+    elif "/CommandLineTools/SDKs/" in sdkroot:
+        developer_dir = sdkroot.split("/SDKs/")[0]
+        default_toolchain = developer_dir
+    if developer_dir:
+        selected_toolchain = default_toolchain
+        if sdk_name and not ctx["attr"].get("xcode_developer_dir"):
+            # The same lookup that resolves the compiler, so the flags name its toolchain.
+            swiftc = host_command([host_which("xcrun"), "--sdk", sdk_name, "--find", "swiftc"], env = _developer_env(""), check = False).strip()
+            if swiftc.endswith("/usr/bin/swiftc"):
+                selected_toolchain = swiftc[:-len("/usr/bin/swiftc")]
+        subs.setdefault("DEVELOPER_DIR", developer_dir)
+        subs.setdefault("TOOLCHAIN_DIR", selected_toolchain)
+        subs.setdefault("DT_TOOLCHAIN_DIR", host_env("DT_TOOLCHAIN_DIR") or default_toolchain)
     return subs
 
 def _xcode_variable_names(text):
@@ -5422,7 +5454,7 @@ def _xcode_lower_target(ctx, objects, target, project_settings, name_to_id, dep_
     if not product_name_seed or product_name_seed.startswith("$("):
         product_name_seed = target_name
     resolved_sdkroot = host_command([host_which("xcrun"), "--sdk", sdk_name, "--show-sdk-path"], env = _developer_env(ctx["attr"].get("xcode_developer_dir") or "")).strip() if sdk_name else sdkroot
-    subs = _xcode_setting_subs(ctx, target_name, product_name_seed, resolved_sdkroot, settings, project_dir, selected_configuration, project_name)
+    subs = _xcode_setting_subs(ctx, target_name, product_name_seed, resolved_sdkroot, settings, project_dir, selected_configuration, project_name, sdk_name)
     wrapper_suffix = {"test": ".xctest", "application": ".app", "extension": ".appex", "watch_app": ".app", "framework": ".framework", "bundle": ".bundle"}.get(kind) or ""
     static_library = kind == "library" or (kind == "framework" and _xcode_framework_is_static(settings, product_type))
     if static_library:

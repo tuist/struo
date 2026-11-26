@@ -294,6 +294,53 @@ SWIFT
     The output should equal ''
   End
 
+  exercise_toolchain_linker_settings() {
+    developer="$SPEC_ROOT/Xcode.app/Contents/Developer"
+    mkdir -p "$SPEC_ROOT/tools" "$WORKSPACE/App.xcodeproj" "$WORKSPACE/Sources"
+    cat > "$SPEC_ROOT/tools/xcrun" <<SH
+#!/bin/sh
+case " \$* " in
+  *' --show-sdk-path '*) printf '%s\n' '$developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk' ;;
+  *' --find swiftc '*) printf '%s\n' '$SPEC_ROOT/swift-6.3-RELEASE.xctoolchain/usr/bin/swiftc' ;;
+esac
+SH
+    chmod +x "$SPEC_ROOT/tools/xcrun"
+    printf 'print("app")\n' > "$WORKSPACE/Sources/main.swift"
+    cat > "$WORKSPACE/App.xcodeproj/project.xcproj" <<'JSON'
+{
+  "default-configuration": "Debug",
+  "configurations": ["Debug"],
+  "files": [{"path": "Sources/main.swift", "target-membership": ["App/compile-sources"]}],
+  "targets": [{
+    "name": "App",
+    "product-type": "application",
+    "build-phases": ["compile-sources"],
+    "build-settings": {
+      "PRODUCT_BUNDLE_IDENTIFIER": "dev.struo.toolchain-settings",
+      "PRODUCT_NAME": "App",
+      "OTHER_LDFLAGS": ["-L$(DT_TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME)", "-L$(TOOLCHAIN_DIR)/usr/lib", "-F$(PLATFORM_DIR)/Developer/Library/Frameworks", "-L$(DEVELOPER_DIR)/usr/lib"]
+    }
+  }],
+  "build-settings": {"SDKROOT": "macosx", "MACOSX_DEPLOYMENT_TARGET": "14.0"}
+}
+JSON
+    DT_TOOLCHAIN_DIR='' PATH="$SPEC_ROOT/tools:$PATH" graph_snapshot || return
+    jq -e --arg developer "$developer" --arg toolchain "$SPEC_ROOT/swift-6.3-RELEASE.xctoolchain" '
+      .App.attrs.linkopts == [
+        "-L\($developer)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx",
+        "-L\($toolchain)/usr/lib",
+        "-F\($developer)/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-L\($developer)/usr/lib"
+      ]
+    ' "$WORKSPACE/graph.json" >/dev/null || { jq '.App.attrs.linkopts' "$WORKSPACE/graph.json"; return 1; }
+  }
+
+  It 'expands Xcode toolchain and platform directories in linker flags'
+    When call exercise_toolchain_linker_settings
+    The status should be success
+    The output should equal ''
+  End
+
   It 'accepts local package spelling aliases without duplicating a native package target'
     Skip if 'requires Xcode' native_graph_toolchain_unavailable
     When call exercise_package_path_alias

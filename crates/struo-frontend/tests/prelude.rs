@@ -17602,12 +17602,14 @@ result = repr([
     _xcode_resolve_vars("${{TARGET_NAME}}/${{PRODUCT_NAME}}", subs),
     _xcode_resolve_vars("$(PODS_TARGET_SRCROOT)/Sources", subs),
     _xcode_resolve_vars("$(UNKNOWN_VAR)", subs),
+    _xcode_resolve_vars("$(UNKNOWN_VAR)/$(TARGET_NAME)/${{UNKNOWN_VAR}}/${{PRODUCT_NAME}}", subs),
+    _xcode_resolve_vars(" ".join(["$(UNKNOWN_" + str(index) + ")" for index in range(20)] + ["$(TARGET_NAME)"]), subs).split(" ")[-1],
 ])
 "#
     );
     assert_eq!(
         eval_prelude_source_to_repr(source).unwrap(),
-        r#"["AppTests", "dev.struo.App", "App/App", "Pods/Library/Sources", "$(UNKNOWN_VAR)"]"#
+        r#"["AppTests", "dev.struo.App", "App/App", "Pods/Library/Sources", "$(UNKNOWN_VAR)", "$(UNKNOWN_VAR)/App/${UNKNOWN_VAR}/App", "App"]"#
     );
 }
 
@@ -17636,6 +17638,42 @@ result = repr([
     assert_eq!(
         eval_prelude_source_to_repr(source).unwrap(),
         r#"["Dependencies/Framework.framework", "App"]"#
+    );
+}
+
+#[test]
+fn prelude_xcode_setting_subs_derive_toolchain_directories_like_xcode() {
+    let prelude = xcode_prelude_source();
+    let source = format!(
+        r#"{prelude}
+def host_env(name):
+    return ""
+
+def host_which(name):
+    return "/usr/bin/" + name
+
+def host_command(argv, env = None, check = True):
+    return ""
+
+ctx = {{"attr": {{}}}}
+clt = _xcode_setting_subs(ctx, "App", "App", "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk", sdk_name = "macosx")
+xcode = _xcode_setting_subs(
+    ctx,
+    "App",
+    "App",
+    "/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+    {{"TOOLCHAIN_DIR": ""}},
+    sdk_name = "macosx",
+)
+result = repr([
+    [clt.get(key) for key in ["DEVELOPER_DIR", "TOOLCHAIN_DIR", "DT_TOOLCHAIN_DIR", "PLATFORM_DIR"]],
+    [xcode.get(key) for key in ["TOOLCHAIN_DIR", "DT_TOOLCHAIN_DIR"]],
+])
+"#
+    );
+    assert_eq!(
+        eval_prelude_source_to_repr(source).unwrap(),
+        r#"[["/Library/Developer/CommandLineTools", "/Library/Developer/CommandLineTools", "/Library/Developer/CommandLineTools", None], ["", "/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain"]]"#
     );
 }
 
