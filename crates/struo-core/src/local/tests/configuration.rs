@@ -35,7 +35,14 @@ async fn path_cwd_environment_and_shared_redirects_match_command_semantics() {
                 std::fs::read_to_string(output.resolve(workspace.path())).unwrap(),
                 format!(
                     "{}|a=b c|quoted arg|err",
-                    workspace.path().join("sub").display()
+                    // The shell reports the physical directory, and macOS
+                    // temporary directories sit behind the /var symlink.
+                    workspace
+                        .path()
+                        .join("sub")
+                        .canonicalize()
+                        .unwrap()
+                        .display()
                 )
             );
         }
