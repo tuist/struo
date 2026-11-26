@@ -1318,26 +1318,117 @@ def _json_escape(value):
 def _json_literal(value):
     return "\"" + _json_escape(value) + "\""
 
-_IOS_SIMULATOR_BOOTED_FILTER = "/iPhone/ s/^.* (\\([0-9A-Fa-f-][0-9A-Fa-f-]*\\)) (Booted)[[:space:]]*$/\\1/p; /iPad/ s/^.* (\\([0-9A-Fa-f-][0-9A-Fa-f-]*\\)) (Booted)[[:space:]]*$/\\1/p"
-_IOS_SIMULATOR_SHUTDOWN_FILTER = "/iPhone/ s/^.* (\\([0-9A-Fa-f-][0-9A-Fa-f-]*\\)) (Shutdown)[[:space:]]*$/\\1/p; /iPad/ s/^.* (\\([0-9A-Fa-f-][0-9A-Fa-f-]*\\)) (Shutdown)[[:space:]]*$/\\1/p"
+# Each run uses a simulator Struo owns, named after its device type and
+# runtime, created on first use and reused afterwards, the model rules_apple's
+# simulator creator uses. Without an explicit OS version, the runtime matches
+# the SDK the bundle was built with, falling back to the newest installed
+# runtime of the platform.
+_APPLE_SIMULATORS = {
+    "ios": ("iOS", "iphonesimulator", "iPhone 15"),
+    "tvos": ("tvOS", "appletvsimulator", "Apple TV 4K (3rd generation)"),
+    "watchos": ("watchOS", "watchsimulator", "Apple Watch Series 9 (45mm)"),
+    "visionos": ("visionOS", "xrsimulator", "Apple Vision Pro"),
+    "xros": ("visionOS", "xrsimulator", "Apple Vision Pro"),
+}
 
-def _ios_simulator_selection_script(xcrun):
-    return """simulator_id="${{STRUO_APPLE_SIMULATOR_UDID:-}}"
+# Actions that may create a Struo simulator hold this slot, so parallel test
+# batches and launches cannot each create the same missing simulator.
+_APPLE_SIMULATOR_CREATION_SLOT = "apple-simulator-create"
+
+def _apple_simulator_selection_script(xcrun, platform, device_type = "", os_version = ""):
+    os_name, sdk, default_device_type = _APPLE_SIMULATORS[platform]
+    device_type = device_type or default_device_type
+    if os_version:
+        version_lookup = "version=" + _shell_literal(os_version) + "\n  fallback=''"
+        missing_runtime = "no " + os_name + " " + os_version + " simulator runtime is installed; install it with: xcodebuild -downloadPlatform " + os_name + " -buildVersion " + os_version + ", or list installed runtimes with: xcrun simctl list runtimes"
+    else:
+        version_lookup = "version=$(" + _shell_literal(xcrun) + " --sdk " + sdk + " --show-sdk-version 2>/dev/null || true)\n  fallback=1"
+        missing_runtime = "no " + os_name + " simulator runtime is installed; install one with: xcodebuild -downloadPlatform " + os_name
+    return """simulator_id="${{STRUO_APPLE_SIMULATOR_UDID:-${{simulator_id:-}}}}"
 if [ -z "$simulator_id" ]; then
-  simulator_id=$({xcrun} simctl list devices booted | sed -n {booted_filter} | head -n 1)
-fi
-if [ -z "$simulator_id" ]; then
-  simulator_id=$({xcrun} simctl list devices available | sed -n {shutdown_filter} | head -n 1)
-fi
-if [ -z "$simulator_id" ]; then
-  echo "error: no booted or available iOS simulator found" >&2
-  exit 1
+  {version_lookup}
+  runtime=$({xcrun} simctl list runtimes available | sed -n {runtime_filter} | awk -v version="$version" -v fallback="$fallback" '$1 == version || index($1, version ".") == 1 {{ match_line = $0 }} {{ last = $0 }} END {{ print (match_line != "" ? match_line : (fallback != "" ? last : "")) }}')
+  if [ -z "$runtime" ]; then
+    echo {missing_runtime} >&2
+    exit 1
+  fi
+  simulator_name={simulator_name_prefix}"${{runtime%% *}})"
+  simulator_id=$({xcrun} simctl list devices available | awk -v prefix="    $simulator_name (" 'index($0, prefix) == 1 {{ rest = substr($0, length(prefix) + 1); print substr(rest, 1, index(rest, ")") - 1); exit }}')
+  if [ -z "$simulator_id" ]; then
+    simulator_id=$({xcrun} simctl create "$simulator_name" {device_type_literal} "${{runtime#* }}") || {{
+      echo "error: could not create the $simulator_name simulator; check device_type against: xcrun simctl list devicetypes" >&2
+      exit 1
+    }}
+  fi
 fi
 """.format(
         xcrun = _shell_literal(xcrun),
-        booted_filter = _shell_literal(_IOS_SIMULATOR_BOOTED_FILTER),
-        shutdown_filter = _shell_literal(_IOS_SIMULATOR_SHUTDOWN_FILTER),
+        version_lookup = version_lookup,
+        missing_runtime = _shell_literal("error: " + missing_runtime),
+        simulator_name_prefix = _shell_literal("Struo " + device_type + " (" + os_name + " "),
+        device_type_literal = _shell_literal(device_type),
+        runtime_filter = _shell_literal("s/^" + os_name + " \\([0-9.][0-9.]*\\) (.*) - \\(com\\.apple\\.CoreSimulator\\.SimRuntime\\.[^ ]*\\)[[:space:]]*$/\\1 \\2/p"),
     )
+
+_APPLE_SIMULATOR_FAMILIES = {
+    "ios": "iPhone,iPad",
+    "tvos": "Apple TV",
+    "watchos": "Apple Watch",
+    "visionos": "Apple Vision",
+    "xros": "Apple Vision",
+}
+
+# Ranks the simulators that `simctl list devicetypes` and `simctl list devices
+# available` print: the runtime must be at least `min` (and match `want_os`
+# when set), the device name must start with one of the platform's families
+# (and equal `want_type` when set). Booted beats shut down, an earlier family
+# beats a later one, and a newer device type beats an older one.
+_APPLE_SIMULATOR_RANKING = """
+function version(s,  parts, count) {
+  count = split(s, parts, ".")
+  return parts[1] * 65536 + (count > 1 ? parts[2] : 0) * 256 + (count > 2 ? parts[3] : 0)
+}
+BEGIN { family_count = split(families, family, ",") }
+/^== Devices ==/ { devices = 1; next }
+!devices {
+  if (match($0, / \(com\.apple\.CoreSimulator\.SimDeviceType\.[^)]*\)[[:space:]]*$/)) type_rank[substr($0, 1, RSTART - 1)] = NR
+  next
+}
+/^-- / {
+  runtime_ok = $2 == os && version($3) >= version(min) && (want_os == "" || $3 == want_os || index($3, want_os ".") == 1)
+  next
+}
+runtime_ok && match($0, / \([0-9A-Fa-f-]+\) \((Booted|Shutdown)\)[[:space:]]*$/) {
+  name = substr($0, 5, RSTART - 5)
+  rest = substr($0, RSTART + 2)
+  udid = substr(rest, 1, index(rest, ")") - 1)
+  if (want_type != "" && tolower(name) != tolower(want_type)) next
+  family_rank = 0
+  for (i = 1; i <= family_count; i++) if (!family_rank && index(name, family[i]) == 1) family_rank = family_count - i + 1
+  if (!family_rank) next
+  score = (index(rest, "(Booted)") ? 2 : 1) * 100000000 + family_rank * 1000000 + type_rank[name]
+  if (score > best) { best = score; best_udid = udid }
+}
+END { print best_udid }
+"""
+
+# `struo run` follows rules_apple's `bazel run`: it uses the best compatible
+# simulator that already exists and creates one only when none fits.
+def _apple_simulator_run_selection_script(xcrun, platform, minimum_os, device_type = "", os_version = ""):
+    os_name = _APPLE_SIMULATORS[platform][0]
+    return """simulator_id=""
+if [ -z "${{STRUO_APPLE_SIMULATOR_UDID:-}}" ]; then
+  simulator_id=$({{ {xcrun} simctl list devicetypes; {xcrun} simctl list devices available; }} | awk -v os={os_name} -v min={minimum_os} -v want_os={os_version} -v want_type={device_type} -v families={families} {ranking})
+fi
+""".format(
+        xcrun = _shell_literal(xcrun),
+        os_name = _shell_literal(os_name),
+        minimum_os = _shell_literal(minimum_os),
+        os_version = _shell_literal(os_version),
+        device_type = _shell_literal(device_type),
+        families = _shell_literal(_APPLE_SIMULATOR_FAMILIES[platform]),
+        ranking = _shell_literal(_APPLE_SIMULATOR_RANKING),
+    ) + _apple_simulator_selection_script(xcrun, platform, device_type, os_version)
 
 def _apple_ui_test_install_script(xcrun, bundle_id, app_path):
     return """{xcrun} simctl terminate "$simulator_id" {bundle_id} >/dev/null 2>&1 || true
@@ -4812,7 +4903,7 @@ def shell_quote_for_action(path):
     escaped = path.replace("'", "'\"'\"'")
     return "'" + escaped + "'"
 
-def _apple_application_run_script(label_id, platform, sdk_variant, xcrun, app_path, bundle_id, run_dir, run_record, run_log, visible):
+def _apple_application_run_script(label_id, platform, sdk_variant, xcrun, app_path, bundle_id, run_dir, run_record, run_log, visible, minimum_os = "", device_type = "", os_version = ""):
     target_json = _json_literal(label_id)
     platform_json = _json_literal(platform)
     bundle_json = _json_literal(bundle_id)
@@ -4832,7 +4923,7 @@ printf '%s\\n' {record_json} > {record}
         record_suffix = '"}'
         visible_command = """/usr/bin/open -a Simulator --args -CurrentDeviceUDID "$simulator_id" >> {log} 2>&1 || true
 """.format(log = _shell_literal(run_log)) if visible else ""
-        command = _ios_simulator_selection_script(xcrun) + """
+        command = _apple_simulator_run_selection_script(xcrun, platform, minimum_os, device_type, os_version) + """
 {xcrun} simctl boot "$simulator_id" >> {log} 2>&1 || true
 {visible_command}{xcrun} simctl bootstatus "$simulator_id" -b >> {log} 2>&1
 {xcrun} simctl install "$simulator_id" {app} >> {log} 2>&1
@@ -5224,10 +5315,11 @@ def _apple_application_impl(ctx):
         prepare_path(run_dir, kind = "directory", identifier = "apple_application_run_dir:" + ctx["label"]["id"])
         run_action(
             display_name = "Launch application · " + ctx["label"]["name"],
-            argv = [host_which("sh"), "-c", _apple_application_run_script(ctx["label"]["id"], platform, sdk_variant, runner_xcrun, app_path, bundle_id, run_dir, run_record, run_log, run_visible)],
+            argv = [host_which("sh"), "-c", _apple_application_run_script(ctx["label"]["id"], platform, sdk_variant, runner_xcrun, app_path, bundle_id, run_dir, run_record, run_log, run_visible, minimum_os, attrs.get("device_type") or "", attrs.get("os_version") or "")],
             outputs = [run_dir, run_record, run_log],
             env = swiftc["env"],
             cacheable = False,
+            resources = {"slots": {_APPLE_SIMULATOR_CREATION_SLOT: 1}} if runner_xcrun else {},
             toolchain_identity = "struo.apple.application.run.v1\x00" + swiftc["identity"],
             identifier = "apple_application_run_" + product_name,
         )
@@ -6786,8 +6878,23 @@ DYLD_LIBRARY_PATH={usr_lib}${{DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}} DYLD_FALL
                 command = _shell_words(runner_argv),
             )
         elif sdk_variant == "simulator":
-            simulator_setup = _ios_simulator_selection_script(runner_xcrun) + """
-{xcrun} simctl boot "$simulator_id" >/dev/null 2>&1 || true
+            # Finding or creating the simulator holds the creation slot only
+            # for that step, so batches still run their tests in parallel.
+            simulator_dir = ctx["build_dir"] + "/simulator/" + ((ctx.get("test") or {}).get("batch_id") or "default")
+            simulator_id_file = simulator_dir + "/simulator_id"
+            run_action(
+                display_name = "Select simulator · " + ctx["label"]["name"],
+                argv = [host_which("sh"), "-c", "set -eu\n" + _apple_simulator_selection_script(runner_xcrun, platform, attrs.get("device_type") or "", attrs.get("os_version") or "") + "printf '%s' \"$simulator_id\" > " + _shell_literal(simulator_id_file) + "\n"],
+                outputs = [simulator_id_file],
+                create_dirs = [simulator_dir],
+                env = {"STRUO_APPLE_SIMULATOR_UDID": requested_simulator} if requested_simulator else {},
+                cacheable = False,
+                resources = {"slots": {_APPLE_SIMULATOR_CREATION_SLOT: 1}},
+                identifier = "apple_simulator_select:" + ctx["label"]["id"],
+            )
+            runner_files.append(simulator_id_file)
+            simulator_setup = """simulator_id=$(cat {simulator_id_file})
+{xcrun} simctl boot "$simulator_id" >/dev/null 2>&1 || true""".format(simulator_id_file = _shell_literal(simulator_id_file), xcrun = _shell_literal(runner_xcrun)) + """
 {xcrun} simctl bootstatus "$simulator_id" -b
 """.format(xcrun = _shell_literal(runner_xcrun))
             if host_application:
@@ -8141,6 +8248,8 @@ apple_application = target_kind(
         attr("sdk_variant", "string", default = "\"simulator\"", docs = "`simulator` or `device` SDK selection. Ignored on macOS", configurable = False),
         attr("xcode_developer_dir", "string", docs = "Pin Xcode's Developer directory on macOS or an xtool Darwin SDK's Developer directory on Linux. Linux defaults to the registered darwin Swift SDK; the selection contributes to action cache identity."),
         attr("families", "list<string>", default = "[]", docs = "Supported device families, such as iphone or ipad"),
+        attr("device_type", "string", docs = "Simulator device type `struo run` uses, as listed by `xcrun simctl list devicetypes`, such as `iPad Air 11-inch (M2)`. Defaults to the best existing simulator for the platform"),
+        attr("os_version", "string", docs = "Simulator runtime version `struo run` uses, as listed by `xcrun simctl list runtimes`, such as `18.2`. Defaults to any runtime at least `minimum_os`"),
         attr("product_name", "string", docs = "Application product name. Defaults to the target name", configurable = False),
         attr("module_name", "string", docs = "Swift module name. Defaults to the product name", configurable = False),
         attr("resources", "list<string>", default = "[]", docs = "Resource and asset catalog glob patterns"),
@@ -8288,6 +8397,8 @@ apple_test_bundle = target_kind(
         attr("info_plist_substitutions", "map<string,string>", default = "{}", docs = "Build-setting values substituted into `$(NAME)` or `${NAME}` placeholders in the Info.plist template", configurable = False),
         attr("entitlements", "string", docs = "Entitlements plist path"),
         attr("destination", "string", docs = "Simulator, device, or local destination selector"),
+        attr("device_type", "string", docs = "Simulator device type to run on, as listed by `xcrun simctl list devicetypes`, such as `iPad Air 11-inch (M2)`. Defaults to iPhone 15, Apple Watch Series 9 (45mm), Apple TV 4K (3rd generation), or Apple Vision Pro for the platform"),
+        attr("os_version", "string", docs = "Simulator runtime version to run on, as listed by `xcrun simctl list runtimes`, such as `18.2`. Defaults to the runtime matching the SDK the target was built with"),
         attr("test_plan", "string", docs = "XCTest plan path"),
         attr("test_env", "map<string,string>", default = "{}", docs = "Environment variables passed to the test runner"),
         attr("test_arguments", "list<string>", default = "[]", docs = "Arguments passed to the test process", configurable = False),

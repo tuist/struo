@@ -91,6 +91,8 @@ import inference and should not be authored manually.
 | `sdk_variant` | string | no | `simulator` | `simulator` or `device`; ignored on macOS (not configurable) |
 | `xcode_developer_dir` | string | no | active Xcode on macOS; registered `darwin` SDK on Linux | Xcode Developer directory on macOS or xtool Darwin SDK Developer directory on Linux |
 | `families` | list&lt;string&gt; | no | `[]` | Supported device families (`iphone`, `ipad`); an empty list uses `iphone` |
+| `device_type` | string | no |  | Simulator device type `struo run` uses, as listed by `xcrun simctl list devicetypes`, such as `iPad Air 11-inch (M2)`; see [Running](#running) |
+| `os_version` | string | no |  | Simulator runtime version `struo run` uses, as listed by `xcrun simctl list runtimes`, such as `18.2`; see [Running](#running) |
 | `product_name` | string | no | target name | Application product name (not configurable) |
 | `module_name` | string | no | product name | Swift module name (not configurable) |
 | `resources` | list&lt;string&gt; | no | `[]` | Resource files and directory roots placed in the application bundle |
@@ -198,6 +200,22 @@ catalogs also live in `Contents/Resources`.
 simulator apps with `simctl` boot, install, and launch. Pass
 `struo run --visible` to also open Simulator for the selected simulator
 before installing and launching the app.
+
+`struo run` picks a simulator the way the Apple Bazel rules' `bazel run`
+does. It uses the best simulator that already exists for the platform: its
+runtime must be at least `minimum_os`, a booted simulator beats a shut-down
+one, an iPhone beats an iPad, and a newer device type beats an older one.
+`device_type` and `os_version` narrow the choice to that device type and
+runtime. When no simulator fits, Struo creates one the way `struo test` does,
+named after its device type and runtime, such as `Struo iPhone 15 (iOS 26.5)`.
+Set `STRUO_APPLE_SIMULATOR_UDID` to run on a specific simulator instead.
+
+```toml
+[target.attrs]
+platform = "ios"
+device_type = "iPad Air 11-inch (M2)"
+os_version = "18.2"
+```
 
 Each run writes a run record and log under the target's output directory.
 Repeated runs launch the application again rather than replaying an

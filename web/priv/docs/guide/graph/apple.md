@@ -111,8 +111,9 @@ Launch the application in an iOS simulator:
 struo run --visible apps/Hello/Hello
 ```
 
-Struo selects or boots a simulator, installs the application bundle, and
-launches its bundle identifier. The launch runs on every invocation instead
+Struo picks the best simulator that already exists for the platform, preferring
+a booted one, or creates one when none fits. It then boots the simulator,
+installs the application bundle, and launches its bundle identifier. The launch runs on every invocation instead
 of replaying from the action cache. Omit `--visible` when Simulator does not
 need to be brought to the foreground. macOS applications use the host
 application launcher.

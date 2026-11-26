@@ -165,6 +165,9 @@ if [ "\${1:-}" = "--sdk" ]; then
   shift 2
 fi
 case "\${1:-}" in
+  --show-sdk-version)
+    printf '%s\\n' '17.5'
+    ;;
   --find)
     case "\${2:-}" in
       swiftc) printf '%s\\n' '$WORKSPACE/bin/swiftc' ;;
@@ -177,9 +180,16 @@ case "\${1:-}" in
     ;;
   simctl)
     printf '%s\\n' "\$*" >> "\$log"
-    if [ "\${2:-}" = "list" ] && [ "\${3:-}" = "devices" ] && [ "\${4:-}" = "booted" ]; then
-      printf '%s\\n' '    Apple TV (TV-DEVICE) (Booted)'
-      printf '%s\\n' '    iPhone 15 (11111111-1111-1111-1111-111111111111) (Booted)'
+    if [ "\${2:-}" = "list" ] && [ "\${3:-}" = "devicetypes" ]; then
+      printf '%s\\n' 'iPhone 15 Pro (com.apple.CoreSimulator.SimDeviceType.iPhone-15-Pro)'
+      printf '%s\\n' 'iPad Pro (com.apple.CoreSimulator.SimDeviceType.iPad-Pro)'
+    fi
+    if [ "\${2:-}" = "list" ] && [ "\${3:-}" = "devices" ]; then
+      printf '%s\\n' '== Devices ==' '-- tvOS 17.5 --'
+      printf '%s\\n' '    Apple TV (AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA) (Booted)'
+      printf '%s\\n' '-- iOS 17.5 --'
+      printf '%s\\n' '    iPad Pro (22222222-2222-2222-2222-222222222222) (Shutdown)'
+      printf '%s\\n' '    iPhone 15 Pro (11111111-1111-1111-1111-111111111111) (Booted)'
     fi
     ;;
   *)
@@ -192,22 +202,27 @@ SH
   }
 
   create_mock_apple_test_fixture() {
+    platform="${1:-ios}"
+    extra_attrs="${2:-}"
+    minimum_os=17.0
+    [ "$platform" = "watchos" ] && minimum_os=10.0
     mkdir -p "$WORKSPACE/toolchain/usr/bin" "$WORKSPACE/bin" "$WORKSPACE/apps/ios/Tests/AppTests" "$WORKSPACE/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks" "$WORKSPACE/Platforms/iPhoneSimulator.platform/Developer/usr/lib"
     cat > "$WORKSPACE/apps/ios/Tests/AppTests/AppTests.swift" <<'SWIFT'
 import Testing
 
 @Test func examplePasses() {}
 SWIFT
-    cat > "$WORKSPACE/apps/ios/struo.toml" <<'TOML'
+    cat > "$WORKSPACE/apps/ios/struo.toml" <<TOML
 [[target]]
 name = "AppTests"
 kind = "apple_test_bundle"
 srcs = ["Tests/AppTests/**/*.swift"]
 
 [target.attrs]
-platform = "ios"
+platform = "$platform"
 sdk_variant = "simulator"
-minimum_os = "17.0"
+minimum_os = "$minimum_os"
+$extra_attrs
 TOML
     cat > "$WORKSPACE/bin/codesign" <<'SH'
 #!/bin/sh
@@ -247,10 +262,15 @@ SH
 log='$WORKSPACE/xcrun.log'
 swiftc_path='$WORKSPACE/toolchain/usr/bin/swiftc'
 platform_path='$WORKSPACE/Platforms/iPhoneSimulator.platform'
+sdk=''
 if [ "\${1:-}" = "--sdk" ]; then
+  sdk="\$2"
   shift 2
 fi
 case "\${1:-}" in
+  --show-sdk-version)
+    if [ "\$sdk" = watchsimulator ]; then printf '%s\\n' '10.5'; else printf '%s\\n' '17.5'; fi
+    ;;
   --find)
     case "\${2:-}" in
       swiftc) printf '%s\\n' "\$swiftc_path" ;;
@@ -266,11 +286,19 @@ case "\${1:-}" in
     ;;
   simctl)
     printf '%s\\n' "\$*" >> "\$log"
-    if [ "\${2:-}" = "list" ] && [ "\${3:-}" = "devices" ] && [ "\${4:-}" = "booted" ]; then
-      printf '%s\\n' '    iPhone 15 (11111111-1111-1111-1111-111111111111) (Booted)'
+    if [ "\${2:-}" = "list" ] && [ "\${3:-}" = "runtimes" ]; then
+      printf '%s\\n' 'iOS 17.5 (17.5 - 21F79) - com.apple.CoreSimulator.SimRuntime.iOS-17-5'
+      printf '%s\\n' 'iOS 18.2 (18.2 - 22C150) - com.apple.CoreSimulator.SimRuntime.iOS-18-2'
+      printf '%s\\n' 'watchOS 10.5 (10.5 - 21T575) - com.apple.CoreSimulator.SimRuntime.watchOS-10-5'
     fi
-    if [ "\${2:-}" = "list" ] && [ "\${3:-}" = "devices" ] && [ "\${4:-}" = "available" ]; then
-      printf '%s\\n' '    iPad Pro (22222222-2222-2222-2222-222222222222) (Shutdown)'
+    if [ "\${2:-}" = "list" ] && [ "\${3:-}" = "devices" ]; then
+      printf '%s\\n' '    iPhone 15 (11111111-1111-1111-1111-111111111111) (Booted)'
+      printf '%s\\n' '    Apple Watch Series 9 (45mm) (33333333-3333-3333-3333-333333333333) (Shutdown)'
+      cat '$WORKSPACE/simulators' 2>/dev/null
+    fi
+    if [ "\${2:-}" = "create" ]; then
+      printf '    %s (44444444-4444-4444-4444-444444444444) (Shutdown)\\n' "\$3" >> '$WORKSPACE/simulators'
+      printf '%s\\n' '44444444-4444-4444-4444-444444444444'
     fi
     ;;
   *)
@@ -676,6 +704,7 @@ TOML
     The contents of file "$WORKSPACE/.struo/out/apps/ios/App/run/run.json" should include '"status":"launched"'
     The contents of file "$WORKSPACE/.struo/out/apps/ios/App/run/run.json" should include '"simulator_id":"11111111-1111-1111-1111-111111111111"'
     The contents of file "$WORKSPACE/xcrun.log" should include 'simctl launch 11111111-1111-1111-1111-111111111111 dev.struo.App'
+    The contents of file "$WORKSPACE/xcrun.log" should not include 'simctl create'
   End
 
   It 'exposes testable Apple test bundle artifacts'
@@ -702,6 +731,35 @@ printf "spawn_count=%s\n" "$(grep -c "simctl spawn" "$2/xcrun.log")"' sh "$STRUO
     The stdout should include '"capability":"test"'
     The stdout should include '"cache":"bypass"'
     The stdout should include 'spawn_count=2'
+  End
+
+  It 'creates and reuses a watchOS simulator for watchOS test bundles while an iPhone is booted'
+    Skip if 'Apple test runtimes require macOS' macos_runtime_unavailable
+    create_mock_apple_test_fixture watchos
+
+    When call env PATH="$WORKSPACE/toolchain/usr/bin:$PATH" /bin/sh -c '"$1" -C "$2" --format json test apps/ios/AppTests >/dev/null
+"$1" -C "$2" --format json test apps/ios/AppTests >/dev/null
+printf "created=%s\n" "$(grep -c "simctl create" "$2/xcrun.log")"
+grep "simctl create\|simctl spawn" "$2/xcrun.log"' sh "$STRUO_BIN" "$WORKSPACE"
+    The status should be success
+    The line 1 of stdout should eq 'created=1'
+    The line 2 of stdout should eq 'simctl create Struo Apple Watch Series 9 (45mm) (watchOS 10.5) Apple Watch Series 9 (45mm) com.apple.CoreSimulator.SimRuntime.watchOS-10-5'
+    The line 3 of stdout should start with 'simctl spawn 44444444-4444-4444-4444-444444444444 '
+    The line 4 of stdout should start with 'simctl spawn 44444444-4444-4444-4444-444444444444 '
+    The lines of stdout should eq 4
+  End
+
+  It 'runs Apple test bundles on the simulator chosen by device_type and os_version'
+    Skip if 'Apple test runtimes require macOS' macos_runtime_unavailable
+    create_mock_apple_test_fixture ios 'device_type = "iPad Air 11-inch (M2)"
+os_version = "18.2"'
+
+    When call env PATH="$WORKSPACE/toolchain/usr/bin:$PATH" /bin/sh -c '"$1" -C "$2" --format json test apps/ios/AppTests >/dev/null
+grep "simctl create\|simctl spawn" "$2/xcrun.log"' sh "$STRUO_BIN" "$WORKSPACE"
+    The status should be success
+    The line 1 of stdout should eq 'simctl create Struo iPad Air 11-inch (M2) (iOS 18.2) iPad Air 11-inch (M2) com.apple.CoreSimulator.SimRuntime.iOS-18-2'
+    The line 2 of stdout should start with 'simctl spawn 44444444-4444-4444-4444-444444444444 '
+    The lines of stdout should eq 2
   End
 
   It 'tests Apple test bundle artifacts through the graph command'

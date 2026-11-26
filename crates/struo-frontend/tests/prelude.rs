@@ -7721,6 +7721,7 @@ result = repr([
     );
     let store = store_for(workspace.path(), "app");
 
+    let run_source = source.clone();
     let (store, out) = with_active_store(store, || eval_prelude_source_to_repr(source));
 
     let out = out.unwrap();
@@ -7972,6 +7973,26 @@ result = repr([
         .inputs
         .iter()
         .any(|input| input.ends_with("SharedResources.bundle/_CodeSignature/CodeResources")));
+    // The launch finds or creates the simulator in the same action, so it
+    // holds the slot test batches take before they create one.
+    let run_source = format!(
+        "{}ctx[\"capability\"] = \"run\"\nprovider = _apple_application_impl(ctx)\nresult = repr(provider[\"app_path\"])\n",
+        run_source.split("provider = _apple_application_impl(ctx)").next().unwrap()
+    );
+    let store = store_for(workspace.path(), "app");
+    let (store, out) = with_active_store(store, || eval_prelude_source_to_repr(run_source));
+    out.unwrap();
+    let launch = action_by_identifier(&store, "apple_application_run_App");
+    assert!(
+        launch.argv.last().unwrap().contains("simctl create"),
+        "{launch:?}"
+    );
+    assert_eq!(
+        launch.resources.slots.get("apple-simulator-create"),
+        Some(&1),
+        "{:?}",
+        launch.resources
+    );
 }
 
 #[cfg(unix)]
@@ -9068,6 +9089,10 @@ result = repr(provider["test_info"]["command"]["argv"])
             assert!(!script.contains("simctl"), "{script}");
             assert!(!script.contains("simulator_id"), "{script}");
             assert!(run.resources.slots.is_empty(), "{:?}", run.resources);
+            assert!(!store.actions.iter().any(|action| action
+                .identifier
+                .as_deref()
+                .is_some_and(|id| id.starts_with("apple_simulator_select:"))));
         } else {
             assert!(
                 script.contains("-destination \"id=$simulator_id\""),
@@ -9084,6 +9109,22 @@ result = repr(provider["test_info"]["command"]["argv"])
                 "{:?}",
                 run.resources
             );
+            // Parallel batches would each create the missing simulator, so
+            // finding or creating it runs in its own action under one slot.
+            let select = action_by_identifier(&store, "apple_simulator_select:tests/HostedTests");
+            assert!(!select.cacheable);
+            assert_eq!(
+                select.resources.slots.get("apple-simulator-create"),
+                Some(&1),
+                "{:?}",
+                select.resources
+            );
+            assert!(
+                select.argv.last().unwrap().contains("simctl create"),
+                "{select:?}"
+            );
+            assert!(!script.contains("simctl create"), "{script}");
+            assert!(run.inputs.contains(&select.outputs[0]), "{run:?}");
         }
         assert_eq!(run.inputs.contains(&app_plist), hosted);
         assert!(run
@@ -14102,22 +14143,6 @@ result = repr([
 }
 
 #[test]
-fn prelude_ios_simulator_selection_filters_to_iphone_and_ipad() {
-    let out =
-        eval_prelude_string_function("_ios_simulator_selection_script", r#"("/usr/bin/xcrun")"#)
-            .unwrap();
-
-    assert!(out.contains("STRUO_APPLE_SIMULATOR_UDID"), "{out}");
-    assert!(out.contains("simctl list devices booted"), "{out}");
-    assert!(out.contains("simctl list devices available"), "{out}");
-    assert!(out.contains("/iPhone/ s/^.*"), "{out}");
-    assert!(out.contains("/iPad/ s/^.*"), "{out}");
-    assert!(out.contains("(Booted)[[:space:]]*$"), "{out}");
-    assert!(out.contains("(Shutdown)[[:space:]]*$"), "{out}");
-    assert!(!out.contains("sed -n 's/.*"), "{out}");
-}
-
-#[test]
 fn prelude_apple_ui_test_install_replaces_the_application_under_test() {
     let script = eval_prelude_string_function(
         "_apple_ui_test_install_script",
@@ -14140,76 +14165,243 @@ fn prelude_apple_ui_test_install_replaces_the_application_under_test() {
 }
 
 #[cfg(unix)]
-#[test]
-fn prelude_ios_simulator_selection_script_picks_booted_ios_device() {
-    let tmp = TempDir::new().unwrap();
-    let xcrun = tmp.path().join("xcrun");
-    write_executable(
-        &xcrun,
-        r#"#!/bin/sh
-if [ "${1:-}" = "simctl" ] && [ "${2:-}" = "list" ] && [ "${3:-}" = "devices" ] && [ "${4:-}" = "booted" ]; then
-  printf '%s\n' '    Apple TV (AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA) (Booted)'
-  printf '%s\n' '    iPhone Preview (BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB) (Extra) (Booted)'
-  printf '%s\n' '    iPhone 15 Pro (11111111-1111-1111-1111-111111111111) (Booted)'
-  exit 0
-fi
-if [ "${1:-}" = "simctl" ] && [ "${2:-}" = "list" ] && [ "${3:-}" = "devices" ] && [ "${4:-}" = "available" ]; then
-  printf '%s\n' '    iPad Pro (22222222-2222-2222-2222-222222222222) (Shutdown)'
-  exit 0
-fi
-exit 1
-"#,
-    );
+fn run_simulator_selection(xcrun: &Path, platform: &str) -> std::process::Output {
+    run_simulator_selection_for(xcrun, platform, "", "")
+}
+
+#[cfg(unix)]
+fn run_simulator_selection_for(
+    xcrun: &Path,
+    platform: &str,
+    device_type: &str,
+    os_version: &str,
+) -> std::process::Output {
     let call = format!(
-        "({})",
-        starlark_string_literal(&xcrun.display().to_string())
+        "({}, {}, {}, {})",
+        starlark_string_literal(&xcrun.display().to_string()),
+        starlark_string_literal(platform),
+        starlark_string_literal(device_type),
+        starlark_string_literal(os_version)
     );
     let selection_script =
-        eval_prelude_string_function("_ios_simulator_selection_script", &call).unwrap();
-    let output = Command::new("/bin/sh")
+        eval_prelude_string_function("_apple_simulator_selection_script", &call).unwrap();
+    Command::new("/bin/sh")
         .arg("-c")
         .arg(format!("{selection_script}\nprintf '%s' \"$simulator_id\""))
         .output()
-        .unwrap();
+        .unwrap()
+}
 
-    assert!(output.status.success(), "{output:?}");
-    assert_eq!(
-        String::from_utf8(output.stdout).unwrap(),
-        "11111111-1111-1111-1111-111111111111"
+#[cfg(unix)]
+fn write_stateful_simctl(dir: &Path) -> std::path::PathBuf {
+    let xcrun = dir.join("xcrun");
+    let state = dir.join("created");
+    write_executable(
+        &xcrun,
+        &format!(
+            r#"#!/bin/sh
+state='{state}'
+if [ "$1" = "--sdk" ] && [ "$3" = "--show-sdk-version" ]; then
+  case "$2" in
+    iphonesimulator) echo 17.5 ;;
+    watchsimulator) echo 11.0 ;;
+    appletvsimulator) echo 17.5 ;;
+    xrsimulator) echo 1.2 ;;
+  esac
+  exit 0
+fi
+[ "$1" = "simctl" ] || exit 1
+case "$2 $3 $4" in
+  "list runtimes available")
+    echo '== Runtimes =='
+    echo 'iOS 17.5 (17.5 - 21F79) - com.apple.CoreSimulator.SimRuntime.iOS-17-5'
+    echo 'iOS 18.2 (18.2 - 22C150) - com.apple.CoreSimulator.SimRuntime.iOS-18-2'
+    echo 'tvOS 17.5 (17.5 - 21L569) - com.apple.CoreSimulator.SimRuntime.tvOS-17-5'
+    echo 'watchOS 10.2 (10.2 - 21S364) - com.apple.CoreSimulator.SimRuntime.watchOS-10-2'
+    echo 'watchOS 10.5 (10.5 - 21T575) - com.apple.CoreSimulator.SimRuntime.watchOS-10-5'
+    echo 'visionOS 1.2 (1.2 - 21O5565d) - com.apple.CoreSimulator.SimRuntime.xrOS-1-2'
+    ;;
+  "list devices available")
+    echo '-- iOS 17.5 --'
+    echo '    iPhone 15 Pro (11111111-1111-1111-1111-111111111111) (Booted) '
+    echo '    Apple Watch Series 9 (45mm) (22222222-2222-2222-2222-222222222222) (Shutdown) '
+    cat "$state" 2>/dev/null
+    ;;
+  create*)
+    udid=$(printf '%08d-0000-0000-0000-000000000000' "$(($(cat "$state" 2>/dev/null | wc -l) + 1))")
+    printf '    %s (%s) (Shutdown) \n' "$3" "$udid" >> "$state"
+    printf '%s\n' "$*" | sed 's/^simctl //' >> "$state.log"
+    echo "$udid"
+    ;;
+  *) exit 1 ;;
+esac
+"#,
+            state = state.display()
+        ),
     );
+    xcrun
 }
 
 #[cfg(unix)]
 #[test]
-fn prelude_ios_simulator_selection_script_errors_without_ios_device() {
+fn prelude_simulator_selection_creates_then_reuses_a_dedicated_simulator() {
+    let tmp = TempDir::new().unwrap();
+    let xcrun = write_stateful_simctl(tmp.path());
+
+    for (platform, created) in [
+        (
+            "ios",
+            "create Struo iPhone 15 (iOS 17.5) iPhone 15 com.apple.CoreSimulator.SimRuntime.iOS-17-5",
+        ),
+        (
+            "watchos",
+            "create Struo Apple Watch Series 9 (45mm) (watchOS 10.5) Apple Watch Series 9 (45mm) com.apple.CoreSimulator.SimRuntime.watchOS-10-5",
+        ),
+        (
+            "tvos",
+            "create Struo Apple TV 4K (3rd generation) (tvOS 17.5) Apple TV 4K (3rd generation) com.apple.CoreSimulator.SimRuntime.tvOS-17-5",
+        ),
+        (
+            "visionos",
+            "create Struo Apple Vision Pro (visionOS 1.2) Apple Vision Pro com.apple.CoreSimulator.SimRuntime.xrOS-1-2",
+        ),
+    ] {
+        let first = run_simulator_selection(&xcrun, platform);
+        let second = run_simulator_selection(&xcrun, platform);
+
+        assert!(first.status.success(), "{platform}: {first:?}");
+        assert!(second.status.success(), "{platform}: {second:?}");
+        let simulator_id = String::from_utf8(first.stdout).unwrap();
+        assert_eq!(String::from_utf8(second.stdout).unwrap(), simulator_id, "{platform}");
+        assert!(!simulator_id.starts_with("1111") && !simulator_id.starts_with("2222"), "{platform}: {simulator_id}");
+        let log = std::fs::read_to_string(tmp.path().join("created.log")).unwrap();
+        assert_eq!(log.lines().last(), Some(created), "{platform}: {log}");
+        assert_eq!(log.matches(created).count(), 1, "{platform}: {log}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn prelude_simulator_selection_honours_device_type_and_os_version() {
+    let tmp = TempDir::new().unwrap();
+    let xcrun = write_stateful_simctl(tmp.path());
+
+    let output = run_simulator_selection_for(&xcrun, "ios", "iPad Air 11-inch (M2)", "18.2");
+
+    assert!(output.status.success(), "{output:?}");
+    let log = std::fs::read_to_string(tmp.path().join("created.log")).unwrap();
+    assert_eq!(
+        log.trim_end(),
+        "create Struo iPad Air 11-inch (M2) (iOS 18.2) iPad Air 11-inch (M2) com.apple.CoreSimulator.SimRuntime.iOS-18-2"
+    );
+
+    let missing = run_simulator_selection_for(&xcrun, "ios", "", "16.4");
+
+    assert!(!missing.status.success(), "{missing:?}");
+    assert!(String::from_utf8(missing.stderr)
+        .unwrap()
+        .contains("no iOS 16.4 simulator runtime is installed"));
+}
+
+#[cfg(unix)]
+#[test]
+fn prelude_run_simulator_selection_prefers_the_best_existing_simulator() {
     let tmp = TempDir::new().unwrap();
     let xcrun = tmp.path().join("xcrun");
     write_executable(
         &xcrun,
         r#"#!/bin/sh
-if [ "${1:-}" = "simctl" ] && [ "${2:-}" = "list" ] && [ "${3:-}" = "devices" ]; then
-  printf '%s\n' '    Apple TV (AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA) (Booted)'
+[ "$1" = "--sdk" ] && { echo 17.5; exit 0; }
+case "$2 $3" in
+  "list devicetypes")
+    echo '== Device Types =='
+    echo 'iPhone 15 (com.apple.CoreSimulator.SimDeviceType.iPhone-15)'
+    echo 'iPhone 16 Pro (com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro)'
+    echo 'iPad Air 11-inch (M2) (com.apple.CoreSimulator.SimDeviceType.iPad-Air-11-inch-M2)'
+    echo 'Apple Watch Series 9 (45mm) (com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-9-45mm)'
+    ;;
+  "list devices")
+    echo '== Devices =='
+    cat "$DEVICES"
+    ;;
+  "list runtimes")
+    echo 'tvOS 17.5 (17.5 - 21L569) - com.apple.CoreSimulator.SimRuntime.tvOS-17-5'
+    ;;
+  create*) echo CREATED ;;
+  *) exit 1 ;;
+esac
+"#,
+    );
+    let booted = tmp.path().join("booted");
+    std::fs::write(
+        &booted,
+        "-- iOS 16.4 --\n    iPhone 16 Pro (AAAA) (Booted) \n-- iOS 17.5 --\n    iPad Air 11-inch (M2) (BBBB) (Booted) \n    iPhone 15 (CCCC) (Shutdown) \n    iPhone 16 Pro (DDDD) (Shutdown) \n-- watchOS 10.5 --\n    Apple Watch Series 9 (45mm) (EEEE) (Booted) \n",
+    )
+    .unwrap();
+    let shutdown = tmp.path().join("shutdown");
+    std::fs::write(
+        &shutdown,
+        "-- iOS 17.5 --\n    iPad Air 11-inch (M2) (BBBB) (Shutdown) \n    iPhone 15 (CCCC) (Shutdown) \n    iPhone 16 Pro (DDDD) (Shutdown) \n    iPhone 15 (FFFF) (Shutdown) \n",
+    )
+    .unwrap();
+
+    for (devices, platform, minimum_os, device_type, os_version, expected) in [
+        (&booted, "ios", "17.0", "", "", "BBBB"),
+        (&booted, "ios", "17.0", "iPhone 15", "", "CCCC"),
+        (&booted, "ios", "13.0", "", "16.4", "AAAA"),
+        (&booted, "watchos", "10.0", "", "", "EEEE"),
+        (&booted, "tvos", "17.0", "", "", "CREATED"),
+        (&shutdown, "ios", "17.0", "", "", "DDDD"),
+    ] {
+        let call = format!(
+            "({}, {}, {}, {}, {})",
+            starlark_string_literal(&xcrun.display().to_string()),
+            starlark_string_literal(platform),
+            starlark_string_literal(minimum_os),
+            starlark_string_literal(device_type),
+            starlark_string_literal(os_version)
+        );
+        let script =
+            eval_prelude_string_function("_apple_simulator_run_selection_script", &call).unwrap();
+        let output = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(format!("{script}\nprintf '%s' \"$simulator_id\""))
+            .env("DEVICES", devices)
+            .output()
+            .unwrap();
+
+        assert!(output.status.success(), "{platform}: {output:?}");
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            expected,
+            "{platform} {minimum_os} {device_type:?} {os_version:?}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn prelude_simulator_selection_errors_without_a_runtime_for_the_platform() {
+    let tmp = TempDir::new().unwrap();
+    let xcrun = tmp.path().join("xcrun");
+    write_executable(
+        &xcrun,
+        r#"#!/bin/sh
+if [ "${1:-}" = "simctl" ] && [ "${2:-}" = "list" ]; then
+  echo 'iOS 17.5 (17.5 - 21F79) - com.apple.CoreSimulator.SimRuntime.iOS-17-5'
   exit 0
 fi
+[ "${1:-}" = "--sdk" ] && exit 0
 exit 1
 "#,
     );
-    let call = format!(
-        "({})",
-        starlark_string_literal(&xcrun.display().to_string())
-    );
-    let selection_script =
-        eval_prelude_string_function("_ios_simulator_selection_script", &call).unwrap();
-    let output = Command::new("/bin/sh")
-        .arg("-c")
-        .arg(format!("{selection_script}\nprintf '%s' \"$simulator_id\""))
-        .output()
-        .unwrap();
+
+    let output = run_simulator_selection(&xcrun, "watchos");
 
     assert!(!output.status.success(), "{output:?}");
     assert!(String::from_utf8(output.stderr)
         .unwrap()
-        .contains("no booted or available iOS simulator found"));
+        .contains("no watchOS simulator runtime is installed"));
 }
 
 #[test]
@@ -14279,7 +14471,7 @@ fn prelude_swift_testing_macros_plugin_rejects_unexpected_swiftc_path() {
 }
 
 #[test]
-fn prelude_ios_simulator_selection_helper_feeds_run_and_test_scripts() {
+fn prelude_simulator_selection_helper_feeds_run_and_test_scripts() {
     let source = include_str!("../prelude/apple.star");
 
     // The helper is defined once and called from exactly two sites:
@@ -14290,10 +14482,10 @@ fn prelude_ios_simulator_selection_helper_feeds_run_and_test_scripts() {
     // doesn't need to be subtracted out.
     assert_eq!(
         source
-            .matches("def _ios_simulator_selection_script(")
+            .matches("def _apple_simulator_selection_script(")
             .count(),
         1,
-        "expected exactly one definition of _ios_simulator_selection_script"
+        "expected exactly one definition of _apple_simulator_selection_script"
     );
     // Match the helper concatenated with the surrounding `+ """` to
     // exclude the `def` line and to anchor each call site to its
@@ -14301,17 +14493,17 @@ fn prelude_ios_simulator_selection_helper_feeds_run_and_test_scripts() {
     // pass `xcrun` and `runner_xcrun` respectively.
     assert_eq!(
         source
-            .matches("_ios_simulator_selection_script(xcrun) + \"\"\"")
+            .matches("_apple_simulator_run_selection_script(xcrun, platform, minimum_os, device_type, os_version) + \"\"\"")
             .count(),
         1,
-        "expected the application run script to call _ios_simulator_selection_script(xcrun)"
+        "expected the application run script to call _apple_simulator_run_selection_script"
     );
     assert_eq!(
         source
-            .matches("_ios_simulator_selection_script(runner_xcrun) + \"\"\"")
+            .matches("\"set -eu\\n\" + _apple_simulator_selection_script(runner_xcrun, platform, attrs.get(\"device_type\") or \"\", attrs.get(\"os_version\") or \"\") + ")
             .count(),
         1,
-        "expected the test runner to call _ios_simulator_selection_script(runner_xcrun)"
+        "expected the test runner to pass the device_type and os_version attributes"
     );
 }
 

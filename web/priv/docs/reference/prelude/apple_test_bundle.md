@@ -120,6 +120,8 @@ import inference and should not be authored manually.
 | `info_plist_substitutions` | map&lt;string,string&gt; | no | `{}` | Build-setting values substituted into property-list placeholders |
 | `entitlements` | string | no |  | Entitlements plist path |
 | `destination` | string | no |  | Simulator, device, or local destination selector |
+| `device_type` | string | no |  | Simulator device type to run on, as listed by `xcrun simctl list devicetypes`, such as `iPad Air 11-inch (M2)`; defaults per platform, see [Simulator](#simulator) |
+| `os_version` | string | no |  | Simulator runtime version to run on, as listed by `xcrun simctl list runtimes`, such as `18.2`; defaults to the runtime matching the build SDK |
 | `test_plan` | string | no |  | XCTest plan path |
 | `test_env` | map&lt;string,string&gt; | no | `{}` | Environment variables passed to the test runner |
 | `test_arguments` | list&lt;string&gt; | no | `[]` | Arguments passed to the test process |
@@ -194,6 +196,26 @@ The target emits `apple_test_bundle`, `apple_bundle`, and `struo_test_info`.
 | Test results | `.struo/out/<target>/test/test_results.json` after `struo test` |
 | Test log | `.struo/out/<target>/test/swift-testing.log` for Swift Testing or `xctest.log` for XCTest |
 | Native runner output | `.struo/out/<target>/test/native_results.txt` |
+
+## Simulator
+
+Simulator test runs use a simulator that Struo owns, as the Apple Bazel rules'
+test runner does, named after its device type
+and runtime, such as `Struo iPhone 15 (iOS 26.5)`. Struo creates it on first
+use and reuses it on later runs. The device type comes from `device_type`, or
+defaults to iPhone 15 for iOS, Apple Watch Series 9 (45mm) for watchOS,
+Apple TV 4K (3rd generation) for tvOS, and Apple Vision Pro for visionOS. The
+runtime comes from `os_version`, or defaults to the installed runtime that
+matches the SDK the target was built with, then the newest runtime for the
+platform. A missing `os_version` runtime fails the run instead of falling back.
+Set `STRUO_APPLE_SIMULATOR_UDID` to run on a specific simulator instead.
+
+```toml
+[target.attrs]
+platform = "ios"
+device_type = "iPad Air 11-inch (M2)"
+os_version = "18.2"
+```
 
 ## Limitations
 
