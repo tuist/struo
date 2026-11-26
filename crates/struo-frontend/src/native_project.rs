@@ -20,6 +20,11 @@ pub(crate) struct NativeProjectSchema {
     pub(crate) name: String,
     pub(crate) docs: String,
     pub(crate) markers: Vec<String>,
+    /// File-name patterns, in the marker segment grammar, that the primary
+    /// marker never matches, such as companion files that share its prefix.
+    pub(crate) marker_exclude: Vec<String>,
+    /// Seed target name. A `*` stands for the text the primary marker's
+    /// wildcard matched, so each matching file seeds its own target.
     pub(crate) target_name: String,
     pub(crate) target_kind: String,
     pub(crate) inputs: Vec<String>,
@@ -43,6 +48,33 @@ pub(crate) struct NativeProjectSchema {
     pub(crate) requires_tools: Vec<String>,
     pub(crate) owns_descendants: bool,
     pub(crate) workspace_markers: Vec<String>,
+}
+
+impl NativeProjectSchema {
+    /// The seed target name for a match whose primary marker resolved to
+    /// `markers[0]`.
+    pub(crate) fn seed_target_name(&self, markers: &[String]) -> String {
+        if !self.target_name.contains('*') {
+            return self.target_name.clone();
+        }
+        let capture = markers
+            .first()
+            .and_then(|marker| segment_capture(&self.markers[0], marker))
+            .unwrap_or_default();
+        self.target_name.replacen('*', capture, 1)
+    }
+}
+
+/// Match a file or directory name against one marker segment and return the
+/// text its wildcard matched. A literal segment matches only itself and
+/// captures nothing. A wildcard matches at least one character.
+pub(crate) fn segment_capture<'a>(segment: &str, name: &'a str) -> Option<&'a str> {
+    let Some((prefix, suffix)) = segment.split_once('*') else {
+        return (segment == name).then_some("");
+    };
+    name.strip_prefix(prefix)
+        .and_then(|rest| rest.strip_suffix(suffix))
+        .filter(|capture| !capture.is_empty())
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -139,7 +171,7 @@ fn seed_target(schema: &NativeProjectSchema, package: &str, markers: &[String]) 
     Target {
         package: package.to_string(),
         kind: schema.target_kind.clone(),
-        name: schema.target_name.clone(),
+        name: schema.seed_target_name(markers),
         deps: Vec::new(),
         dependency_edges: BTreeMap::new(),
         srcs: markers.to_vec(),
@@ -210,7 +242,7 @@ fn native_project_schema(name: String, dict: &DictRef<'_>) -> Result<NativeProje
         ));
     }
     let target_name = optional_string(dict, "target_name")?.unwrap_or_else(|| name.clone());
-    crate::target_ref::validate_target_name(&target_name)
+    crate::target_ref::validate_target_name(&target_name.replacen('*', "x", 1))
         .map_err(|source| native_project_error(&name, source.to_string()))?;
     let inputs = string_list(dict, "inputs")?;
     let exclude = string_list(dict, "exclude")?;
@@ -235,14 +267,20 @@ fn native_project_schema(name: String, dict: &DictRef<'_>) -> Result<NativeProje
     for marker in &markers {
         validate_marker(&name, marker)?;
     }
-    // Descend matching indexes the primary marker by file name as the
-    // walk visits files, so a primary marker that needs directory
-    // expansion or a parent segment can only be matched by the
-    // stop-mode directory pass.
-    if (marker_is_pattern(&markers[0]) || markers[0].contains('/'))
-        && on_match != "stop"
-        && on_match != "all"
-    {
+    let marker_exclude = string_list(dict, "marker_exclude")?;
+    for pattern in &marker_exclude {
+        if pattern.contains('/') {
+            return Err(native_project_error(
+                &name,
+                format!("native project marker exclusion `{pattern}` must be a file name pattern"),
+            ));
+        }
+        validate_marker(&name, pattern)?;
+    }
+    // Descend matching checks the primary marker against each file name
+    // as the walk visits files, so a primary marker with a parent segment
+    // can only be matched by the stop-mode directory pass.
+    if markers[0].contains('/') && on_match != "stop" && on_match != "all" {
         return Err(native_project_error(
                         &name,
                         format!(
@@ -250,6 +288,21 @@ fn native_project_schema(name: String, dict: &DictRef<'_>) -> Result<NativeProje
                             markers[0]
                         ),
                     ));
+    }
+    // Descend matching visits one file at a time, so each match has exactly
+    // one primary marker to take the name from.
+    if target_name.contains('*')
+        && (on_match != "descend"
+            || markers[0].contains('/')
+            || !marker_is_pattern(&markers[0])
+            || target_name.matches('*').count() != 1)
+    {
+        return Err(native_project_error(
+            &name,
+            format!(
+                "native project `{name}` target name `{target_name}` may use one `*` only with a single-segment wildcard primary marker and on_match = \"descend\""
+            ),
+        ));
     }
     for excluded in exclude.iter().chain(input_exclude.iter()) {
         validate_relative_literal(&name, "excluded directory", excluded)?;
@@ -261,6 +314,7 @@ fn native_project_schema(name: String, dict: &DictRef<'_>) -> Result<NativeProje
         name,
         docs: required_string(dict, "docs")?,
         markers,
+        marker_exclude,
         target_name,
         target_kind,
         inputs,
@@ -292,29 +346,18 @@ fn validate_relative_literal(native_project: &str, field: &str, value: &str) -> 
 }
 
 /// Validate one marker, which is a normalized relative path whose segments may
-/// each be a literal name or a leading-wildcard pattern such as
-/// `*.xcodeproj`. A wildcard segment matches the directory entries that end
-/// with its literal suffix, so a project bundle whose name varies by repository
-/// is still discoverable.
+/// each be a literal name or a pattern with one wildcard, such as
+/// `*.xcodeproj` or `project.*`. A wildcard segment matches the directory
+/// entries that start and end with its literal parts, so a file or bundle
+/// whose name varies by repository is still discoverable.
 fn validate_marker(native_project: &str, marker: &str) -> Result<()> {
     validate_relative_literal(native_project, "marker", marker)?;
     for segment in marker.split('/') {
-        let Some(suffix) = segment.strip_prefix('*') else {
-            if segment.contains('*') {
-                return Err(native_project_error(
-                    native_project,
-                    format!(
-                        "native project marker `{marker}` may only use `*` at the start of a path segment"
-                    ),
-                ));
-            }
-            continue;
-        };
-        if suffix.is_empty() || suffix.contains('*') {
+        if segment.contains('*') && (segment.len() == 1 || segment.matches('*').count() != 1) {
             return Err(native_project_error(
                 native_project,
                 format!(
-                    "native project marker `{marker}` wildcard segment must be `*` followed by one literal suffix"
+                    "native project marker `{marker}` wildcard segment must hold one `*` and a literal prefix or suffix"
                 ),
             ));
         }
@@ -536,14 +579,14 @@ mod tests {
     }
 
     #[test]
-    fn a_marker_wildcard_is_only_allowed_at_the_start_of_a_segment() {
+    fn a_marker_segment_holds_at_most_one_wildcard() {
         let source = format!(
-            "{}\ndemo = native_project(target_kind = \"demo_workspace\", docs = \"Demo\", markers = [\"project.*proj\"], on_match = \"stop\")\n",
+            "{}\ndemo = native_project(target_kind = \"demo_workspace\", docs = \"Demo\", markers = [\"*.*proj\"], on_match = \"stop\")\n",
             crate::modules::common_module_source()
         );
         let error = native_project_schemas_from_source(&source).unwrap_err();
         assert!(
-            error.contains("only use `*` at the start"),
+            error.contains("must hold one `*`"),
             "unexpected error: {error}"
         );
     }

@@ -77,7 +77,7 @@ def source_reference(system, symbol, url, use_when, content_digest = None):
         "content_digest": content_digest,
     }
 
-def native_project(target_kind, markers, name = None, target_name = None, docs = "", inputs = [], exclude = [], input_exclude = [], manifests = [], on_match = "descend", max_depth = 16, requires_tools = [], owns_descendants = False, workspace_markers = []):
+def native_project(target_kind, markers, name = None, target_name = None, docs = "", inputs = [], exclude = [], input_exclude = [], manifests = [], on_match = "descend", max_depth = 16, requires_tools = [], owns_descendants = False, workspace_markers = [], marker_exclude = []):
     return {
         "_struo_native_project": True,
         "target_kind": target_kind,
@@ -85,6 +85,7 @@ def native_project(target_kind, markers, name = None, target_name = None, docs =
         "target_name": target_name,
         "docs": docs,
         "markers": markers,
+        "marker_exclude": marker_exclude,
         "inputs": inputs,
         "exclude": exclude,
         "input_exclude": input_exclude,

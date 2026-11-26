@@ -5,7 +5,9 @@ use walkdir::WalkDir;
 
 use crate::error::{Error, Result};
 
-use super::{display_relative, NativeProjectMatch, NativeProjectSchema};
+use super::{
+    display_relative, marker_is_pattern, segment_capture, NativeProjectMatch, NativeProjectSchema,
+};
 
 mod memory;
 
@@ -105,6 +107,7 @@ struct DiscoveryScan<'a> {
     boundary: &'a crate::workspace::WorkspaceScan,
     stop_markers: BTreeMap<&'a str, Vec<usize>>,
     descend_markers: BTreeMap<&'a str, Vec<usize>>,
+    descend_patterns: Vec<(&'a str, Vec<usize>)>,
     stop_schema_count: usize,
     has_non_stop_schema: bool,
     retained: RetainedMatches,
@@ -119,16 +122,17 @@ impl<'a> DiscoveryScan<'a> {
     ) -> Result<Self> {
         let mut stop_markers = BTreeMap::<&str, Vec<usize>>::new();
         let mut descend_markers = BTreeMap::<&str, Vec<usize>>::new();
+        let mut descend_pattern_indices = BTreeMap::<&str, Vec<usize>>::new();
         for (index, schema) in schemas.iter().enumerate() {
-            let markers = if schema.on_match == "descend" {
-                &mut descend_markers
-            } else {
+            let primary = schema.markers[0].as_str();
+            let markers = if schema.on_match != "descend" {
                 &mut stop_markers
+            } else if marker_is_pattern(primary) {
+                &mut descend_pattern_indices
+            } else {
+                &mut descend_markers
             };
-            markers
-                .entry(schema.markers[0].as_str())
-                .or_default()
-                .push(index);
+            markers.entry(primary).or_default().push(index);
         }
         let stop_schema_count = schemas
             .iter()
@@ -141,6 +145,7 @@ impl<'a> DiscoveryScan<'a> {
             boundary,
             stop_markers,
             descend_markers,
+            descend_patterns: descend_pattern_indices.into_iter().collect(),
             stop_schema_count,
             has_non_stop_schema,
             retained: RetainedMatches::new(root, schemas.len(), retained_match_limit)?,
@@ -152,23 +157,37 @@ impl<'a> DiscoveryScan<'a> {
             let Some(name) = entry.file_name().to_str() else {
                 return Ok(());
             };
-            let Some(schema_indices) = self.descend_markers.get(name) else {
+            let patterns = self
+                .descend_patterns
+                .iter()
+                .filter(|(pattern, _)| segment_capture(pattern, name).is_some())
+                .map(|(_, indices)| indices);
+            let mut matching = self
+                .descend_markers
+                .get(name)
+                .into_iter()
+                .chain(patterns)
+                .peekable();
+            if matching.peek().is_none() {
                 return Ok(());
-            };
+            }
             let package = entry.path().parent().unwrap_or(self.root);
             let package_name = display_relative(self.root, package);
             let primary_markers = [name.to_string()];
-            return retain_marker_matches(
-                self.root,
-                self.schemas,
-                schema_indices,
-                self.boundary,
-                &mut self.retained,
-                package,
-                &package_name,
-                &primary_markers,
-                entry.depth(),
-            );
+            for schema_indices in matching {
+                retain_marker_matches(
+                    self.root,
+                    self.schemas,
+                    schema_indices,
+                    self.boundary,
+                    &mut self.retained,
+                    package,
+                    &package_name,
+                    &primary_markers,
+                    entry.depth(),
+                )?;
+            }
+            return Ok(());
         }
         if !entry.file_type().is_dir() {
             return Ok(());
@@ -237,12 +256,23 @@ fn retain_marker_matches(
     marker_depth: usize,
 ) -> Result<()> {
     let manifest_path = package_child(package_name, crate::TOML_BUILD_FILE_NAME);
-    let Some(first_marker) = primary_markers.first() else {
-        return Ok(());
-    };
-    let marker_path = package_child(package_name, first_marker);
     for index in schema_indices {
         let schema = &schemas[*index];
+        let primary_markers = primary_markers
+            .iter()
+            .filter(|marker| {
+                let name = marker.rsplit('/').next().unwrap_or(marker);
+                !schema
+                    .marker_exclude
+                    .iter()
+                    .any(|pattern| segment_capture(pattern, name).is_some())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let Some(first_marker) = primary_markers.first() else {
+            continue;
+        };
+        let marker_path = package_child(package_name, first_marker);
         if marker_depth > schema.max_depth
             || package_has_excluded_component(root, package, &schema.exclude)
             || !boundary.includes_native_project(&manifest_path, &marker_path)
@@ -252,7 +282,7 @@ fn retain_marker_matches(
         // Every secondary marker must also be present. Resolving them here keeps
         // a wildcard marker's concrete path in the match, so the seed's sources
         // name the files that were actually found.
-        let mut markers = primary_markers.to_vec();
+        let mut markers = primary_markers;
         let mut satisfied = true;
         for marker in schema.markers.iter().skip(1) {
             let resolved = resolve_marker(package, marker);
@@ -283,28 +313,27 @@ fn package_child(package: &str, child: &str) -> String {
 /// relative path it matches, sorted for a stable graph. A literal marker
 /// resolves to itself when it is a file. A marker with wildcard segments, such
 /// as `*.xcodeproj/project.pbxproj`, resolves to each existing file whose
-/// bundle name ends with the segment's literal suffix.
+/// names match the segments' literal parts.
 fn resolve_marker(package: &Path, marker: &str) -> Vec<String> {
     let mut resolved = vec![(package.to_path_buf(), String::new())];
     for segment in marker.split('/') {
         let mut next = Vec::new();
         for (directory, relative) in resolved {
-            match segment.strip_prefix('*') {
-                None => next.push((directory.join(segment), join_relative(&relative, segment))),
-                Some(suffix) => {
-                    let Ok(entries) = std::fs::read_dir(&directory) else {
-                        continue;
-                    };
-                    let mut names = entries
-                        .flatten()
-                        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
-                        .filter(|name| !name.starts_with('.') && name.ends_with(suffix))
-                        .collect::<Vec<_>>();
-                    names.sort_unstable();
-                    for name in names {
-                        next.push((directory.join(&name), join_relative(&relative, &name)));
-                    }
-                }
+            if !marker_is_pattern(segment) {
+                next.push((directory.join(segment), join_relative(&relative, segment)));
+                continue;
+            }
+            let Ok(entries) = std::fs::read_dir(&directory) else {
+                continue;
+            };
+            let mut names = entries
+                .flatten()
+                .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+                .filter(|name| !name.starts_with('.') && segment_capture(segment, name).is_some())
+                .collect::<Vec<_>>();
+            names.sort_unstable();
+            for name in names {
+                next.push((directory.join(&name), join_relative(&relative, &name)));
             }
         }
         resolved = next;
@@ -355,6 +384,7 @@ mod tests {
             name: name.to_string(),
             docs: String::new(),
             markers: vec![marker.to_string()],
+            marker_exclude: Vec::new(),
             target_name: name.to_string(),
             target_kind: format!("{name}_workspace"),
             inputs: Vec::new(),

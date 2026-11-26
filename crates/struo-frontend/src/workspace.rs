@@ -75,6 +75,7 @@ pub fn load_workspace_with_configuration(
             root,
             &target_kind_schemas,
         )?;
+    let authored = all.len();
     for (matched, target) in
         crate::native_project::synthesized_workspace_seeds(root, &native_project_schemas, &scan)?
     {
@@ -83,7 +84,7 @@ pub fn load_workspace_with_configuration(
         } else {
             format!("{}/{}", matched.package, matched.markers[0])
         };
-        if !all.iter().any(|explicit| {
+        if !all[..authored].iter().any(|explicit| {
             explicit.package == target.package
                 && (explicit.kind == target.kind || explicit.name == target.name)
         }) && !all.iter().any(|explicit| {

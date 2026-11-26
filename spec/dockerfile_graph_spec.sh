@@ -18,6 +18,32 @@ Describe 'Dockerfile native project'
     The status should be success
     The stdout should include 'true'
   End
+
+  discover_named_dockerfiles() {
+    mkdir -p "$WORKSPACE/apps/web" "$WORKSPACE/apps/api"
+    printf 'web\n' > "$WORKSPACE/apps/web/index.txt"
+    printf 'api\n' > "$WORKSPACE/apps/api/index.txt"
+    printf 'FROM alpine:3.20\nCOPY apps/web /app\n' > "$WORKSPACE/Dockerfile.web"
+    printf 'apps/api\n' > "$WORKSPACE/Dockerfile.web.dockerignore"
+    printf 'FROM alpine:3.20\nCOPY apps/api /app\nCOPY apps/web /web\n' > "$WORKSPACE/api.Dockerfile"
+    printf 'apps/web\n' > "$WORKSPACE/api.Dockerfile.dockerignore"
+    printf 'FROM alpine:3.20\nCOPY apps /apps\n' > "$WORKSPACE/Dockerfile"
+    printf '*.tmp\n' > "$WORKSPACE/Dockerfile.dockerignore"
+    struo --format json query targets | jq -c '[.[] | .id] | sort' || return
+    for target in image web_image api_image; do
+      struo --format json lint "$target" |
+        jq -c --arg target "$target" '[$target, .status, ([.findings[].location.path] | unique), [.findings[] | select(.rule_id == "missing_copy_source") | .location.line]]' || return
+    done
+  }
+
+  It 'discovers one image per Dockerfile.<name> and <name>.Dockerfile, with its own .dockerignore'
+    When call discover_named_dockerfiles
+    The status should be success
+    The line 1 of stdout should equal '["api_image","image","web_image"]'
+    The line 2 of stdout should equal '["image","completed",["Dockerfile"],[]]'
+    The line 3 of stdout should equal '["web_image","completed",["Dockerfile.web"],[]]'
+    The line 4 of stdout should equal '["api_image","completed",["api.Dockerfile"],[3]]'
+  End
 End
 
 Describe 'Dockerfile default builder'

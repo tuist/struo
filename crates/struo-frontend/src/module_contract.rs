@@ -203,12 +203,20 @@ pub fn module_authoring_contract() -> ModuleAuthoringContract {
         ],
         native_project_contract: vec![
             entry(
-                "native_project(target_kind, markers, name = None, target_name = None, docs = \"\", inputs = [], exclude = [], input_exclude = [], manifests = [], on_match = \"descend\", max_depth = 16, requires_tools = [])",
+                "native_project(target_kind, markers, name = None, target_name = None, docs = \"\", inputs = [], exclude = [], input_exclude = [], manifests = [], on_match = \"descend\", max_depth = 16, requires_tools = [], marker_exclude = [])",
                 "Declare how Struo recognizes native project roots and maps each match to one ordinary seed target.",
             ),
             entry(
                 "markers",
-                "Normalized package-relative files that must all exist before the native project matches.",
+                "Normalized package-relative files that must all exist before the native project matches. A path segment may hold one `*`, such as `*.native` or `project.*`, matching at least one character.",
+            ),
+            entry(
+                "marker_exclude",
+                "File name patterns, in the same one-`*` grammar, that the first marker never matches, such as `*.bak` copies beside `project.*` files.",
+            ),
+            entry(
+                "target_name",
+                "Seed target name. With a single-segment wildcard first marker and on_match = \"descend\", one `*` in the name stands for the text the wildcard matched, and each matching file seeds its own target, so `*_app` names the seed for `project.web` `web_app`.",
             ),
             entry(
                 "target_kind",

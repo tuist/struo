@@ -39,6 +39,16 @@ file is `server/Dockerfile`, run:
 struo build server/image
 ```
 
+Each `Dockerfile.<name>` and `<name>.Dockerfile` is discovered too, as a target
+named `<name>_image`. Its directory is the build context, so a monorepo that
+keeps one Dockerfile per app at the root builds each app with the root as the
+context, as `docker build -f Dockerfile.web .` does. A `Dockerfile.web.dockerignore`
+beside it applies to that image only, ahead of the directory's `.dockerignore`:
+
+```sh
+struo build web_image
+```
+
 `struo query targets` lists the discovered target names. A bare `struo build`
 does not select Dockerfile images; pass the target name.
 

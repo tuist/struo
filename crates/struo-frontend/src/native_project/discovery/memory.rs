@@ -112,7 +112,7 @@ impl RetainedMatches {
             return Err(discovery_memory_error(root, self.limit_bytes));
         }
 
-        let seed_target = crate::target_ref::target_id(package, &schema.target_name);
+        let seed_target = crate::target_ref::target_id(package, &schema.seed_target_name(&markers));
         let matched = NativeProjectMatch {
             native_project: schema.name.clone(),
             package: package.to_string(),
@@ -191,13 +191,11 @@ fn projected_owned_match_bytes(
     package: &str,
     markers: &[String],
 ) -> usize {
+    let name_bytes = schema.seed_target_name(markers).len();
     let seed_target_bytes = if package.is_empty() {
-        schema.target_name.len()
+        name_bytes
     } else {
-        package
-            .len()
-            .saturating_add(1)
-            .saturating_add(schema.target_name.len())
+        package.len().saturating_add(1).saturating_add(name_bytes)
     };
     markers
         .iter()
@@ -256,6 +254,7 @@ mod tests {
             name: "native".to_string(),
             docs: String::new(),
             markers: vec!["native.project".to_string()],
+            marker_exclude: Vec::new(),
             target_name: "native".to_string(),
             target_kind: "native_workspace".to_string(),
             inputs: Vec::new(),

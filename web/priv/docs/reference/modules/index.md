@@ -282,10 +282,17 @@ native = native_project(
 - `target_kind` names the target kind instantiated by the seed. Schema loading
   rejects a native integration that references an unknown target kind.
 - `markers` lists files that must all exist in one directory. The first entry
-  drives the bounded scan.
+  drives the bounded scan. A path segment may hold one `*`, such as
+  `*.native` or `project.*`, which matches at least one character.
+- `marker_exclude` lists file name patterns, in the same one-`*` form, that the
+  first marker never matches, such as `*.bak` copies beside `project.*` files.
 - `inputs` adds optional text globs to the seed's resolver inputs. Markers are
   always included.
-- `target_name` names the ephemeral seed target.
+- `target_name` names the ephemeral seed target. When the first marker is a
+  single file name with a `*` and `on_match` is `"descend"`, one `*` in
+  `target_name` stands for the text the marker's `*` matched, and each matching
+  file seeds its own target: `target_name = "*_app"` with
+  `markers = ["project.*"]` seeds `web_app` for `project.web`.
 - `exclude` lists directory names skipped during discovery.
 - `input_exclude` lists directory names that cannot hold a resolver input, so
   gathering the seed's inputs does not descend into them. This is a different

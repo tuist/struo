@@ -243,8 +243,12 @@ def _dockerfile_buildkit_only_attrs(ctx):
         return "caches dependencies"
     return None
 
+def _dockerfile_path(ctx):
+    discovered = _dockerfile_attr(ctx, "resolver_inputs", [])
+    return _dockerfile_local_path(_dockerfile_attr(ctx, "dockerfile", discovered[0] if discovered else "Dockerfile"), "dockerfile")
+
 def _dockerfile_load(ctx):
-    dockerfile = _dockerfile_local_path(_dockerfile_attr(ctx, "dockerfile", "Dockerfile"), "dockerfile")
+    dockerfile = _dockerfile_path(ctx)
     context = _dockerfile_local_path(_dockerfile_attr(ctx, "context", "."), "context")
     context_target = host_symlink_target(workspace_root() + "/" + _dockerfile_workspace_path(ctx, context)) if context != "." else ""
     if context_target:
@@ -288,10 +292,7 @@ def _dockerfile_image_impl(ctx):
     return _dockerfile_instruction_impl(ctx, True)
 
 def _dockerfile_buildkit_impl(ctx, fallback_reason = None, inherits_onbuild = False):
-    dockerfile = _dockerfile_local_path(
-        _dockerfile_attr(ctx, "dockerfile", "Dockerfile"),
-        "dockerfile",
-    )
+    dockerfile = _dockerfile_path(ctx)
     context = _dockerfile_local_path(
         _dockerfile_attr(ctx, "context", "."),
         "context",
@@ -495,7 +496,7 @@ dockerfile_image = target_kind(
     docs = "Builds a Dockerfile, by default as independently declared image snapshot actions, and exports a Docker or Open Container Initiative archive.",
     attrs = [
         attr("execution_mode", "string", default = "\"auto\"", docs = "auto translates Dockerfile instructions into independently declared snapshot actions and falls back to a single whole-file build when the Dockerfile uses extended syntax or a whole-file-only option; the metadata provider reports the reason. instructions requires translatable syntax. buildkit always runs one whole-file build.", configurable = False, allowed_values = ["auto", "instructions", "buildkit"]),
-        attr("dockerfile", "string", default = "\"Dockerfile\"", docs = "Dockerfile path relative to the target package.", configurable = False),
+        attr("dockerfile", "string", default = "\"Dockerfile\"", docs = "Dockerfile path relative to the target package. A discovered target uses the Dockerfile that discovery found.", configurable = False),
         attr("resolver_inputs", "list<string>", default = "[]", docs = "Dockerfile marker supplied by native project discovery. Explicit targets should use srcs to control the build context.", configurable = False),
         attr("context", "string", default = "\".\"", docs = "Build context directory relative to the target package.", configurable = False),
         attr("format", "string", default = "\"docker\"", docs = "Archive format accepted by the BuildKit exporter.", configurable = False, allowed_values = ["docker", "oci"]),
@@ -551,11 +552,29 @@ dockerfile_image = target_kind(
     impl = _dockerfile_image_impl,
 )
 
+_DOCKERFILE_DISCOVERY_EXCLUDE = _native_project_generated_dirs() + [".git", ".struo", "node_modules", ".build"]
+_DOCKERFILE_MANIFESTS = ["Dockerfile", "**/Dockerfile", "Dockerfile.*", "**/Dockerfile.*", "*.Dockerfile", "**/*.Dockerfile", ".dockerignore", "**/.dockerignore", "*.dockerignore", "**/*.dockerignore"]
+
 dockerfile = native_project(
     target_kind = "dockerfile_image",
     docs = "Recognizes a Dockerfile and exposes an image build without struo.toml.",
     markers = ["Dockerfile"],
     target_name = "image",
-    exclude = _native_project_generated_dirs() + [".git", ".struo", "node_modules", ".build"],
-    manifests = ["Dockerfile", "**/Dockerfile", "**/*.Dockerfile", ".dockerignore", "**/.dockerignore"],
+    exclude = _DOCKERFILE_DISCOVERY_EXCLUDE,
+    manifests = _DOCKERFILE_MANIFESTS,
 )
+
+def _named_dockerfile_native_project(marker):
+    return native_project(
+        target_kind = "dockerfile_image",
+        docs = "Recognizes each `" + marker.replace("*", "<name>") + "` and exposes it as `<name>_image` without struo.toml, with the Dockerfile's directory as the build context.",
+        markers = [marker],
+        marker_exclude = ["*.dockerignore"],
+        target_name = "*_image",
+        exclude = _DOCKERFILE_DISCOVERY_EXCLUDE,
+        manifests = _DOCKERFILE_MANIFESTS,
+    )
+
+dockerfile_prefixed = _named_dockerfile_native_project("Dockerfile.*")
+
+dockerfile_suffixed = _named_dockerfile_native_project("*.Dockerfile")
