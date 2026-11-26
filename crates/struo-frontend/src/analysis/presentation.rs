@@ -143,6 +143,22 @@ pub(super) fn unpack_presentation(
         .and_then(struo_presentation::ActionPresentation::normalized)
 }
 
+/// Record a snapshot action unless this analysis already declared the same
+/// one, so target kinds can snapshot an input from every code path that
+/// needs it without scheduling duplicate writes to one destination.
+pub(super) fn record_action_once(action: DeclaredAction) {
+    let declared = with_store(|store| {
+        store.is_some_and(|store| {
+            store.actions.iter().any(|existing| {
+                existing.identifier == action.identifier && existing.operation == action.operation
+            })
+        })
+    });
+    if !declared {
+        record_action(action);
+    }
+}
+
 pub(super) fn record_action(mut action: DeclaredAction) {
     action.display_name = normalize_display_name(action.display_name);
     with_store_mut(|store| {

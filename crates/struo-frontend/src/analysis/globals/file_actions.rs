@@ -15,7 +15,9 @@ use super::{
     parse_copy_path_mode, parse_prepare_path_mode, unpack_archive_entries, unpack_copy_sources,
     unpack_write_content,
 };
-use crate::analysis::presentation::{record_action, unpack_presentation, unpack_source_files};
+use crate::analysis::presentation::{
+    record_action, record_action_once, unpack_presentation, unpack_source_files,
+};
 use crate::analysis::store::{
     analysis_active, observe, DeclaredAction, DeclaredActionOperation, DeclaredArchiveFormat,
     DeclaredPreparePathMode, Observation,
@@ -222,7 +224,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
             }),
             source_files: unpack_source_files(source_files)?,
         };
-        record_action(action);
+        record_action_once(action);
         Ok(NoneType)
     }
 
@@ -301,7 +303,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
             }),
             source_files: unpack_source_files(source_files)?,
         };
-        record_action(action);
+        record_action_once(action);
         Ok(NoneType)
     }
 

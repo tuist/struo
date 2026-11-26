@@ -40,13 +40,13 @@ Describe 'Xcode project paths outside the project directory'
     Skip if 'requires Xcode' xcode_unavailable
     When call build_from_project_directory
     The status should be success
-    The output should equal 'shared sources compiled'
+    The output should equal "$(printf 'shared sources compiled\nroot sources compiled')"
   End
 
   It 'resolves ../ build settings and group paths against the project directory'
     Skip if 'requires Xcode' xcode_unavailable
     When call build_sibling_paths
     The status should be success
-    The output should equal 'shared sources compiled'
+    The output should equal "$(printf 'shared sources compiled\nroot sources compiled')"
   End
 End

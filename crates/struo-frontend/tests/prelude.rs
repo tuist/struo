@@ -17407,7 +17407,9 @@ fn prelude_apple_application_exposes_bridging_header() {
     assert_target_kind_attrs("apple_application", &["bridging_header"]);
     let source = include_str!("../prelude/apple.star");
     assert!(
-        source.contains("\"-import-objc-header\", _package_relative(ctx, bridging_header)"),
+        source.contains(
+            "\"-import-objc-header\", _apple_external_input(ctx, _package_relative(ctx, bridging_header))"
+        ),
         "apple_application must import the bridging header"
     );
     // The main and testable-module compiles both run with a cleared

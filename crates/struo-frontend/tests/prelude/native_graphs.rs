@@ -574,7 +574,10 @@ result = repr([_apple_declared_source_paths(ctx), _apple_header_inputs(ctx, ["..
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(sources, vec![shared.join("Shared.swift"), shared]);
+    assert_eq!(
+        sources,
+        vec![shared.join("Shared.swift"), shared.join("Shared.h")]
+    );
 }
 
 #[test]
@@ -633,5 +636,25 @@ result = repr([sorted(files), catalog, _apple_is_directory(catalog)])
             shared.join("Folder"),
             shared.join("greeting.txt"),
         ]
+    );
+}
+
+#[test]
+fn snapshot_paths_map_back_only_their_leading_parent_segments() {
+    let source = format!(
+        r#"{}
+def workspace_root():
+    return "/repo/app"
+result = repr([
+    _apple_host_path(".struo/out/App/external-inputs/__parent__/__parent__/shared/__parent__/a.png"),
+    _apple_host_path(".struo/out/App/external-inputs/shared/a.png"),
+    _apple_host_path("Sources/external-inputs/__parent__/a.png"),
+])
+"#,
+        apple_prelude_source()
+    );
+    assert_eq!(
+        eval_prelude_source_to_repr(source).unwrap(),
+        r#"["/repo/app/../../shared/__parent__/a.png", "/repo/app/.struo/out/App/external-inputs/shared/a.png", "/repo/app/Sources/external-inputs/__parent__/a.png"]"#
     );
 }

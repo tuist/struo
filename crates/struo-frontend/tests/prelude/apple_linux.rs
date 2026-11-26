@@ -918,3 +918,169 @@ fn entries_an_earlier_build_left_in_the_bundle_are_removed_before_signing() {
     result.unwrap();
     assert!(removed(&store).is_empty());
 }
+
+const OUTSIDE_WORKSPACE_HOST: &str = r#"
+def host_which(name):
+    if name in ["swift", "rcodesign", "find"]:
+        return "/host/bin/" + name
+    fail("unexpected host tool: " + name)
+_linux_host_command = host_command
+def host_command(argv, env = None, merge_stderr = None, check = None, max_output_bytes = None):
+    if argv[0] != "/host/bin/find":
+        return _linux_host_command(argv, env = env, merge_stderr = merge_stderr)
+    root = _apple_normalize_absolute_path(argv[1])
+    if "-maxdepth" in argv:
+        return argv[1] if root in HOST_DIRS else ""
+    patterns = [argv[index + 1][1:] for index in range(len(argv) - 1) if argv[index] == "-name" and argv[index + 1].startswith("*.")]
+    return "\n".join([argv[1] + path[len(root):] for path in HOST_FILES if path.startswith(root + "/") and (not patterns or any([path.endswith(pattern) for pattern in patterns]))])
+"#;
+
+fn analyse_outside_workspace_target(call: &str) -> (TempDir, AnalysisStore) {
+    let root = TempDir::new().unwrap();
+    let workspace = root.path().join("app");
+    let shared = root.path().join("shared");
+    std::fs::create_dir_all(workspace.join("Sources")).unwrap();
+    std::fs::create_dir_all(workspace.join(".struo/out")).unwrap();
+    std::fs::create_dir_all(shared.join("Assets.xcassets")).unwrap();
+    let files = [
+        "app/Sources/main.swift",
+        "app/.struo/out/stale.h",
+        "Root.swift",
+        "Root.h",
+        "shared/Shared.swift",
+        "shared/greeting.c",
+        "shared/Greeting.h",
+        "shared/Bridge.h",
+        "shared/Prefix.pch",
+        "shared/greeting.txt",
+        "shared/PrivacyInfo.xcprivacy",
+        "shared/Assets.xcassets/Contents.json",
+    ];
+    for file in files {
+        std::fs::write(root.path().join(file), "\n").unwrap();
+    }
+    let root_path = root.path().to_string_lossy().into_owned();
+    let host_files = files
+        .iter()
+        .map(|file| format!("\"{root_path}/{file}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let source = format!(
+        r#"{}
+{LINUX_HOST}
+HOST_FILES = [{host_files}]
+HOST_DIRS = ["{root_path}", "{root_path}/shared", "{root_path}/shared/Assets.xcassets"]
+{OUTSIDE_WORKSPACE_HOST}
+ctx = {{"label": {{"package": "", "name": "Hello", "id": "Hello"}}, "attr": {{
+    "platform": "ios", "sdk_variant": "device", "minimum_os": "17.0", "bundle_id": "dev.struo.hello",
+    "bridging_header": "../shared/Bridge.h", "prefix_header": "../shared/Prefix.pch",
+    "private_header_dirs": ["../shared", ".."], "private_headers": ["../shared/Greeting.h"],
+    "resources": ["../shared/greeting.txt"], "asset_catalogs": ["../shared/Assets.xcassets"],
+    "privacy_manifest": "../shared/PrivacyInfo.xcprivacy",
+}}, "srcs": ["Sources/main.swift", "../shared/Shared.swift", "../shared/greeting.c", "../Root.swift"], "deps": [], "build_dir": ".struo/out", "scratch_dir": ".struo/tmp", "capability": "build"}}
+result = {call}(ctx)
+"#,
+        apple_prelude_source()
+    );
+    let workspace_for_store = workspace.clone();
+    let (store, result) = with_active_store(store_for(&workspace_for_store, ""), || {
+        Module::with_temp_heap(|module| {
+            let ast = AstModule::parse("outside.star", source, &Dialect::Standard)
+                .map_err(|error| anyhow::anyhow!("{error}"))?;
+            Evaluator::new(&module)
+                .eval_module(ast, &globals_for_prelude())
+                .map_err(|error| anyhow::anyhow!("{error}"))?;
+            anyhow::Ok(())
+        })
+    });
+    result.unwrap();
+    (root, store)
+}
+
+fn assert_outside_inputs_are_snapshotted_once(root: &TempDir, store: &AnalysisStore) {
+    let escapes = |path: &str| path == ".." || path.starts_with("../") || path.contains("/../");
+    let mut destinations = Vec::new();
+    let mut snapshot_sources = Vec::new();
+    for action in &store.actions {
+        for path in action.inputs.iter().chain(action.outputs.iter()) {
+            assert!(!escapes(path), "{:?} declares `{path}`", action.identifier);
+        }
+        for arg in &action.argv {
+            assert!(!escapes(arg), "{:?} passes `{arg}`", action.identifier);
+        }
+        if let Some(
+            DeclaredActionOperation::MaterializeHostFile {
+                source,
+                destination,
+                ..
+            }
+            | DeclaredActionOperation::MaterializeHostTree {
+                source,
+                destination,
+                ..
+            },
+        ) = &action.operation
+        {
+            assert!(
+                !action
+                    .display_name
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("toolchain"),
+                "{:?}",
+                action.display_name
+            );
+            destinations.push(destination.clone());
+            snapshot_sources.push(
+                std::fs::canonicalize(source)
+                    .unwrap()
+                    .strip_prefix(std::fs::canonicalize(root.path()).unwrap())
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+    }
+    let mut unique = destinations.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(destinations.len(), unique.len(), "{destinations:?}");
+    snapshot_sources.sort();
+    snapshot_sources.dedup();
+    assert!(
+        snapshot_sources
+            .iter()
+            .all(|source| !source.starts_with("app") && source != "shared"),
+        "{snapshot_sources:?}"
+    );
+    for expected in [
+        "Root.h",
+        "Root.swift",
+        "shared/Bridge.h",
+        "shared/Greeting.h",
+        "shared/Shared.swift",
+        "shared/greeting.c",
+    ] {
+        assert!(
+            snapshot_sources.iter().any(|source| source == expected),
+            "missing {expected}: {snapshot_sources:?}"
+        );
+    }
+}
+
+#[test]
+fn application_snapshots_every_outside_input_once_and_never_passes_parent_paths() {
+    let (root, store) = analyse_outside_workspace_target("_apple_application_impl");
+    assert_outside_inputs_are_snapshotted_once(&root, &store);
+    let compile = action_by_identifier(&store, "apple_application_compile_Hello");
+    assert!(compile
+        .argv
+        .iter()
+        .any(|arg| arg.ends_with("external-inputs/__parent__/shared")));
+}
+
+#[test]
+fn mixed_framework_snapshots_every_outside_input_once_and_never_passes_parent_paths() {
+    let (root, store) = analyse_outside_workspace_target("_apple_framework_impl");
+    assert_outside_inputs_are_snapshotted_once(&root, &store);
+}

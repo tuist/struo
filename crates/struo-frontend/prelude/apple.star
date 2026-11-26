@@ -925,9 +925,12 @@ def _apple_header_inputs(ctx, header_dirs):
         absolute_header_dir = workspace_root() + "/" + header_dir
         if not host_path_exists(absolute_header_dir):
             continue
+        if header_dir == ".." or header_dir.startswith("../"):
+            inputs.extend(_apple_external_headers(ctx, header_dir, extensions))
+            continue
         if not host_path_is_within(absolute_header_dir, workspace_root()):
             snapshot = declare_output("external-header-inputs/tree/" + _apple_external_input_name(header_dir))
-            materialize_host_tree(absolute_header_dir, snapshot)
+            materialize_host_tree(absolute_header_dir, snapshot, display_name = "Snapshot " + _basename(header_dir))
             inputs.append(snapshot)
             continue
         for candidate in walk_workspace_files(header_dir):
@@ -943,9 +946,35 @@ def _apple_header_inputs(ctx, header_dirs):
                 inputs.append(candidate)
             elif host_file_exists(absolute_candidate):
                 snapshot = declare_output("external-header-inputs/file/" + _apple_external_input_name(candidate))
-                materialize_host_file(absolute_candidate, snapshot)
+                materialize_host_file(absolute_candidate, snapshot, display_name = "Snapshot " + _basename(candidate))
                 inputs.append(snapshot)
     return _unique(inputs)
+
+def _apple_external_headers(ctx, header_dir, extensions):
+    # Snapshot only the headers under a search directory outside the
+    # workspace. The workspace may sit inside that directory; its own files
+    # are already reachable as workspace inputs.
+    absolute_dir = workspace_root() + "/" + header_dir
+    argv = [host_which("find"), absolute_dir, "-type", "f", "("]
+    for index, extension in enumerate(extensions):
+        argv.extend((["-o"] if index else []) + ["-name", "*." + extension])
+    argv.append(")")
+    root = workspace_root() + "/"
+    out = []
+    for found in host_command(argv).split("\n"):
+        if not found or not found.startswith(absolute_dir + "/") or "/.struo/" in found:
+            continue
+        relative = header_dir + found[len(absolute_dir):]
+        if _apple_normalize_absolute_path(root + relative).startswith(root):
+            continue
+        out.append(_apple_external_input(ctx, relative))
+    return out
+
+def _apple_compile_header_dir(ctx, header_dir):
+    # Compilers read headers outside the workspace from their snapshots.
+    if header_dir == ".." or header_dir.startswith("../"):
+        return ctx["build_dir"] + "/external-inputs/" + _apple_external_input_name(header_dir)
+    return header_dir
 
 def _apple_legacy_framework_bundles(dep, include_transitive):
     direct_path = dep.get("framework_path") or ""
@@ -2118,7 +2147,7 @@ def _apple_library_impl(ctx):
 
     # Own exported headers as workspace-relative paths, plus the
     # dirs we expose to consumers.
-    own_exported_headers = [_package_relative(ctx, h) for h in exported_headers]
+    own_exported_headers = [_apple_external_input(ctx, _package_relative(ctx, h)) for h in exported_headers]
     own_exported_header_dirs = _unique_dirs(own_exported_headers)
     auxiliary_modulemap_headers = []
     for auxiliary_modulemap in auxiliary_modulemaps:
@@ -2137,7 +2166,8 @@ def _apple_library_impl(ctx):
         resolved_header_dir = _package_relative(ctx, header_dir)
         if resolved_header_dir and resolved_header_dir not in own_private_header_dirs:
             own_private_header_dirs.append(resolved_header_dir)
-    own_private_header_files = _unique((attrs.get("private_headers") or []) + _apple_header_inputs(ctx, own_private_header_dirs) + _filter_by_extensions(generated_srcs, [".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".ipp", ".tpp", ".def"]))
+    own_private_header_files = _unique([_apple_external_input(ctx, header) for header in (attrs.get("private_headers") or [])] + _apple_header_inputs(ctx, own_private_header_dirs) + _filter_by_extensions(generated_srcs, [".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".ipp", ".tpp", ".def"]))
+    own_private_header_dirs = [_apple_compile_header_dir(ctx, header_dir) for header_dir in own_private_header_dirs]
 
     staged_headers = []
     staged_headers_dir = ""
@@ -2419,7 +2449,7 @@ def _apple_library_impl(ctx):
             if library_evolution:
                 swift_base_argv.append("-enable-library-evolution")
             if bridging_header:
-                swift_base_argv.extend(["-import-objc-header", _package_relative(ctx, bridging_header)])
+                swift_base_argv.extend(["-import-objc-header", _apple_external_input(ctx, _package_relative(ctx, bridging_header))])
             if compile_modulemap_path and not bridging_header:
                 swift_base_argv.append("-import-underlying-module")
             if generated_framework_module:
@@ -2472,7 +2502,7 @@ def _apple_library_impl(ctx):
 
             swift_inputs = list(swift_srcs)
             if bridging_header:
-                swift_inputs.append(_package_relative(ctx, bridging_header))
+                swift_inputs.append(_apple_external_input(ctx, _package_relative(ctx, bridging_header)))
             # The bridging header may #include other headers, so feed
             # each exported header through as an action input too.
             for h in own_exported_headers:
@@ -2661,7 +2691,7 @@ def _apple_library_impl(ctx):
                 for overlay in compile_vfs_overlays:
                     argv.extend(["-ivfsoverlay", overlay])
                 if prefix_header and not is_assembly:
-                    argv.extend(["-include", _package_relative(ctx, prefix_header)])
+                    argv.extend(["-include", _apple_external_input(ctx, _package_relative(ctx, prefix_header))])
                 for define in clang_defines:
                     argv.append("-D" + define)
                 for flag in clang_flags:
@@ -2707,7 +2737,7 @@ def _apple_library_impl(ctx):
                 if swift_objc_header:
                     inputs.append(swift_objc_header)
                 if prefix_header and not is_assembly:
-                    inputs.append(_package_relative(ctx, prefix_header))
+                    inputs.append(_apple_external_input(ctx, _package_relative(ctx, prefix_header)))
                 for file in compile_framework_files:
                     if file not in inputs:
                         inputs.append(file)
@@ -4490,7 +4520,7 @@ def _apple_mixed_framework_impl(ctx):
 
     privacy_manifest = attrs.get("privacy_manifest") or ""
     if privacy_manifest:
-        privacy_source = _package_relative(ctx, privacy_manifest)
+        privacy_source = _apple_external_input(ctx, _package_relative(ctx, privacy_manifest))
         privacy_output = declare_output(framework_dir + "/PrivacyInfo.xcprivacy")
         copy_path(privacy_source, privacy_output, inputs = [privacy_source], identifier = "apple_framework_privacy_" + module_name, source_files = _action_source_files([privacy_source]))
         framework_files.append(privacy_output)
@@ -4571,7 +4601,8 @@ def _apple_framework_impl(ctx):
         absolute_header_dir = resolved_header_dir if resolved_header_dir.startswith("/") else workspace_root() + "/" + resolved_header_dir
         if resolved_header_dir and host_path_exists(absolute_header_dir) and resolved_header_dir not in private_header_dirs:
             private_header_dirs.append(resolved_header_dir)
-    private_header_files = _unique((attrs.get("private_headers") or []) + _apple_header_inputs(ctx, private_header_dirs))
+    private_header_files = _unique([_apple_external_input(ctx, header) for header in (attrs.get("private_headers") or [])] + _apple_header_inputs(ctx, private_header_dirs))
+    private_header_dirs = [_apple_compile_header_dir(ctx, header_dir) for header_dir in private_header_dirs]
 
     generated_srcs = _apple_run_prebuild_actions(ctx, attrs)
     all_srcs = _unique(glob(ctx["srcs"]) + _apple_declared_source_paths(ctx) + generated_srcs)
@@ -5216,16 +5247,7 @@ def _apple_declared_source_paths(ctx):
             if matches:
                 out.extend(matches)
                 continue
-            resolved = _apple_script_output_path(ctx, _package_relative(ctx, path))
-            absolute = workspace_root() + "/" + resolved
-            if resolved.startswith("../") and host_file_exists(absolute):
-                # Actions only take workspace paths, so snapshot a source that
-                # lives outside the workspace into the build directory.
-                snapshot = declare_output("external-sources/" + _apple_external_input_name(resolved))
-                materialize_host_file(absolute, snapshot)
-                out.append(snapshot)
-            else:
-                out.append(resolved)
+            out.append(_apple_external_input(ctx, _apple_script_output_path(ctx, _package_relative(ctx, path))))
     return _unique(out)
 
 def _apple_external_input_name(path):
@@ -5235,16 +5257,16 @@ def _apple_external_input(ctx, path):
     # Actions only take workspace paths, so snapshot a resource that lives
     # outside the workspace into the build directory. Analysis reads the
     # original through `_apple_host_path`.
-    if not path.startswith("../"):
+    if not path or not path.startswith("../"):
         return path
     absolute = workspace_root() + "/" + path
     if not host_path_exists(absolute):
         return path
     snapshot = declare_output("external-inputs/" + _apple_external_input_name(path))
     if _apple_is_directory(path):
-        materialize_host_tree(absolute, snapshot)
+        materialize_host_tree(absolute, snapshot, display_name = "Snapshot " + _basename(path))
     else:
-        materialize_host_file(absolute, snapshot)
+        materialize_host_file(absolute, snapshot, display_name = "Snapshot " + _basename(path))
     return snapshot
 
 def _apple_swift_emits_single_object(flags):
@@ -5310,7 +5332,8 @@ def _apple_application_impl(ctx):
         absolute_header_dir = resolved_header_dir if resolved_header_dir.startswith("/") else workspace_root() + "/" + resolved_header_dir
         if resolved_header_dir and host_path_exists(absolute_header_dir) and resolved_header_dir not in private_header_dirs:
             private_header_dirs.append(resolved_header_dir)
-    private_header_files = _unique((attrs.get("private_headers") or []) + _apple_header_inputs(ctx, private_header_dirs))
+    private_header_files = _unique([_apple_external_input(ctx, header) for header in (attrs.get("private_headers") or [])] + _apple_header_inputs(ctx, private_header_dirs))
+    private_header_dirs = [_apple_compile_header_dir(ctx, header_dir) for header_dir in private_header_dirs]
     application_extension = attrs.get("application_extension") or False
     enable_testing = attrs.get("enable_testing") or False
     if enable_testing:
@@ -5567,7 +5590,7 @@ def _apple_application_impl(ctx):
             "_NSExtensionMain",
         ])
     if bridging_header:
-        swift_argv.extend(["-import-objc-header", _package_relative(ctx, bridging_header)])
+        swift_argv.extend(["-import-objc-header", _apple_external_input(ctx, _package_relative(ctx, bridging_header))])
     for d in compile_swiftmodule_dirs:
         swift_argv.extend(["-I", d])
     swift_argv.extend(_apple_header_search_flags(compile_header_dirs + private_header_dirs, dep_hmaps, swift = True))
@@ -5612,7 +5635,7 @@ def _apple_application_impl(ctx):
     if embeds_simulator_entitlements:
         swift_inputs.extend([processed_entitlements, der_entitlements])
     if bridging_header:
-        bridging_header_path = _package_relative(ctx, bridging_header)
+        bridging_header_path = _apple_external_input(ctx, _package_relative(ctx, bridging_header))
         if bridging_header_path not in swift_inputs:
             swift_inputs.append(bridging_header_path)
     for mmap in dep_modulemaps:
@@ -5676,7 +5699,7 @@ def _apple_application_impl(ctx):
         if application_extension:
             module_argv.append("-application-extension")
         if bridging_header:
-            module_argv.extend(["-import-objc-header", _package_relative(ctx, bridging_header)])
+            module_argv.extend(["-import-objc-header", _apple_external_input(ctx, _package_relative(ctx, bridging_header))])
         for d in compile_swiftmodule_dirs:
             module_argv.extend(["-I", d])
         module_argv.extend(_apple_header_search_flags(compile_header_dirs + private_header_dirs, dep_hmaps, swift = True))
@@ -5704,8 +5727,8 @@ def _apple_application_impl(ctx):
         write_path(module_file_map, _json_encode({src: {"swiftmodule": ctx["build_dir"] + "/ModuleIntermediates/" + str(index) + ".swiftmodule"} for index, src in enumerate(swift_srcs)}))
         module_argv.extend(["-output-file-map", module_file_map])
         module_inputs = list(swift_srcs) + [module_file_map]
-        if bridging_header and _package_relative(ctx, bridging_header) not in module_inputs:
-            module_inputs.append(_package_relative(ctx, bridging_header))
+        if bridging_header and _apple_external_input(ctx, _package_relative(ctx, bridging_header)) not in module_inputs:
+            module_inputs.append(_apple_external_input(ctx, _package_relative(ctx, bridging_header)))
         for mmap in dep_modulemaps:
             if mmap not in module_inputs:
                 module_inputs.append(mmap)
@@ -5778,7 +5801,7 @@ def _apple_application_impl(ctx):
             for overlay in dep_vfs_overlays:
                 argv.extend(["-ivfsoverlay", overlay])
             if prefix_header and not is_assembly:
-                argv.extend(["-include", _package_relative(ctx, prefix_header)])
+                argv.extend(["-include", _apple_external_input(ctx, _package_relative(ctx, prefix_header))])
             for framework_dir in framework_search_dirs:
                 argv.extend(["-F", framework_dir])
             for define in clang_defines:
@@ -5801,11 +5824,11 @@ def _apple_application_impl(ctx):
 
             inputs = [src]
             if bridging_header:
-                inputs.append(_package_relative(ctx, bridging_header))
+                inputs.append(_apple_external_input(ctx, _package_relative(ctx, bridging_header)))
             if swift_objc_header:
                 inputs.append(swift_objc_header)
             if prefix_header and not is_assembly:
-                inputs.append(_package_relative(ctx, prefix_header))
+                inputs.append(_apple_external_input(ctx, _package_relative(ctx, prefix_header)))
             for header in private_header_files:
                 if header not in inputs:
                     inputs.append(header)
@@ -6331,7 +6354,8 @@ def _apple_test_bundle_impl(ctx):
         absolute_header_dir = resolved_header_dir if resolved_header_dir.startswith("/") else workspace_root() + "/" + resolved_header_dir
         if resolved_header_dir and host_path_exists(absolute_header_dir) and resolved_header_dir not in private_header_dirs:
             private_header_dirs.append(resolved_header_dir)
-    private_header_files = _unique((attrs.get("private_headers") or []) + _apple_header_inputs(ctx, private_header_dirs))
+    private_header_files = _unique([_apple_external_input(ctx, header) for header in (attrs.get("private_headers") or [])] + _apple_header_inputs(ctx, private_header_dirs))
+    private_header_dirs = [_apple_compile_header_dir(ctx, header_dir) for header_dir in private_header_dirs]
     swift_testing = attrs.get("swift_testing") or False
     ui_testing = attrs.get("ui_testing") or False
     test_env = dict(attrs.get("test_env") or {})
@@ -6563,7 +6587,7 @@ def _apple_test_bundle_impl(ctx):
             host_executable,
         ])
     if bridging_header and len(swift_srcs) > 0:
-        swift_argv.extend(["-import-objc-header", _package_relative(ctx, bridging_header)])
+        swift_argv.extend(["-import-objc-header", _apple_external_input(ctx, _package_relative(ctx, bridging_header))])
     for d in compile_swiftmodule_dirs:
         swift_argv.extend(["-I", d])
     if swift_srcs:
@@ -6608,7 +6632,7 @@ def _apple_test_bundle_impl(ctx):
     if host_executable:
         swift_inputs.append(host_executable)
     if bridging_header and len(swift_srcs) > 0:
-        swift_inputs.append(_package_relative(ctx, bridging_header))
+        swift_inputs.append(_apple_external_input(ctx, _package_relative(ctx, bridging_header)))
     for header in private_header_files:
         if header not in swift_inputs:
             swift_inputs.append(header)
@@ -6668,7 +6692,7 @@ def _apple_test_bundle_impl(ctx):
             if language == "objective-c" or language == "objective-c++":
                 argv.append("-fobjc-arc")
             if prefix_header:
-                argv.extend(["-include", _package_relative(ctx, prefix_header)])
+                argv.extend(["-include", _apple_external_input(ctx, _package_relative(ctx, prefix_header))])
             argv.extend(_apple_header_search_flags(compile_header_dirs + private_header_dirs, dep_hmaps))
             if not is_assembly:
                 for mmap in dep_modulemaps:
@@ -6697,9 +6721,9 @@ def _apple_test_bundle_impl(ctx):
 
             inputs = [src]
             if bridging_header:
-                inputs.append(_package_relative(ctx, bridging_header))
+                inputs.append(_apple_external_input(ctx, _package_relative(ctx, bridging_header)))
             if prefix_header:
-                inputs.append(_package_relative(ctx, prefix_header))
+                inputs.append(_apple_external_input(ctx, _package_relative(ctx, prefix_header)))
             for header in private_header_files:
                 if header not in inputs:
                     inputs.append(header)
@@ -8067,7 +8091,8 @@ def _apple_executable_impl(ctx):
         absolute_header_dir = resolved_header_dir if resolved_header_dir.startswith("/") else workspace_root() + "/" + resolved_header_dir
         if resolved_header_dir and host_path_exists(absolute_header_dir) and resolved_header_dir not in own_header_dirs:
             own_header_dirs.append(resolved_header_dir)
-    own_header_files = _unique((attrs.get("private_headers") or []) + _apple_header_inputs(ctx, own_header_dirs))
+    own_header_files = _unique([_apple_external_input(ctx, header) for header in (attrs.get("private_headers") or [])] + _apple_header_inputs(ctx, own_header_dirs))
+    own_header_dirs = [_apple_compile_header_dir(ctx, header_dir) for header_dir in own_header_dirs]
 
     generated_srcs = _apple_run_prebuild_actions(ctx, attrs)
     all_srcs = _unique(glob(ctx["srcs"]) + _apple_declared_source_paths(ctx) + generated_srcs)
@@ -8169,7 +8194,7 @@ def _apple_executable_impl(ctx):
         # not expect top-level statements.
         swift_argv.append("-parse-as-library")
     if bridging_header:
-        swift_argv.extend(["-import-objc-header", _package_relative(ctx, bridging_header)])
+        swift_argv.extend(["-import-objc-header", _apple_external_input(ctx, _package_relative(ctx, bridging_header))])
     for d in compile_swiftmodule_dirs:
         swift_argv.extend(["-I", d])
     swift_argv.extend(_apple_header_search_flags(compile_header_dirs + own_header_dirs, dep_hmaps, swift = True))
@@ -8212,7 +8237,7 @@ def _apple_executable_impl(ctx):
 
     swift_inputs = list(swift_srcs)
     if bridging_header:
-        bridging_header_path = _package_relative(ctx, bridging_header)
+        bridging_header_path = _apple_external_input(ctx, _package_relative(ctx, bridging_header))
         if bridging_header_path not in swift_inputs:
             swift_inputs.append(bridging_header_path)
     for mmap in dep_modulemaps:

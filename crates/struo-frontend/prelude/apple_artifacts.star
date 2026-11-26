@@ -104,8 +104,13 @@ def _apple_host_path(path):
     marker = "/external-inputs/__parent__/"
     index = path.find(marker)
     if path.startswith(".struo/") and index >= 0:
-        original = path[index + len("/external-inputs/"):]
-        return workspace_root() + "/" + "/".join([".." if part == "__parent__" else part for part in original.split("/")])
+        parts = path[index + len("/external-inputs/"):].split("/")
+        parents = 0
+        for part in parts:
+            if part != "__parent__":
+                break
+            parents += 1
+        return workspace_root() + "/" + "/".join([".."] * parents + parts[parents:])
     return workspace_root() + "/" + path
 
 def _apple_artifact_icon(spec, plist, inputs):
