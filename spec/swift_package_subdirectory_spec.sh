@@ -127,6 +127,30 @@ SH
     The output should equal '[["sqlite/SwiftPackage_SQLiteKit_SQLiteKit","apple_library",["Sources/SQLiteKit/SQLiteKit.swift"],["sqlite/SwiftPackage_SQLiteKit_SQLiteKitSQLite3"]],["sqlite/SwiftPackage_SQLiteKit_SQLiteKitSQLite3","apple_system_module",["Sources/SQLiteKitSQLite3/module.modulemap","Sources/SQLiteKitSQLite3/shim.h"],[]]]'
   End
 
+  root_resources_graph() {
+    mkdir -p "$WORKSPACE/Sources/Assets/Resources/Declared.xcassets" "$WORKSPACE/Sources/Assets/Copied"
+    printf '{}\n' > "$WORKSPACE/Sources/Assets/Resources/Declared.xcassets/Contents.json"
+    printf 'hello\n' > "$WORKSPACE/Sources/Assets/Resources/message.txt"
+    printf 'raw\n' > "$WORKSPACE/Sources/Assets/Copied/raw.txt"
+    printf 'public let assets = 1\n' > "$WORKSPACE/Sources/Assets/Assets.swift"
+    printf '// swift-tools-version: 5.9\n' > "$WORKSPACE/Package.swift"
+    cat > "$SPEC_ROOT/dump-package.json" <<'JSON'
+{"name":"Root","toolsVersion":{"_version":"5.9.0"},"platforms":[{"platformName":"macos","version":"13.0","options":[]}],"dependencies":[],
+"products":[{"name":"Assets","targets":["Assets"],"type":{"library":["automatic"]},"settings":[]}],
+"targets":[{"name":"Assets","type":"regular","dependencies":[],"exclude":[],"resources":[{"path":"Resources","rule":{"process":{}}},{"path":"Copied/raw.txt","rule":{"copy":{}}}],"settings":[]}]}
+JSON
+    install_stub_darwin_toolchain
+    STRUO_CHANGE_TRACKER=0 struo --format json query 'MATCH (t:Target) RETURN t.id, t.attrs.resources' > "$SPEC_ROOT/query.json" || return
+    jq -c '.rows[] | select(.[0] == "SwiftPackage_Root_Assets") | .[1]' "$SPEC_ROOT/query.json"
+  }
+
+  It 'keeps resource paths workspace-relative for a package at the workspace root'
+    Skip if 'stubs the Linux Darwin SDK toolchain' linux_host_unavailable
+    When call root_resources_graph
+    The status should be success
+    The output should equal '["Sources/Assets/Resources/Declared.xcassets","Sources/Assets/Resources/message.txt","Sources/Assets/Copied/raw.txt"]'
+  End
+
   It 'builds and tests the package from the parent directory'
     Skip if 'requires Xcode' macos_toolchain_unavailable
     write_hello_package

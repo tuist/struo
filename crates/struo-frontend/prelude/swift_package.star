@@ -13,7 +13,7 @@ def _swift_package_workspace_resolver(ctx):
     swiftc = _resolve_swiftc(manifest_platform, attrs.get("sdk_variant") or "simulator", attrs.get("xcode_developer_dir") or "")
     swift = _swiftpm_swift_executable(attrs.get("swift") or "swift", attrs.get("xcode_developer_dir") or "", swiftc["swiftc_path"])
     absolute_package_path = _swiftpm_absolute_package_path(ctx, attrs.get("package_path") or ".")
-    package_dir = _xcode_workspace_input_path(absolute_package_path)
+    package_dir = _xcode_normalize_path(_xcode_workspace_input_path(absolute_package_path))
     # Shared manifest-dedupe map: each `swift package dump-package` invocation
     # bootstraps Swift and can take a couple seconds, and the same package
     # directory is often visited more than once during resolution. Threading
