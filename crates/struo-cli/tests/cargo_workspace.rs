@@ -202,24 +202,8 @@ fn cache_state(output: &Output, target: &str) -> String {
         })
 }
 
-/// Runs a build that must fail the outside-input check and returns the
-/// `struo.toml` it tells the user to write.
-fn suggested_manifest(root: &std::path::Path, target: &str) -> String {
-    let output = struo(root, "never", &["build", target]);
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let (_, hint) = stderr
-        .split_once("Declare it on the cargo_workspace target in struo.toml:\n")
-        .unwrap_or_else(|| panic!("{stderr}"));
-    hint.lines()
-        .take_while(|line| line.is_empty() || line.starts_with("  "))
-        .map(str::trim_start)
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 #[test]
-fn root_build_script_tracks_git_and_fixture_crates_but_not_its_out_dir() {
+fn root_package_rebuilds_for_what_it_reads_not_for_its_whole_tree() {
     let root = tempfile::tempdir().unwrap();
     write_files(
         root.path(),
@@ -232,6 +216,8 @@ fn root_build_script_tracks_git_and_fixture_crates_but_not_its_out_dir() {
             // A crate that no manifest refers to, such as a test fixture.
             ("fixtures/sample/Cargo.toml", "[package]\nname = \"sample\"\n"),
             ("fixtures/sample/value.txt", "one\n"),
+            ("dev/example.toml", "port = 1\n"),
+            ("docs/guide.md", "# Guide\n"),
             (
                 "build.rs",
                 r#"use std::path::Path;
@@ -248,36 +234,139 @@ fn main() {
             ),
             (
                 "src/main.rs",
-                "include!(concat!(env!(\"OUT_DIR\"), \"/value.rs\"));\nfn main() { println!(\"{VALUE}\"); }\n",
+                "include!(concat!(env!(\"OUT_DIR\"), \"/value.rs\"));\nfn main() { println!(\"{VALUE} {}\", include_str!(\"../dev/example.toml\").trim()); }\n",
             ),
         ],
     );
-    // `.git` is not a package input, so a script that reruns on it must
-    // declare it. Its own `OUT_DIR` needs no declaration.
-    let manifest = suggested_manifest(root.path(), "cargo_app_bin_app");
-    assert!(
-        manifest.contains(r#"build_script_data = { "app" = [".git/HEAD"] }"#),
-        "{manifest}"
-    );
-    std::fs::write(root.path().join("struo.toml"), manifest).unwrap();
-    let printed = || {
-        success(&struo(
-            root.path(),
-            "never",
-            &["build", "cargo_app_bin_app"],
-        ));
+    let build = || {
+        let output = struo(root.path(), "never", &["build", "cargo_app_bin_app"]);
+        success(&output);
         let binary = root.path().join(".struo/out/cargo_app_bin_app/app");
-        String::from_utf8(Command::new(binary).output().unwrap().stdout).unwrap()
+        let printed = String::from_utf8(Command::new(binary).output().unwrap().stdout).unwrap();
+        (cache_state(&output, "cargo_app_bin_app"), printed)
     };
-    assert_eq!(printed(), "one ref: refs/heads/main\n");
+    assert_eq!(build().1, "one ref: refs/heads/main port = 1\n");
+
+    // A file in the package that neither the compiler nor the build script
+    // read leaves every cached result in place.
+    std::fs::write(root.path().join("docs/guide.md"), "# Guide\n\nMore.\n").unwrap();
+    std::fs::write(root.path().join("docs/new.md"), "new\n").unwrap();
+    assert_eq!(
+        build(),
+        (
+            "hit".to_string(),
+            "one ref: refs/heads/main port = 1\n".to_string()
+        )
+    );
+
+    // A file the compiler embeds rebuilds the crate.
+    std::fs::write(root.path().join("dev/example.toml"), "port = 2\n").unwrap();
+    assert_eq!(
+        build(),
+        (
+            "miss".to_string(),
+            "one ref: refs/heads/main port = 2\n".to_string()
+        )
+    );
+    // Files the build script names rerun it, including `.git/HEAD`, which is
+    // not a package input. Its own `OUT_DIR` needs no declaration.
     std::fs::write(root.path().join("fixtures/sample/value.txt"), "two\n").unwrap();
-    assert_eq!(printed(), "two ref: refs/heads/main\n");
+    assert_eq!(build().1, "two ref: refs/heads/main port = 2\n");
     std::fs::write(root.path().join(".git/HEAD"), "ref: refs/heads/next\n").unwrap();
-    assert_eq!(printed(), "two ref: refs/heads/next\n");
+    assert_eq!(build().1, "two ref: refs/heads/next port = 2\n");
+
+    // Reverting an edit reuses the build from before it.
+    std::fs::write(root.path().join("dev/example.toml"), "port = 3\n").unwrap();
+    assert_eq!(build().0, "miss");
+    std::fs::write(root.path().join("dev/example.toml"), "port = 2\n").unwrap();
+    assert_eq!(
+        build(),
+        (
+            "hit".to_string(),
+            "two ref: refs/heads/next port = 2\n".to_string()
+        )
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn build_script_tools_run_the_binary_a_mise_shim_selects() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    let root = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let real = tools.path().join("installs/protoc");
+    let manager = tools.path().join("bin/mise");
+    write_files(
+        tools.path(),
+        &[
+            ("installs/protoc", "#!/bin/sh\necho real protoc\n"),
+            (
+                "bin/mise",
+                &format!(
+                    "#!/bin/sh\n[ \"$1\" = which ] && [ \"$2\" = protoc ] && echo {} && exit 0\nexit 1\n",
+                    real.display()
+                ),
+            ),
+        ],
+    );
+    for script in [&real, &manager] {
+        std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    std::fs::create_dir(tools.path().join("shims")).unwrap();
+    symlink(&manager, tools.path().join("shims/protoc")).unwrap();
+    write_files(
+        root.path(),
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            ),
+            (
+                "build.rs",
+                r#"fn main() {
+    let output = std::process::Command::new("protoc").output().unwrap();
+    assert!(output.status.success(), "protoc failed");
+    let out = std::path::Path::new(&std::env::var("OUT_DIR").unwrap()).join("tool.rs");
+    let text = String::from_utf8(output.stdout).unwrap();
+    std::fs::write(out, format!("const TOOL: &str = {:?};", text.trim())).unwrap();
+}
+"#,
+            ),
+            (
+                "src/main.rs",
+                "include!(concat!(env!(\"OUT_DIR\"), \"/tool.rs\"));\nfn main() { println!(\"{TOOL}\"); }\n",
+            ),
+        ],
+    );
+    let path = format!(
+        "{}:{}",
+        tools.path().join("shims").display(),
+        std::env::var("PATH").unwrap()
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_struo"))
+        .current_dir(root.path())
+        .args([
+            "--format",
+            "json",
+            "--cpu-limit",
+            "1",
+            "build",
+            "cargo_app_bin_app",
+        ])
+        .env("PATH", path)
+        .env("CARGO", env!("CARGO"))
+        .env("STRUO_CACHE_PROVIDER", "local")
+        .env("STRUO_CHANGE_TRACKER", "0")
+        .output()
+        .unwrap();
+    success(&output);
+    let binary = root.path().join(".struo/out/cargo_app_bin_app/app");
+    let printed = Command::new(binary).output().unwrap().stdout;
+    assert_eq!(String::from_utf8(printed).unwrap(), "real protoc\n");
 }
 
 #[test]
-fn member_build_script_reruns_for_declared_files_outside_its_package() {
+fn member_build_script_reruns_for_files_it_reports_outside_its_package() {
     let root = tempfile::tempdir().unwrap();
     write_files(
         root.path(),
@@ -292,8 +381,10 @@ fn member_build_script_reruns_for_declared_files_outside_its_package() {
                 "crates/gen/build.rs",
                 r#"use std::path::PathBuf;
 fn main() {
-    let input = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../proto/value.txt");
-    println!("cargo:rerun-if-changed={}", input.display());
+    // Built from pieces, so only the script's own report names it.
+    let proto = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join(["..", "..", "proto"].join("/"));
+    println!("cargo:rerun-if-changed={}", proto.display());
+    let input = proto.join("value.txt");
     println!("cargo:rustc-env=GEN_JOBS={}", std::env::var("NUM_JOBS").unwrap());
     let value = std::fs::read_to_string(&input).unwrap();
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("value.rs");
@@ -318,14 +409,8 @@ fn main() {
         String::from_utf8(Command::new(binary).output().unwrap().stdout).unwrap()
     };
 
-    // An undeclared outside input fails rather than caching output that a
-    // later change to it would leave stale.
-    // The printed declaration, pasted as is, is the fix.
-    std::fs::write(
-        root.path().join("struo.toml"),
-        suggested_manifest(root.path(), "cargo_gen_bin_gen"),
-    )
-    .unwrap();
+    // The script reports its outside input with `rerun-if-changed`, so it
+    // needs no `build_script_data` entry.
     // A script that does not build native code with `cc`, `cmake`, or
     // `autotools` runs with one job.
     assert_eq!(printed(), "one 1\n");
@@ -469,4 +554,66 @@ fn runs_the_package_binary() {
         );
         assert!(out.join("deps").join(&target[target.len() - 1..]).is_file());
     }
+}
+
+#[test]
+fn shared_files_a_build_script_joins_select_its_dependents_tests() {
+    let root = tempfile::tempdir().unwrap();
+    write_files(
+        root.path(),
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\napi = { path = \"crates/api/types\" }\n[workspace]\nmembers = [\"crates/api/types\", \"crates/consumer\"]\n",
+            ),
+            ("src/lib.rs", ""),
+            ("proto/api/ref.proto", "syntax = \"proto3\";\n"),
+            (
+                "crates/api/types/Cargo.toml",
+                "[package]\nname = \"api\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            ),
+            ("crates/api/types/src/lib.rs", ""),
+            (
+                "crates/api/types/build.rs",
+                r#"fn main() {
+    let root = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../..");
+    println!("cargo:rerun-if-changed={}", root.join("proto").display());
+}
+"#,
+            ),
+            (
+                "crates/consumer/Cargo.toml",
+                "[package]\nname = \"consumer\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\napi = { path = \"../api/types\" }\n",
+            ),
+            ("crates/consumer/src/lib.rs", ""),
+        ],
+    );
+    let selected = |path: &str| {
+        let output = struo(
+            root.path(),
+            "never",
+            &["query", "affected-tests", "--changed-path", path],
+        );
+        success(&output);
+        let tests: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let mut ids = tests
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|test| test["id"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        ids.sort();
+        ids
+    };
+    // `proto` lies in the root package's tree, but the API's build script
+    // reads it, so the API's dependents are selected too.
+    assert_eq!(
+        selected("proto/api/ref.proto"),
+        [
+            "cargo_api_unit_tests",
+            "cargo_app_unit_tests",
+            "cargo_consumer_unit_tests"
+        ]
+    );
+    assert!(selected("target/debug/app").is_empty());
 }

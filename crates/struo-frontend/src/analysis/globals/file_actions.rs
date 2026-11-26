@@ -41,6 +41,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
         }
         let bytes = unpack_write_content(content)?;
         let action = DeclaredAction {
+            input_discovery: None,
             presentation: unpack_presentation(presentation),
             history: None,
             resources: struo_core::ResourceRequest::default(),
@@ -109,6 +110,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
         inputs.sort();
         inputs.dedup();
         let action = DeclaredAction {
+            input_discovery: None,
             presentation: unpack_presentation(presentation),
             history: None,
             resources: struo_core::ResourceRequest::default(),
@@ -188,6 +190,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
             mode: source_mode,
         });
         let action = DeclaredAction {
+            input_discovery: None,
             presentation: unpack_presentation(presentation),
             history: None,
             resources: struo_core::ResourceRequest::default(),
@@ -268,6 +271,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
             sha256: source_sha256.clone(),
         });
         let action = DeclaredAction {
+            input_discovery: None,
             presentation: unpack_presentation(presentation),
             history: None,
             resources: struo_core::ResourceRequest::default(),
@@ -325,6 +329,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
             return Err(anyhow!("link_path source and destination must differ"));
         }
         let action = DeclaredAction {
+            input_discovery: None,
             presentation: unpack_presentation(presentation),
             history: None,
             resources: struo_core::ResourceRequest::default(),
@@ -384,6 +389,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
             DeclaredPreparePathMode::Directory => vec![path.to_string()],
         };
         let action = DeclaredAction {
+            input_discovery: None,
             presentation: unpack_presentation(presentation),
             history: None,
             resources: struo_core::ResourceRequest::default(),
@@ -457,6 +463,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
         inputs.sort();
         inputs.dedup();
         let action = DeclaredAction {
+            input_discovery: None,
             presentation: unpack_presentation(presentation),
             history: None,
             resources: struo_core::ResourceRequest::default(),
@@ -539,6 +546,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
             outputs.push(path.clone());
         }
         let action = DeclaredAction {
+            input_discovery: None,
             presentation: unpack_presentation(presentation),
             history: None,
             resources: struo_core::ResourceRequest::default(),
@@ -616,6 +624,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
             ));
         }
         let action = DeclaredAction {
+            input_discovery: None,
             presentation: unpack_presentation(presentation),
             history: None,
             resources: struo_core::ResourceRequest::default(),

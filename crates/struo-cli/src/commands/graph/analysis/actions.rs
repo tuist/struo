@@ -16,7 +16,7 @@ use struo_core::{
 };
 use struo_frontend::analysis::{
     AnalysisResult, DeclaredAction, DeclaredActionOperation, DeclaredArgFile,
-    DeclaredPreparePathMode,
+    DeclaredInputDiscovery, DeclaredPreparePathMode,
 };
 use struo_frontend::GraphTarget;
 
@@ -27,6 +27,7 @@ use super::output_state;
 use super::source_digest_cache::SourceDigestCache;
 use super::{AvailableInput, BuildOutcome, PerActionOutcome};
 
+mod discovered_inputs;
 mod input_sets;
 pub(super) mod legacy_outputs;
 mod lowering;
@@ -46,6 +47,7 @@ mod worker_lease;
 #[cfg(test)]
 use uncached::{capture_uncached_outputs, capture_uncached_outputs_admitted, run_uncached_action};
 
+pub(super) use self::discovered_inputs::recorded_paths;
 use self::lowering::{
     declared_action_inputs, declared_arg_file_format_name, declared_to_action,
     enclosing_available_output, ensure_output_parent_dirs, generated_input_children,
@@ -280,6 +282,7 @@ struct DeclaredActionContext<'a> {
     output_observer: Option<&'a dyn ActionOutputObserver>,
     producers: &'a Producers,
     worker: Option<&'a WorkerLease<'a>>,
+    input_discovery: Option<&'a DeclaredInputDiscovery>,
 }
 
 impl DeclaredActionContext<'_> {
@@ -922,9 +925,11 @@ async fn run_declared_action(run: DeclaredActionRun<'_>) -> Result<DeclaredActio
                 )
             })?;
     }
+    let input_discovery = discovered_inputs::active(&declared, sandbox, producers)?;
+    let keyed = input_discovery.map(|discovery| discovered_inputs::keyed(&declared, discovery));
     let prepared = prepare_declared_action_with_inputs(
         workspace,
-        &declared,
+        keyed.as_ref().unwrap_or(&declared),
         module_source_digest,
         input_action_digests,
         available_inputs,
@@ -977,6 +982,7 @@ async fn run_declared_action(run: DeclaredActionRun<'_>) -> Result<DeclaredActio
         output_observer,
         producers,
         worker,
+        input_discovery,
     };
 
     let execute_started = std::time::Instant::now();
@@ -1300,38 +1306,63 @@ async fn probe_cached_action(
             context.index, context.target_id, context.identifier
         )
     };
-    let cached: struo_cas::Result<_> = async {
-        let Some(hit) = context.cache.lookup_action_result(&action_digest).await? else {
-            return Ok(None);
+    let mut keys = vec![action_digest];
+    if context.input_discovery.is_some() {
+        keys.extend(discovered_inputs::variants(context.cache, &action_digest).await);
+    }
+    for key in keys {
+        let result = match reusable_result(context, &key).await {
+            Err(error) if error.is_unavailable() => {
+                tracing::warn!(target = %context.target_id, action_index = context.index,
+                    %action_digest, error = %error,
+                    "cache unavailable; executing the action instead of reusing it");
+                return Ok(None);
+            }
+            result => result.with_context(probe)?,
         };
-        let result = hit.result;
-        if !hit.blobs_available
-            && !action_result_blobs_present(
-                &result,
+        let Some(result) = result else {
+            continue;
+        };
+        let valid = match context.input_discovery {
+            Some(discovery) => discovered_inputs::still_valid(
                 context.workspace,
                 context.cache,
                 context.source_digest_cache,
+                discovery,
+                &result,
             )
-            .await?
-        {
-            return Ok(None);
+            .await
+            .with_context(probe)?,
+            None => true,
+        };
+        if valid {
+            return Ok(Some(struo_core::Outcome {
+                action: action_digest,
+                result,
+                cache: struo_core::CacheState::Hit,
+            }));
         }
-        Ok(Some(struo_core::Outcome {
-            action: action_digest,
-            result,
-            cache: struo_core::CacheState::Hit,
-        }))
     }
-    .await;
-    match cached {
-        Err(error) if error.is_unavailable() => {
-            tracing::warn!(target = %context.target_id, action_index = context.index,
-                %action_digest, error = %error,
-                "cache unavailable; executing the action instead of reusing it");
-            Ok(None)
-        }
-        result => result.with_context(probe),
-    }
+    Ok(None)
+}
+
+/// The result cached under `key`, when every blob it names is available.
+async fn reusable_result(
+    context: &DeclaredActionContext<'_>,
+    key: &Digest,
+) -> struo_cas::Result<Option<ActionResult>> {
+    let Some(hit) = context.cache.lookup_action_result(key).await? else {
+        return Ok(None);
+    };
+    let available = hit.blobs_available
+        || action_result_blobs_present(
+            &hit.result,
+            context.workspace,
+            context.cache,
+            context.source_digest_cache,
+        )
+        .await?;
+    Ok(available.then_some(hit.result))
 }
 
 async fn action_result_blobs_present(
@@ -1389,6 +1420,9 @@ async fn execute_declared_cache_miss(
     lease: struo_core::ExecutionPermit,
 ) -> Result<struo_core::Outcome> {
     preparation::setup(context, action, declared, &lease).await?;
+    if let Some(discovery) = context.input_discovery {
+        discovered_inputs::clear_depfile(context.workspace, discovery)?;
+    }
     let local = struo_core::Executor::resolve(action)? == struo_core::Executor::Local;
     let label = struo_cas::request_metadata::ActionLabel {
         mnemonic: action_mnemonic(context.target_id, context.identifier, context.capability),
@@ -1425,6 +1459,24 @@ async fn execute_declared_cache_miss(
         .await?;
     }
     let action_digest = action.digest();
+    let mut result = result;
+    if let (0, Some(discovery)) = (result.exit_code, context.input_discovery) {
+        discovered_inputs::record(
+            context.workspace,
+            context.cache,
+            context.source_digest_cache,
+            declared,
+            discovery,
+            &mut result,
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "recording discovered inputs of action {} for {} ({})",
+                context.index, context.target_id, context.identifier
+            )
+        })?;
+    }
     if result.exit_code == 0 {
         context
             .cache
@@ -1436,6 +1488,16 @@ async fn execute_declared_cache_miss(
                     context.index, context.target_id, context.identifier
                 )
             })?;
+        if let Some(discovery) = context.input_discovery {
+            discovered_inputs::remember(context.cache, &action_digest, discovery, &result)
+                .await
+                .with_context(|| {
+                    format!(
+                        "caching action {} for {} ({})",
+                        context.index, context.target_id, context.identifier
+                    )
+                })?;
+        }
     }
     Ok(struo_core::Outcome {
         action: action_digest,

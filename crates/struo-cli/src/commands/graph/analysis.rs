@@ -1308,9 +1308,15 @@ async fn build_one(
                 Some(struo_frontend::analysis::DeclaredActionOperation::ExpandActions { .. })
             )
     });
-    let declared_inputs = struo_frontend::analysis::DeclaredInputs::concat(
+    let mut declared_inputs = struo_frontend::analysis::DeclaredInputs::concat(
         analysis.actions.iter().map(|action| action.inputs.clone()),
     );
+    let discovery_records = analysis
+        .actions
+        .iter()
+        .filter_map(|action| action.input_discovery.as_ref())
+        .map(|discovery| discovery.record.clone())
+        .collect::<Vec<_>>();
     tracing::trace!(
         target = %target_id,
         declared_actions = analysis.actions.len(),
@@ -1339,11 +1345,28 @@ async fn build_one(
     )
     .await?;
     target_outcomes.note_used(&outcome);
+    // A file an action read outside its declared inputs has to reach the
+    // record too, or a change to it alone would skip the target.
+    let mut discovered_complete = true;
+    let mut discovered = Vec::new();
+    for record in &discovery_records {
+        let Some(digest) = outcome.result.outputs.get(record) else {
+            continue;
+        };
+        match actions::recorded_paths(&cache, digest).await {
+            Ok(Some(paths)) => discovered.extend(paths),
+            _ => discovered_complete = false,
+        }
+    }
+    if !discovered.is_empty() {
+        declared_inputs =
+            struo_frontend::analysis::DeclaredInputs::concat([declared_inputs, discovered.into()]);
+    }
     if let Some(key) = analysis_key
         .as_deref()
         .map(|key| target_outcomes::key(key, &action_digests, &available_inputs))
     {
-        if !requires_action_replay {
+        if !requires_action_replay && discovered_complete {
             target_outcomes.record_with_inputs(
                 &target,
                 key,

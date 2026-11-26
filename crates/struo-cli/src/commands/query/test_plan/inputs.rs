@@ -21,7 +21,7 @@ pub(super) fn target_input_patterns(
                     })
                     .collect::<Vec<_>>()
             };
-            let srcs_exclude = match target.attrs.get("srcs_exclude") {
+            let string_list = |name: &str| match target.attrs.get(name) {
                 Some(AttrValue::List(values)) => values
                     .iter()
                     .filter_map(AttrValue::as_str)
@@ -29,6 +29,18 @@ pub(super) fn target_input_patterns(
                     .collect(),
                 _ => Vec::new(),
             };
+            let srcs_exclude = string_list("srcs_exclude");
+            // A build script's declared data reruns it wherever the data lives,
+            // including inside another package's tree, and a literal path names
+            // a directory as readily as a file.
+            let build_script_data = string_list("build_script_data")
+                .into_iter()
+                .flat_map(|pattern| {
+                    let subtree = (!has_glob_metacharacters(&pattern))
+                        .then(|| format!("{}/**", pattern.trim_end_matches('/')));
+                    std::iter::once(pattern).chain(subtree)
+                })
+                .collect::<Vec<_>>();
             let provider_inputs = metadata_provider(analyzer.as_ref(), workspace, target)
                 .map(|provider| {
                     provider_string_list(&provider, "affected_inputs")
@@ -40,6 +52,7 @@ pub(super) fn target_input_patterns(
             let inputs = TargetInputs {
                 srcs: package_patterns(&target.srcs),
                 srcs_exclude: package_patterns(&srcs_exclude),
+                build_script_data: package_patterns(&build_script_data),
                 provider_inputs,
             };
             (target.label.id.clone(), inputs)
@@ -48,27 +61,39 @@ pub(super) fn target_input_patterns(
 }
 
 /// The paths a target declares as its inputs: its `srcs` without the paths its
-/// `srcs_exclude` attribute removes, plus the `affected_inputs` its metadata
-/// provider reports.
+/// `srcs_exclude` attribute removes, its `build_script_data`, and the
+/// `affected_inputs` its metadata provider reports.
 #[derive(Debug)]
 pub(super) struct TargetInputs {
     srcs: Vec<InputPattern>,
     srcs_exclude: Vec<InputPattern>,
+    build_script_data: Vec<InputPattern>,
     provider_inputs: Vec<InputPattern>,
 }
 
 impl TargetInputs {
     pub(super) fn matches(&self, path: &str) -> bool {
-        let in_srcs = self.srcs.iter().any(|pattern| pattern.matches(path))
-            && !self
-                .srcs_exclude
-                .iter()
-                .any(|pattern| pattern.matches(path));
-        in_srcs
+        (self.in_srcs(path) && !self.excludes(path))
             || self
-                .provider_inputs
+                .build_script_data
                 .iter()
+                .chain(&self.provider_inputs)
                 .any(|pattern| pattern.matches(path))
+    }
+
+    /// Whether `srcs_exclude` takes `path` out of this target's sources.
+    pub(super) fn excludes_from_srcs(&self, path: &str) -> bool {
+        self.in_srcs(path) && self.excludes(path)
+    }
+
+    fn in_srcs(&self, path: &str) -> bool {
+        self.srcs.iter().any(|pattern| pattern.matches(path))
+    }
+
+    fn excludes(&self, path: &str) -> bool {
+        self.srcs_exclude
+            .iter()
+            .any(|pattern| pattern.matches(path))
     }
 }
 

@@ -12752,7 +12752,7 @@ result = repr("ok")
         .find(|action| action.identifier.as_deref() == Some("crates/app/app:build-script"))
         .and_then(|action| action.argv.get(2))
         .unwrap();
-    assert_eq!(script.matches("done <").count(), 1, "{script}");
+    assert_eq!(script.matches("cargo::metadata=*)").count(), 1, "{script}");
 }
 
 #[test]

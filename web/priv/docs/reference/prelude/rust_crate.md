@@ -38,8 +38,8 @@ Struo graph target. `rust_crate` compiles to an rlib and emits the same
 | `android_ndk` | string | no | `ANDROID_NDK_HOME` | Android NDK root used to find clang wrapper linkers |
 | `data` | list&lt;string&gt; | no | `[]` | Runtime data file globs propagated to downstream Rust binaries and tests |
 | `compile_data` | list&lt;string&gt; | no | `[]` | Bazel-compatible compile-time data file globs included in the rustc action inputs |
-| `srcs_exclude` | list&lt;string&gt; | no | `[]` | Package-relative globs removed from `srcs`, `compile_data`, and build-script inputs; changed paths that match one do not select this target's tests |
-| `build_script_data` | list&lt;string&gt; | no | `[]` | Package-relative globs of files outside `srcs` that the build script reads; a change reruns it |
+| `srcs_exclude` | list&lt;string&gt; | no | `[]` | Package-relative globs removed from `srcs`, `compile_data`, and build-script inputs; changed paths that match one do not select this target's tests, and select no tests when no other target claims them |
+| `build_script_data` | list&lt;string&gt; | no | `[]` | Package-relative globs of files outside `srcs` that the build script reads; a change reruns it and selects this target's tests |
 | `build_script_jobs` | int | no | `4` | `NUM_JOBS` passed to a build script that depends on `cc`, `cmake`, or `autotools`, reserved as CPU slots for its run; other build scripts get one |
 | `crate_aliases` | map&lt;string, string&gt; | no | `{}` | Map dependency label, package name, or crate name to the local extern crate name |
 | `aliases` | map&lt;string, string&gt; | no | `{}` | Bazel-compatible alias map from dependency label or crate name to local extern crate name |

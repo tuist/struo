@@ -114,6 +114,7 @@ async fn measure(ordered: bool) -> f64 {
             record_success_evidence: false,
             resources: &resources,
             output_observer: None,
+            input_discovery: None,
         };
         let started = std::time::Instant::now();
         let (outcome, _) = execute_declared_cache_miss(&context, &prepared.action, &declared)

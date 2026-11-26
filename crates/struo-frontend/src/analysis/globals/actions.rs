@@ -18,7 +18,9 @@ use super::{
 };
 use crate::analysis::action_history::unpack_history;
 use crate::analysis::presentation::{record_action, unpack_presentation, unpack_source_files};
-use crate::analysis::store::{with_store_mut, DeclaredAction, DeclaredActionOperation};
+use crate::analysis::store::{
+    with_store_mut, DeclaredAction, DeclaredActionOperation, DeclaredInputDiscovery,
+};
 use crate::analysis::transitive_set;
 use crate::analysis::values::{unpack_string_dict, unpack_string_list};
 
@@ -69,6 +71,7 @@ pub(super) fn action_globals(builder: &mut GlobalsBuilder) {
         with_store_mut(|store| {
             if let Some(store) = store {
                 store.actions.push(DeclaredAction {
+                    input_discovery: None,
                     presentation,
                     history: None,
                     resources: struo_core::ResourceRequest::default(),
@@ -174,7 +177,14 @@ pub(super) fn action_globals(builder: &mut GlobalsBuilder) {
     /// digest; `identifier`: optional label for diagnostics;
     /// `intermediate`: optional bool, default false, for outputs only later
     /// actions of the same target read, so a cache hit doesn't restore them
-    /// to disk unless one of those actions has to run.
+    /// to disk unless one of those actions has to run;
+    /// `input_discovery`: optional dict with `depfile`, a path the command
+    /// writes in Make dependency syntax naming the files it read, which Struo
+    /// removes before the command runs and does not cache, `record`,
+    /// a path Struo writes and caches as an extra output, and `candidates`, inputs that leave the cache
+    /// key when the command runs locally without a sandbox. A cached result
+    /// is then reused only while every workspace file the depfile named, or
+    /// every candidate when the command wrote none, is unchanged.
     #[allow(
         clippy::too_many_arguments,
         reason = "run_action mirrors the declared-action fields, including optional stream redirection"
@@ -203,6 +213,7 @@ pub(super) fn action_globals(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] source_files: Option<Value<'v>>,
         #[starlark(require = named)] intermediate: Option<bool>,
         #[starlark(require = named)] resources: Option<Value<'v>>,
+        #[starlark(require = named)] input_discovery: Option<Value<'v>>,
     ) -> anyhow::Result<NoneType> {
         validate_sandbox(sandbox.as_deref())?;
         validate_network(network.as_deref())?;
@@ -254,7 +265,12 @@ pub(super) fn action_globals(builder: &mut GlobalsBuilder) {
         }
         success_exit_codes.sort_unstable();
         success_exit_codes.dedup();
+        let input_discovery = input_discovery
+            .filter(|value| !value.is_none())
+            .map(|value| unpack_input_discovery(value, &inputs, &outputs))
+            .transpose()?;
         let action = DeclaredAction {
+            input_discovery,
             presentation: unpack_presentation(presentation),
             history: unpack_history(history),
             resources,
@@ -284,4 +300,65 @@ pub(super) fn action_globals(builder: &mut GlobalsBuilder) {
         record_action(action);
         Ok(NoneType)
     }
+}
+
+fn unpack_input_discovery(
+    value: Value<'_>,
+    inputs: &crate::analysis::DeclaredInputs,
+    outputs: &[String],
+) -> anyhow::Result<DeclaredInputDiscovery> {
+    let mut fields = unpack_string_or_list_dict(value)?;
+    let mut string = |key: &str| match fields.remove(key) {
+        Some(Field::String(value)) => Ok(value),
+        _ => Err(anyhow!("input_discovery needs a string `{key}`")),
+    };
+    let depfile = string("depfile")?;
+    let record = string("record")?;
+    if outputs.contains(&record) || record == depfile {
+        anyhow::bail!(
+            "input_discovery record `{record}` must be a path of its own, not one of the action's outputs; Struo writes it after the command runs"
+        );
+    }
+    let candidates = match fields.remove("candidates") {
+        Some(Field::List(values)) => values,
+        None => Vec::new(),
+        Some(Field::String(_)) => anyhow::bail!("input_discovery `candidates` must be a list"),
+    };
+    if let Some(key) = fields.keys().next() {
+        anyhow::bail!(
+            "input_discovery has unknown key `{key}`; use depfile, record, and candidates"
+        );
+    }
+    let declared = inputs.iter().collect::<std::collections::HashSet<_>>();
+    if let Some(missing) = candidates.iter().find(|path| !declared.contains(path)) {
+        anyhow::bail!("input_discovery candidate `{missing}` must be one of the action's inputs");
+    }
+    Ok(DeclaredInputDiscovery {
+        depfile,
+        record,
+        candidates,
+    })
+}
+
+enum Field {
+    String(String),
+    List(Vec<String>),
+}
+
+fn unpack_string_or_list_dict(value: Value<'_>) -> anyhow::Result<BTreeMap<String, Field>> {
+    let dict = starlark::values::dict::DictRef::from_value(value)
+        .ok_or_else(|| anyhow!("input_discovery must be a dict, got `{}`", value.get_type()))?;
+    dict.iter()
+        .map(|(key, value)| {
+            let key = key
+                .unpack_str()
+                .ok_or_else(|| anyhow!("input_discovery keys must be strings"))?
+                .to_string();
+            let field = match value.unpack_str() {
+                Some(text) => Field::String(text.to_string()),
+                None => Field::List(unpack_string_list(value, &key)?),
+            };
+            Ok((key, field))
+        })
+        .collect()
 }

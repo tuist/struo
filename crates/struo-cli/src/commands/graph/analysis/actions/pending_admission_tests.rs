@@ -78,6 +78,7 @@ async fn independent_miss_resolves_aliases_only_after_resource_admission() {
             record_success_evidence: false,
             resources: &pool,
             output_observer: None,
+            input_discovery: None,
         };
         started.send(()).unwrap();
         execute_declared_cache_miss(&context, &prepared.action, &declared)

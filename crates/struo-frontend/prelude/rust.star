@@ -1194,10 +1194,31 @@ def _rust_builtin_extern_args(crate_type):
 def _rust_build_script_tool_paths(ctx):
     resolved = []
     for name in _rust_attr(ctx, "build_script_tools", []):
-        path = host_which_optional(name)
+        path = _rust_version_manager_tool(name, host_which_optional(name))
         if path:
             resolved.append(path)
     return _unique(resolved)
+
+# Version managers that put a shim named after each tool on PATH, a symbolic
+# link to the manager itself, which picks the real binary from the user's
+# environment and configuration. A build script runs with neither, so the shim
+# fails there; `<manager> which <tool>` names the binary it would run instead.
+_RUST_VERSION_MANAGERS = ["mise", "rtx"]
+
+# The binary a version-manager shim at `path` runs for `name`, or "" when the
+# manager selects none here. A path that is not such a shim comes back as is.
+def _rust_version_manager_tool(name, path):
+    if not path:
+        return ""
+    target = host_symlink_target(path)
+    if not target or target.split("/")[-1] not in _RUST_VERSION_MANAGERS:
+        return path
+    if not target.startswith("/"):
+        target = path.rsplit("/", 1)[0] + "/" + target
+    real = host_command([target, "which", name], cwd = workspace_root(), check = False).strip()
+    if real.startswith("/") and host_file_exists(real):
+        return real
+    return ""
 
 def _rust_build_script_tool_identity(tool_paths):
     if not tool_paths:
@@ -1373,72 +1394,51 @@ def _rust_glob_root(pattern):
             return _trim_trailing_slash(_parent_dir(pattern[:index + 1]))
     return _trim_trailing_slash(pattern)
 
-# A Cargo workspace member's build script reruns when its package changes or
-# a file it declares in `build_script_data` changes. A `rerun-if-changed`
-# path inside the workspace but outside both would leave the script's cached
-# output in place after that file changes, so the run fails and names the
-# declaration that fixes it instead of producing a result that can go stale.
-def _rust_build_script_input_check(ctx, stdout, manifest_dir):
-    package = _rust_attr(ctx, "cargo_package", "")
-    if not package:
-        return ""
-    label_package = ctx["label"]["package"]
-    scope = _workspace_absolute(label_package) if label_package else workspace_root()
-    def absolute_roots(patterns):
-        return " ".join([
-            _shell_quote(_workspace_absolute(_rust_glob_root(_package_relative(ctx, pattern))))
-            for pattern in patterns
-        ])
-    declared = absolute_roots(_rust_attr(ctx, "build_script_data", []))
-    excluded = absolute_roots(_rust_attr(ctx, "srcs_exclude", []))
-    return """struo_canon() {{
-  if [ -d "$1" ]; then (cd "$1" 2>/dev/null && pwd -P); return; fi
-  case "$1" in */*) struo_dir=${{1%/*}}; struo_base=${{1##*/}} ;; *) struo_dir=.; struo_base=$1 ;; esac
-  [ -n "$struo_dir" ] || struo_dir=/
-  struo_dir=$(cd "$struo_dir" 2>/dev/null && pwd -P) || return 1
-  printf '%s\n' "${{struo_dir%/}}/$struo_base"
-}}
-struo_scope=$(struo_canon {scope}) || struo_scope=
-struo_package=$(struo_canon {package_dir}) || struo_package=
-if [ "$code" = 0 ] && [ -n "$struo_scope" ] && [ -n "$struo_package" ]; then
+# The files a build script reruns on, written as a depfile for the run
+# action's input discovery. A script that prints neither `rerun-if-changed`
+# nor `rerun-if-env-changed` writes none, which leaves its whole package as
+# the dependency, as Cargo does.
+def _rust_build_script_depfile(stdout, manifest_dir, depfile):
+    return """struo_rerun=no
+struo_deps=
+if [ "$code" = 0 ]; then
   while IFS= read -r line; do
     case "$line" in
       cargo:rerun-if-changed=*) struo_path=${{line#cargo:rerun-if-changed=}} ;;
       cargo::rerun-if-changed=*) struo_path=${{line#cargo::rerun-if-changed=}} ;;
+      cargo:rerun-if-env-changed=*|cargo::rerun-if-env-changed=*) struo_rerun=yes; continue ;;
       *) continue ;;
     esac
-    case "$struo_path" in /*) ;; *) struo_path="$struo_package/$struo_path" ;; esac
-    struo_path=$(struo_canon "$struo_path") || continue
-    case "$struo_path" in "$struo_scope"/*) ;; *) continue ;; esac
-    case "$struo_path" in "$struo_scope"/.struo|"$struo_scope"/.struo/*|"$struo_scope"/target/*|"$struo_package"/target/*) continue ;; esac
-    struo_inside=no
-    case "$struo_path" in "$struo_package"|"$struo_package"/*) struo_inside=yes ;; esac
-    for struo_root in {excluded}; do
-      struo_root=$(struo_canon "$struo_root") || continue
-      case "$struo_path" in "$struo_root"|"$struo_root"/*) struo_inside=no ;; esac
+    struo_rerun=yes
+    case "$struo_path" in /*) ;; *) struo_path={package_dir}/$struo_path ;; esac
+    struo_escaped=
+    while :; do
+      case "$struo_path" in
+        *" "*) struo_escaped="$struo_escaped${{struo_path%% *}}\\ "; struo_path=${{struo_path#* }} ;;
+        *) struo_escaped="$struo_escaped$struo_path"; break ;;
+      esac
     done
-    [ "$struo_inside" = no ] || continue
-    struo_covered=no
-    for struo_root in {declared}; do
-      struo_root=$(struo_canon "$struo_root") || continue
-      case "$struo_path" in "$struo_root"|"$struo_root"/*) struo_covered=yes ;; esac
-    done
-    if [ "$struo_covered" = no ]; then
-      struo_relative=${{struo_path#"$struo_scope"/}}
-      printf '%s\n' "error: the build script of Cargo package \\`{package}\\` reruns when \\`$struo_relative\\` changes, but Struo does not track that path as an input of the package, so it would not rerun the script." "Declare it on the cargo_workspace target in struo.toml:" "" "  [[target]]" "  name = \\"cargo\\"" "  kind = \\"cargo_workspace\\"" "  srcs = [\\"Cargo.toml\\", \\"Cargo.lock\\", \\"**/Cargo.toml\\"]" "" "  [target.attrs]" "  build_script_data = {{ \\"{package}\\" = [\\"$struo_relative\\"] }}" >&2
-      code=1
-    fi
+    struo_deps="$struo_deps $struo_escaped"
   done < {stdout}
+  if [ "$struo_rerun" = yes ]; then
+    printf '%s\\n' "build-script:$struo_deps" > {depfile}
+  fi
 fi""".format(
-        scope = _shell_quote(scope),
         package_dir = _shell_quote(manifest_dir),
-        declared = declared,
-        excluded = excluded,
-        package = package,
         stdout = _shell_quote(execution_path(stdout)),
+        depfile = _shell_quote(execution_path(depfile)),
     )
 
-def _rust_build_script_run_shell(runner, stdout, run_env, metadata_exports, input_check = ""):
+# Input discovery for a Rust action whose command names what it read in
+# `depfile`: the package sources leave the cache key, and the reused result is
+# the one whose recorded reads are unchanged. Struo's own outputs stay keyed.
+def _rust_input_discovery(depfile, record, candidates):
+    candidates = [path for path in _unique(candidates) if not path.startswith(".struo/")]
+    if not candidates:
+        return None
+    return {"depfile": depfile, "record": record, "candidates": candidates}
+
+def _rust_build_script_run_shell(runner, stdout, run_env, metadata_exports, after_run = ""):
     status = run_env["OUT_DIR"] + "/.struo-build-script-status"
     status_abs = _shell_quote(status)
     lines = [
@@ -1450,8 +1450,8 @@ def _rust_build_script_run_shell(runner, stdout, run_env, metadata_exports, inpu
         _rust_build_script_output_pipeline(runner, status, stdout),
         "code=$(" + _shell_quote(host_which("cat")) + " " + status_abs + ")",
     ])
-    if input_check:
-        lines.append(input_check)
+    if after_run:
+        lines.append(after_run)
     lines.append("exit \"$code\"")
     return "\n".join(lines)
 
@@ -1475,6 +1475,7 @@ def _rust_build_script(ctx, rustc, identity, target, host_triple, edition, dep_a
         "-C", "metadata=" + _rust_metadata_suffix(ctx) + "_BUILD",
         "-C", "debug-assertions=" + debug_assertions,
         "-o", runner,
+        "--emit=link,dep-info=" + runner + ".d",
     ]
     compile_args.extend(feature_flags)
     compile_args.extend(_rust_cap_lints(ctx))
@@ -1502,6 +1503,7 @@ def _rust_build_script(ctx, rustc, identity, target, host_triple, edition, dep_a
         argv = compile_argv,
         inputs = _unique([script_path] + source_inputs + build_script_inputs + dep_inputs + dependency_build_outputs + dependency_build_inputs + wrapped[1] + _rust_extra_inputs(ctx)),
         outputs = [runner],
+        input_discovery = _rust_input_discovery(runner + ".d", runner + ".struo-inputs", [script_path] + source_inputs + build_script_inputs + _rust_extra_inputs(ctx)),
         env = build_script_compile_env,
         toolchain_identity = identity + linker_identity + "\x00build-script",
         identifier = _rust_action_identifier(ctx, "build-script-rustc"),
@@ -1511,16 +1513,14 @@ def _rust_build_script(ctx, rustc, identity, target, host_triple, edition, dep_a
     status = out_dir + "/.struo-build-script-status"
     metadata_exports, metadata_inputs = _rust_dep_metadata_exports(metadata_deps)
     metadata_inputs = _unique(metadata_inputs + _rust_dep_build_script_native_inputs(metadata_deps))
-    run_script = _rust_build_script_run_shell(runner, stdout, run_env, metadata_exports, _rust_build_script_input_check(ctx, stdout, run_env["CARGO_MANIFEST_DIR"]))
+    run_depfile = stdout + ".d"
+    run_script = _rust_build_script_run_shell(runner, stdout, run_env, metadata_exports, _rust_build_script_depfile(stdout, run_env["CARGO_MANIFEST_DIR"], run_depfile))
     # Cargo's default: a build script that prints no `rerun-if` directive
-    # depends on every file in its package. Narrowing to a script's declared
-    # set needs those directives, which are only knowable after it has run, and
-    # reading them back from the previous run made the action's inputs depend
-    # on build history. That is unsound here in a way it is not for Cargo: two
-    # configurations share one output path, so directives learned under one can
-    # narrow the other's inputs and hide a change. Until the directives are
-    # recorded per configuration alongside the identity of the run that
-    # produced them, the whole package stays the dependency.
+    # depends on every file in its package. One that does depends on the paths
+    # it names, which the depfile reports and each cached result records, so
+    # an edit elsewhere in the package keeps the hit and an edit to a named
+    # path outside it misses. A sandboxed or remote run keys the whole package
+    # plus `build_script_data`, since only those are staged for it.
     run_action(
         display_name = "Run Rust build script · " + ctx["label"]["name"],
         resources = {"cpu_slots": _rust_build_script_jobs(ctx), "memory_bytes": 2 * 1024 * 1024 * 1024},
@@ -1530,6 +1530,7 @@ def _rust_build_script(ctx, rustc, identity, target, host_triple, edition, dep_a
         argv = [host_which("sh"), "-c", run_script],
         inputs = _unique([runner] + metadata_inputs + source_inputs + build_script_inputs + _rust_extra_inputs(ctx)),
         outputs = [out_dir, stdout, status],
+        input_discovery = _rust_input_discovery(run_depfile, stdout + ".struo-inputs", source_inputs + build_script_inputs + _rust_extra_inputs(ctx)),
         # Emptying the output directory belongs to the script's own setup, not
         # to a step before it. Declared as separate actions, the wipe ran even
         # when the script's result was already cached, and the cache hit then
@@ -1931,6 +1932,8 @@ def _rust_compile(ctx, crate_type, default_root, output_name, test = False, prov
         rustc_args.extend(["--remap-path-prefix", workspace_root() + "=."])
     rustc_args.extend(_rust_extra_filename_args(ctx, crate_type))
     rustc_args.extend(_rust_output_args(crate_type, output))
+    if not materialized_sources:
+        rustc_args.append("--emit=link,dep-info=" + output + ".d")
     rustc_args.extend(_rust_compile_target_args(target, host_triple))
     rustc_args.extend(_rust_proc_macro_codegen_args(crate_type))
     rustc_args.extend(feature_flags)
@@ -1968,6 +1971,7 @@ def _rust_compile(ctx, crate_type, default_root, output_name, test = False, prov
         argv = argv,
         inputs = _unique(srcs + source_inputs + dep_inputs + dep_search_inputs + build_inputs + dependency_build_outputs + dependency_build_inputs + linker_script_inputs + (_rust_native_dep_link_inputs(deps) if crate_type != "rlib" else []) + _rust_extra_inputs(ctx)),
         outputs = [output],
+        input_discovery = None if materialized_sources else _rust_input_discovery(output + ".d", output + ".struo-inputs", srcs + source_inputs + _rust_extra_inputs(ctx)),
         env = compile_env,
         cwd = compile_cwd,
         # Only consumed bytes matter, not which generator inputs produced them.
@@ -4461,6 +4465,84 @@ def _cargo_workspace_build_script_data(ctx, packages):
             )
     return declared
 
+# Workspace paths outside its package that a member's build script names in
+# string literals, such as shared protobuf directories. A `../` literal names
+# one directly; a plain literal names one when it exists under a directory a
+# `../` literal reached, as in `dir.join("../..").join("proto")`. These become
+# `build_script_data`, which a sandboxed or remote run stages and which
+# `affected-tests` attributes to the package. A local run also tracks what the
+# script reports with `rerun-if-changed`, so a path built another way still
+# reruns it there.
+def _cargo_build_script_outside_paths(ctx, package, build_script, source_root):
+    prefix = "" if source_root == "." else source_root + "/"
+    script = _workspace_absolute(_package_relative(ctx, prefix + _cargo_source_rel(package, build_script)))
+    if not host_file_exists(script):
+        return []
+    literals = []
+    for index, literal in enumerate(host_file_read(script).split("\"")):
+        for directive in ["cargo:rerun-if-changed=", "cargo::rerun-if-changed="]:
+            if literal.startswith(directive):
+                literal = literal[len(directive):]
+        if index % 2 == 0 or not literal or len(literal) > 512:
+            continue
+        if any([character in literal for character in [" ", "\n", "\\", "{", "*", "?", "[", ":"]]):
+            continue
+        literals.append(literal)
+    paths = []
+    bases = []
+    for literal in literals:
+        if not literal.startswith("../"):
+            continue
+        relative = _cargo_join_relative(source_root, literal)
+        if relative == None:
+            continue
+        if relative == "" or not _cargo_path_within(relative, source_root):
+            kind = _cargo_workspace_path_kind(ctx, relative)
+            if kind == "directory":
+                bases.append(relative)
+            if relative and kind:
+                paths.append(relative + ("/**" if kind == "directory" else ""))
+    for base in _unique(bases):
+        for literal in literals:
+            if literal.startswith("../") or literal.startswith("/") or literal.startswith("."):
+                continue
+            relative = _cargo_join_relative(base, literal)
+            if not relative or _cargo_path_within(relative, source_root):
+                continue
+            if relative.split("/")[0] in ["target", ".git", ".struo"]:
+                continue
+            kind = _cargo_workspace_path_kind(ctx, relative)
+            if kind:
+                paths.append(relative + ("/**" if kind == "directory" else ""))
+    return sorted(_unique(paths))
+
+def _cargo_path_within(path, root):
+    return root == "." or path == root or path.startswith(root + "/")
+
+def _cargo_workspace_path_kind(ctx, relative):
+    package = ctx["label"]["package"]
+    absolute = _workspace_absolute("/".join([part for part in [package, relative] if part]) or ".")
+    if host_file_exists(absolute):
+        return "file"
+    if host_path_exists(absolute):
+        return "directory"
+    return ""
+
+# `base/relative` with `.` and `..` resolved: "" for the root itself, or None
+# when it climbs above the root.
+def _cargo_join_relative(base, relative):
+    parts = [] if base == "." or not base else base.split("/")
+    for part in relative.split("/"):
+        if part == "" or part == ".":
+            continue
+        if part == "..":
+            if not parts:
+                return None
+            parts.pop()
+        else:
+            parts.append(part)
+    return "/".join(parts)
+
 def _cargo_workspace_resolver(ctx):
     _cargo_require_resolver_file(ctx, "manifest", "Cargo.toml")
     vendor_dir = _rust_attr(ctx, "vendor_dir", "")
@@ -4511,8 +4593,11 @@ def _cargo_workspace_resolver(ctx):
         package_attrs = {}
         if input_excludes:
             package_attrs["srcs_exclude"] = input_excludes
-        if _cargo_build_script_target(package) != None and build_script_data.get(package["name"]):
-            package_attrs["build_script_data"] = build_script_data[package["name"]]
+        build_script = _cargo_build_script_target(package)
+        if build_script != None:
+            script_data = _unique((build_script_data.get(package["name"]) or []) + _cargo_build_script_outside_paths(ctx, package, build_script, source_root))
+            if script_data:
+                package_attrs["build_script_data"] = script_data
         for target in package.get("targets") or []:
             if not _cargo_workspace_target_enabled(target, node):
                 continue
@@ -4614,16 +4699,16 @@ _RUST_COMMON_ATTRS = [
     attr("android_ndk", "string", docs = "Android Native Development Kit root used to find clang wrapper linkers. Defaults to ANDROID_NDK_HOME.", configurable = False),
     attr("data", "list<string>", default = "[]", docs = "Package-relative runtime data file globs propagated to Rust binaries and tests.", configurable = False),
     attr("compile_data", "list<string>", default = "[]", docs = "Bazel-compatible compile-time data file globs included in the rustc action inputs.", configurable = False),
-    attr("build_script_data", "list<string>", default = "[]", docs = "Package-relative globs of files outside `srcs` that the build script reads, such as shared protobuf definitions. A change to one reruns the build script. Generated Cargo targets take them from the cargo_workspace `build_script_data` attribute.", configurable = False),
+    attr("build_script_data", "list<string>", default = "[]", docs = "Package-relative globs of files outside `srcs` that the build script reads, such as shared protobuf definitions. A change to one reruns the build script and selects this target's tests. Generated Cargo targets take them from the cargo_workspace `build_script_data` attribute.", configurable = False),
     attr("build_script_jobs", "int", default = "4", docs = "Job count passed as `NUM_JOBS` to a build script that depends on `cc`, `cmake`, or `autotools`, which use it for parallel native compiles. Its run action reserves the same number of CPU slots. Other build scripts get one job and one slot.", configurable = False),
     attr("_cargo_profile_flags", "list<string>", default = "[]", docs = "Resolver-owned rustc flags from the Cargo profile, passed before `rustc_flags` and left out of the build script's `CARGO_ENCODED_RUSTFLAGS`.", configurable = False),
-    attr("srcs_exclude", "list<string>", default = "[]", docs = "Package-relative globs removed from `srcs`, `compile_data`, and build-script inputs. Changed paths that match one do not select this target's tests. Generated Cargo targets exclude the local packages Cargo resolved inside them, their `target` directory, Cargo's configured target directory, and, at the workspace root, `.git`.", configurable = False),
+    attr("srcs_exclude", "list<string>", default = "[]", docs = "Package-relative globs removed from `srcs`, `compile_data`, and build-script inputs. Changed paths that match one do not select this target's tests, and select no tests when no other target claims them. Generated Cargo targets exclude the local packages Cargo resolved inside them, their `target` directory, Cargo's configured target directory, and, at the workspace root, `.git`.", configurable = False),
     attr("crate_aliases", "map<string, string>", default = "{}", docs = "Map dependency label, package name, or crate name to the local extern crate name.", configurable = False),
     attr("aliases", "map<string, string>", default = "{}", docs = "Bazel-compatible alias map from dependency label or crate name to local extern crate name.", configurable = False),
     attr("named_deps", "map<string, string>", default = "{}", docs = "Buck-compatible alias map from local extern crate name to dependency label or crate name.", configurable = False),
     attr("cargo_package", "string", docs = "Cargo package name used to select direct external deps from a cargo_dependencies dependency set and to inherit that package's Cargo compile environment, such as CARGO_PKG_NAME, CARGO_PKG_VERSION, and CARGO_MANIFEST_DIR. Defaults to CARGO_PKG_NAME when present.", configurable = False),
     attr("build_script", "string", docs = "Package-relative Cargo build script path. Struo compiles and runs it before rustc, consumes common cargo:rustc-* stdout directives, and passes direct dependency links metadata as DEP_* env vars.", configurable = False),
-    attr("build_script_tools", "list<string>", default = "[]", docs = "Host tool names the build script invokes, such as `cmake`. Each name is resolved on PATH during graph loading; the resolved directory joins the build script's search path and the resolved path joins the action identity. Names that resolve to nothing are ignored, so a script that only needs a tool on some platforms still loads.", configurable = False),
+    attr("build_script_tools", "list<string>", default = "[]", docs = "Host tool names the build script invokes, such as `cmake`. Each name is resolved on PATH during graph loading, a version-manager shim such as one from mise to the binary it would run; the resolved directory joins the build script's search path and the resolved path joins the action identity. Names that resolve to nothing are ignored, so a script that only needs a tool on some platforms still loads.", configurable = False),
     attr("cargo_config_env", "map<string, string>", default = "{}", docs = "Environment variables declared by Cargo configuration, applied to the compiler, the build script, the test process, and `struo run`. They sit below `env`, `rustc_env`, `test_env`, and `run_env`, matching how Cargo lets its own variables win.", configurable = False),
     attr("_binary_output_name", "string", docs = "Resolver-owned executable name before the platform extension.", configurable = False),
     attr("_cargo_source_root", "string", docs = "Resolver-owned absolute Cargo source directory materialized through a declared host-tree action.", configurable = False),
@@ -4671,7 +4756,7 @@ _RUST_MOBILE_ATTRS = [
     attr("data", "list<string>", default = "[]", docs = "Package-relative runtime data file globs propagated through each materialized platform provider.", configurable = False),
     attr("compile_data", "list<string>", default = "[]", docs = "Bazel-compatible compile-time data file globs included in each rustc action input set.", configurable = False),
     attr("build_script", "string", docs = "Package-relative Cargo build script path. Struo compiles and runs it before each platform rustc invocation and consumes common cargo:rustc-* stdout directives.", configurable = False),
-    attr("build_script_tools", "list<string>", default = "[]", docs = "Host tool names the build script invokes, such as `cmake`. Each name is resolved on PATH during graph loading; the resolved directory joins the build script's search path and the resolved path joins the action identity.", configurable = False),
+    attr("build_script_tools", "list<string>", default = "[]", docs = "Host tool names the build script invokes, such as `cmake`. Each name is resolved on PATH during graph loading, a version-manager shim such as one from mise to the binary it would run; the resolved directory joins the build script's search path and the resolved path joins the action identity.", configurable = False),
 ]
 
 _RUST_DEP_PROVIDERS = ["rust_crate", "rust_proc_macro", "rust_dependency_set", "c_provider"]
@@ -4696,14 +4781,14 @@ cargo_workspace = target_kind(
         attr("host_metadata_file", "string", docs = "Optional checked-in host Cargo metadata snapshot.", configurable = False),
         attr("vendor_dir", "string", docs = "Optional package-relative directory containing pre-vendored crate sources. When omitted, Struo snapshots locked sources from Cargo's local cache into target outputs.", configurable = False),
         attr("build_script_sources", "map<string, map<string, string>>", default = "{}", docs = "External build-script consumer package selector to sibling destination (../sibling/path) to locked source (package@version/path). Package names must resolve uniquely. Files are content-addressed inputs in a per-target layout, not Rust link dependencies.", configurable = False),
-        attr("build_script_data", "map<string, list<string>>", default = "{}", docs = "Workspace package name to globs, relative to the Cargo workspace root, of files outside that package which its build script reads, such as shared protobuf definitions. A change to one reruns the build script. A build script whose `rerun-if-changed` names a workspace path that is neither a package input nor declared here fails and prints the entry to add.", configurable = False),
+        attr("build_script_data", "map<string, list<string>>", default = "{}", docs = "Workspace package name to globs, relative to the Cargo workspace root, of files outside that package which its build script reads, such as shared protobuf definitions. Struo adds the workspace paths the build script names in string literals, so this is needed only for paths it builds another way. A declared path is staged for sandboxed and remote runs, reruns the build script when it changes, and selects the package's tests in `struo query affected-tests`.", configurable = False),
         attr("features", "list<string>", default = "[]", docs = "Cargo features passed to `cargo metadata --features`.", configurable = True),
         attr("all_features", "bool", default = "false", docs = "Pass `--all-features` to Cargo metadata.", configurable = True),
         attr("no_default_features", "bool", default = "false", docs = "Pass `--no-default-features` to Cargo metadata.", configurable = True),
         attr("target", "string", docs = "Rust target triple passed to Cargo as `--filter-platform`.", configurable = False),
         attr("dep_rustc_flags", "list<string>", default = "[]", docs = "Additional compiler flags applied to resolved external packages.", configurable = False),
         attr("build_script_jobs", "int", default = "4", docs = "Job count passed as `NUM_JOBS` to package build scripts that depend on `cc`, `cmake`, or `autotools`, and reserved as CPU slots for their runs. Lower it when execution hosts have fewer CPUs.", configurable = False),
-        attr("build_script_tools", "list<string>", default = str(_CARGO_BUILD_SCRIPT_TOOLS), docs = "Host tool names that package build scripts may invoke. Each name is resolved on PATH during graph loading and its directory joins the build script's search path; names that resolve to nothing are ignored. Set an empty list to give build scripts nothing beyond the Rust and C toolchains.", configurable = False),
+        attr("build_script_tools", "list<string>", default = str(_CARGO_BUILD_SCRIPT_TOOLS), docs = "Host tool names that package build scripts may invoke. Each name is resolved on PATH during graph loading, a version-manager shim such as one from mise to the binary it would run, and its directory joins the build script's search path; names that resolve to nothing are ignored. Set an empty list to give build scripts nothing beyond the Rust and C toolchains.", configurable = False),
         attr("test_env", "map<string, string>", default = "{}", docs = "Environment variables passed to generated test targets after inherited variables.", configurable = False),
         attr("test_env_inherit", "list<string>", default = "[]", docs = "Host environment variable names explicitly inherited by generated test targets. Disable test_cacheable when tests depend on undeclared host tools or configuration.", configurable = False),
         attr("test_cacheable", "bool", default = "true", docs = "Whether generated test targets may cache successful test results. Set false for host-dependent tests; compilation remains cacheable.", configurable = False),
@@ -4762,7 +4847,7 @@ cargo_dependencies = target_kind(
         attr("target", "string", docs = "Rust target triple passed to Cargo as `--filter-platform`. Defaults to the host target.", configurable = False),
         attr("dep_rustc_flags", "list<string>", default = "[]", docs = "Additional rustc flags applied to each resolved crate build. The panic strategy is stripped for proc-macro and host-tool crates so they keep the compiler's unwind strategy.", configurable = False),
         attr("build_script_jobs", "int", default = "4", docs = "Job count passed as `NUM_JOBS` to package build scripts that depend on `cc`, `cmake`, or `autotools`, and reserved as CPU slots for their runs. Lower it when execution hosts have fewer CPUs.", configurable = False),
-        attr("build_script_tools", "list<string>", default = str(_CARGO_BUILD_SCRIPT_TOOLS), docs = "Host tool names that package build scripts may invoke. Each name is resolved on PATH during graph loading and its directory joins the build script's search path; names that resolve to nothing are ignored. Set an empty list to give build scripts nothing beyond the Rust and C toolchains.", configurable = False),
+        attr("build_script_tools", "list<string>", default = str(_CARGO_BUILD_SCRIPT_TOOLS), docs = "Host tool names that package build scripts may invoke. Each name is resolved on PATH during graph loading, a version-manager shim such as one from mise to the binary it would run, and its directory joins the build script's search path; names that resolve to nothing are ignored. Set an empty list to give build scripts nothing beyond the Rust and C toolchains.", configurable = False),
         attr("_cargo_resolved", "bool", default = "false", docs = "Resolver-owned marker indicating that Cargo packages were expanded into graph targets.", configurable = False),
         attr("_cargo_workspace_deps", "map<string, list<string>>", default = "{}", docs = "Resolver-owned target names for each workspace package's direct external dependencies.", configurable = False),
         attr("_cargo_workspace_dev_deps", "map<string, list<string>>", default = "{}", docs = "Resolver-owned target names for each workspace package's direct external dev-dependencies that are not also normal dependencies. Only test crates link them.", configurable = False),

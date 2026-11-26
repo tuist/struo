@@ -211,12 +211,33 @@ even on a warm build. These declarations do not change features, dependency
 aliases, or linking edges, and neither Cargo's source cache nor a vendor tree
 is modified.
 
+### What rebuilds a crate
+
+Like Cargo, Struo rebuilds a workspace crate when a file the compiler read
+changes, not when any file in its package does. The compiler reports what it
+read, including files embedded with `include_str!` or `include_bytes!`, and
+each cached result keeps that list with the digest of every file on it.
+Editing `docs/` or CI files in a package at the workspace root leaves its
+crate cached; editing a file the crate embeds rebuilds it.
+
+A build script reruns when a path it prints with `rerun-if-changed` changes,
+inside its package or anywhere else in the workspace, such as shared protobuf
+definitions, `.git/HEAD`, or a sibling crate's directory. A script that prints
+no `rerun-if-changed` or `rerun-if-env-changed` depends on its whole package,
+as in Cargo.
+
+This applies to local runs without a sandbox. A sandboxed or remote run keys
+every file in the package, since only declared files are staged for it.
+
 ### Build scripts that read files outside their package
 
-A workspace member's build script sometimes reads files outside its package,
-such as protobuf definitions shared by several crates. Struo reruns a build
-script when its package changes, so declare those files on the seed, with
-paths relative to the Cargo workspace root:
+A build script that reads files outside its package needs them staged when it
+runs in a sandbox or remotely, and `struo query affected-tests` needs to know
+about them to select the right tests. Struo finds such paths in the script's
+string literals: a `../` path such as `"../../proto"`, or a name joined onto
+one, as in `manifest_dir.join("../../..").join("proto")`. When a script builds
+a path another way, declare it on the seed, with paths relative to the Cargo
+workspace root:
 
 ```toml
 [[target]]
@@ -227,11 +248,9 @@ kind = "cargo_workspace"
 build_script_data = { "api-types" = ["proto/**"] }
 ```
 
-A build script that prints `rerun-if-changed` for an undeclared path inside
-the workspace that is not one of its package's inputs fails and prints the
-`struo.toml` to add, so a change to that file cannot leave stale generated code
-in the cache. That includes `.git`, which is not an input of a package at the
-workspace root, and the directories of other local packages nested inside it.
+`struo query affected-tests` treats these files as inputs of the package
+whose build script reads them, so changing one selects the tests of that
+package and of every package that depends on it.
 
 ### Profiles and native build parallelism
 
@@ -540,7 +559,10 @@ requests.
   those features on an explicit seed.
 - A build script that invokes a host tool needs that tool in
   `build_script_tools`. The default list covers the tools that `-sys` packages
-  conventionally use.
+  conventionally use. When the tool on the search path is a mise shim, Struo
+  passes the binary mise would run, since the shim does not work in the build
+  script's cleared environment. A tool mise does not select for the workspace
+  is left out.
 - Tests and `struo run` start with a cleared environment and a private `HOME`.
   Name host variables a generated test needs in `test_env_inherit`, or in
   `env_inherit` on an explicit target.
@@ -556,9 +578,10 @@ requests.
 - Rust tests run only host-target executables. A cross-target test can be
   built, but running it needs a platform runner that the target kinds do not
   provide.
-- Build scripts track inputs for their whole package plus the files declared
-  in `build_script_data`. Struo does not narrow them using `rerun-if-changed`
-  directives.
+- `struo query affected-tests` selects tests from each package's directory and
+  its build script's declared or literal paths, not from what the compiler
+  reported reading. Editing `docs/` in a package at the workspace root selects
+  that package's tests even though its crate stays cached.
 - Only the `dev` and `test` profiles are read. `--release` and custom
   profiles, `panic`, `lto`, and `strip` settings are not applied. As in Cargo,
   objects leave out LLVM bitcode unless the profile enables `lto`, which keeps

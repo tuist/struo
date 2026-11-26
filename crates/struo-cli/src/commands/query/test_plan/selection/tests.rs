@@ -268,9 +268,17 @@ fn root_package_owns_its_tree_except_the_paths_it_excludes() {
             AttrValue::String("target/**".to_string()),
         ]),
     );
+    // `gen`'s build script reads `proto`, which lies in the root package's tree.
+    let mut generated = target("gen", "library", &["crates/gen/**/*"], &[], false);
+    generated.attrs.insert(
+        "build_script_data".to_string(),
+        AttrValue::List(vec![AttrValue::String("proto".to_string())]),
+    );
     let graph = vec![
         target("util", "library", &["crates/util/**/*"], &[], false),
         target("util_tests", "test", &["crates/util/**/*"], &["util"], true),
+        generated,
+        target("gen_consumer_tests", "test", &[], &["gen"], true),
         root_library,
         target("app_tests", "test", &[], &["app"], true),
     ];
@@ -302,9 +310,14 @@ fn root_package_owns_its_tree_except_the_paths_it_excludes() {
         )
     );
     assert_eq!(
-        selected("target/debug/app").1,
-        vec!["target/debug/app".to_string()]
+        selected("proto/api/v1/ref.proto"),
+        (
+            vec!["gen_consumer_tests".to_string(), "app_tests".to_string()],
+            vec![]
+        )
     );
+    // Build output the root package excludes is nobody's input.
+    assert_eq!(selected("target/debug/app"), (vec![], vec![]));
 }
 
 fn target(id: &str, kind: &str, srcs: &[&str], deps: &[&str], test: bool) -> GraphTarget {

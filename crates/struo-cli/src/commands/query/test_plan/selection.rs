@@ -52,6 +52,16 @@ pub(super) fn selection_report(
             .iter()
             .filter_map(|(target_id, inputs)| inputs.matches(path).then_some(target_id.as_str()))
             .collect::<Vec<_>>();
+        if owners.is_empty()
+            && target_patterns
+                .values()
+                .any(|inputs| inputs.excludes_from_srcs(path))
+        {
+            // A target explicitly took this path out of its inputs, such as
+            // a build tool's output directory, and no other target claims it,
+            // so no build reads it.
+            continue;
+        }
         if owners.is_empty() {
             owners = nearest_package_owners(path, graph);
         }

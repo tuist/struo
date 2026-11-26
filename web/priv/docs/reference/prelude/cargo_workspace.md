@@ -66,7 +66,7 @@ dependencies outside that list remain ordinary dependency targets.
 | `host_metadata_file` | string | no |  | Optional host metadata snapshot for cross-compilation |
 | `vendor_dir` | string | no | Struo-managed | Optional package-relative pre-vendored external sources |
 | `build_script_sources` | map&lt;string, map&lt;string, string&gt;&gt; | no | `{}` | External consumer selector to sibling destination to locked package source file; see [sibling sources](/guide/graph/rust/#build-scripts-that-read-sibling-packages) |
-| `build_script_data` | map&lt;string, list&lt;string&gt;&gt; | no | `{}` | Workspace package name to globs, relative to the Cargo workspace root, of files outside the package that its build script reads; see [build scripts that read files outside their package](/guide/graph/rust/#build-scripts-that-read-files-outside-their-package) |
+| `build_script_data` | map&lt;string, list&lt;string&gt;&gt; | no | `{}` | Workspace package name to globs, relative to the Cargo workspace root, of files outside the package that its build script reads, added to the paths Struo finds in the script itself; needed for sandboxed and remote runs and test selection only; see [build scripts that read files outside their package](/guide/graph/rust/#build-scripts-that-read-files-outside-their-package) |
 | `features` | list&lt;string&gt; | no | `[]` | Selected Cargo features |
 | `all_features` | bool | no | `false` | Select every Cargo feature |
 | `no_default_features` | bool | no | `false` | Disable default Cargo features |

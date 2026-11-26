@@ -1247,6 +1247,25 @@ and includes its identity in the action's cache key.
   one. When the action is a cache hit, its outputs stay in the cache instead of
   being written to disk at the end of the target, and are restored only when a
   later action that reads them has to run.
+- `input_discovery`: optional keyword-only dict for a command that reports
+  which files it read, as compilers do with a depfile. Its keys:
+  - `depfile`: a workspace path the command writes in Make dependency syntax.
+    Struo removes it before the command runs and does not cache it.
+  - `record`: a workspace path, not one of `outputs`, where Struo writes what
+    the command read. It is cached as an extra output of the action.
+  - `candidates`: inputs the command may or may not read, such as a package's
+    whole directory.
+
+  When the action runs locally without a sandbox, the candidates leave its
+  cache key. After a run, Struo records the digest of every workspace file the
+  depfile names, inside the candidates or not, or of every candidate when the
+  command wrote no depfile. A cached result is reused only while each recorded
+  file still has its recorded digest. Struo keeps the results of the last
+  eight runs that read different contents, so reverting an edit reuses the
+  result from before it. Files outside the workspace and under `.struo/` are not recorded. Under a sandbox
+  or remote execution, the option is ignored and every input stays in the key.
+  `struo query affected-tests` reads declared inputs only, so declare a file
+  that tests should be selected for even when the command reports it.
 - `toolchain_identity`: optional string folded into the action digest.
 - `identifier`: stable diagnostic label.
 - `display_name`: optional human-readable name, such as `Compile main.c` or

@@ -217,6 +217,25 @@ pub struct DeclaredAction {
     pub display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_discovery: Option<DeclaredInputDiscovery>,
+}
+
+/// Inputs a command reports reading, so the cache can leave the ones it did
+/// not read out of its key.
+///
+/// The command writes `depfile` in Make dependency syntax, as compilers do.
+/// When Struo runs the command locally without a sandbox, `candidates` leave
+/// the action's cache key, and Struo writes `record`, which it caches as an
+/// extra output of the action, with the digest of every
+/// workspace file the depfile names, or of every candidate when the command
+/// wrote no depfile. A cached result is reused only while those files still
+/// have those digests.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct DeclaredInputDiscovery {
+    pub depfile: String,
+    pub record: String,
+    pub candidates: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
