@@ -330,6 +330,9 @@ def _bazel_stage_inputs(ctx, actions, shadow_rel, prep):
         else:
             copy_path(_package_relative(ctx, path), shadow_rel + "/" + path)
 
+# Analysis must not rewrite the user's native output convenience links.
+_BAZEL_NATIVE_FLAGS = ["--experimental_convenience_symlinks=ignore"]
+
 def _bazel_bazel_flags():
     # `-module_maps` disables the CppModuleMap actions that Bazel's C++ rules
     # emit for every target: they generate a Clang modulemap file whose
@@ -340,13 +343,10 @@ def _bazel_bazel_flags():
     # target and host configurations need the toggle for it to cover
     # transitive `-sys`-style crates whose module maps are otherwise
     # generated in the exec configuration.
-    #
-    # Analysis must not rewrite the user's native output convenience links.
     return [
         "--features=-module_maps",
         "--host_features=-module_maps",
-        "--experimental_convenience_symlinks=ignore",
-    ]
+    ] + _BAZEL_NATIVE_FLAGS
 
 # A `deps()` aquery for a real workspace carries one record per transitive
 # action with its full argv, so its JSON is routinely tens of mebibytes and
@@ -385,7 +385,7 @@ def _bazel_required_actions(actions, outputs):
         pending = following
     return [actions[index] for index in range(len(actions)) if index in needed]
 
-def _bazel_aquery(ctx, bazel, workspace_abs):
+def _bazel_aquery(ctx, bazel, workspace_abs, payload = True):
     label = ctx["attr"]["bazel_label"]
     # `--include_file_write_contents` is what lets Struo own the FileWrite,
     # RepoMappingManifest, and SourceSymlinkManifest actions; without it the
@@ -396,7 +396,10 @@ def _bazel_aquery(ctx, bazel, workspace_abs):
     # cargo_build_script_runner pass their real arguments through param
     # files, so without this flag Struo would run them with a truncated
     # argv and the runner would panic on the missing arguments.
-    argv = [bazel, "aquery", "deps(" + label + ")", "--output=jsonproto", "--include_file_write_contents", "--include_param_files", "--noshow_progress"] + _bazel_bazel_flags()
+    # Without `payload` the graph omits both, which keeps it small enough to
+    # classify a large workspace before asking for the payload.
+    payload_flags = ["--include_file_write_contents", "--include_param_files"] if payload else []
+    argv = [bazel, "aquery", "deps(" + label + ")", "--output=jsonproto", "--noshow_progress"] + payload_flags + _bazel_bazel_flags()
     text = host_command(
         argv,
         cwd = workspace_abs,
@@ -423,7 +426,11 @@ def _bazel_aquery(ctx, bazel, workspace_abs):
 
 def _bazel_delegate_action(ctx, bazel, capability):
     label = ctx["attr"]["bazel_label"]
-    flags = _bazel_bazel_flags()
+    # A delegated build keeps the native configuration so Bazel's own caches
+    # and earlier native builds apply. Struo's feature toggles change C++
+    # command lines that write to the same output paths, so native and
+    # delegated builds would keep rebuilding each other's actions.
+    flags = _BAZEL_NATIVE_FLAGS
     if capability == "build":
         argv = [bazel, "build", label, "--noshow_progress"] + flags
     elif capability == "test":
@@ -683,7 +690,24 @@ def _bazel_topological_sort(actions):
                 order.append(index)
     return order
 
+# A required action that cannot be owned without its payload still cannot be
+# owned with it, except a write whose contents only the payload carries. A
+# large workspace's payload can reach hundreds of mebibytes, mostly inlined
+# C++ parameter files, so delegation is settled before asking for it.
+def _bazel_unsupported_without_payload(actions):
+    unsupported = {}
+    for action in actions:
+        if _bazel_classify_action(action) != "unsupported" or action["mnemonic"] in _BAZEL_WRITE_MNEMONICS:
+            continue
+        key = action["mnemonic"] or "unknown"
+        unsupported[key] = (unsupported.get(key) or 0) + 1
+    return unsupported
+
 def _bazel_own_execution_or_fallback(ctx, bazel, workspace_abs, capability):
+    unsupported = _bazel_unsupported_without_payload(_bazel_aquery(ctx, bazel, workspace_abs, payload = False))
+    if unsupported:
+        _bazel_delegate_action(ctx, bazel, capability)
+        return {"mode": "delegated", "unsupported": unsupported}
     actions = _bazel_aquery(ctx, bazel, workspace_abs)
     unsupported = {}
     classes = []

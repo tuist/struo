@@ -18,7 +18,10 @@ external repository downloads; Struo supplies execution.
 Unsupported internal actions fall back to `bazel <capability>` for the
 target. This includes opaque file writes and stamped build information when
 required by the selected outputs. The provider records unsupported mnemonics.
-Delegated commands remain uncached by Struo, with Bazel owning their outputs.
+Struo decides this from an action graph without file contents or parameter
+files, before requesting the full graph. Delegated commands use the
+workspace's own Bazel configuration, so native and delegated builds share
+Bazel's caches. They remain uncached by Struo, with Bazel owning their outputs.
 They are not cacheable native-action ownership.
 
 Owned spawn actions declare their actual inputs, outputs and environment.

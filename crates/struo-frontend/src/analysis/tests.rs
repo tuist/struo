@@ -935,7 +935,10 @@ fn host_command_rejects_output_above_the_analysis_limit() {
         .command(&argv, &BTreeMap::new(), None, false)
         .unwrap_err();
 
-    assert!(format!("{error:#}").contains("exceeds the 16 mebibyte analysis limit"));
+    // Starlark diagnostics render the plain message, so the cause must be in it.
+    assert!(error
+        .to_string()
+        .contains("exceeds the 16 mebibyte analysis limit"));
 }
 
 #[cfg(unix)]

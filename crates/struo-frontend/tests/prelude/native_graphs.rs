@@ -113,6 +113,59 @@ result = repr(bazel_target["impl"](ctx))
     }
 }
 
+#[test]
+fn bazel_settles_delegation_before_the_aquery_payload_and_keeps_native_flags() {
+    // A required template expansion has no argv, so Struo delegates without
+    // the payload. The same action in an unused output group does not count.
+    for (template_output, delegated) in [("bazel-out/app.txt", true), ("bazel-out/unused", false)] {
+        let workspace = TempDir::new().unwrap();
+        let source = format!(
+            r#"{}
+def host_which_optional(name):
+    return "/tools/bazel"
+calls = []
+def host_command(argv, cwd = None, env = None, max_output_bytes = None):
+    calls.append(argv)
+    if argv[1] == "aquery":
+        copy = '' if {delegated} else '{{"mnemonic": "Copy", "arguments": ["cp"], "outputIds": [2]}}, '
+        return '{{"pathFragments": [{{"id": 1, "label": "{template_output}"}}, {{"id": 2, "label": "bazel-out/app.txt"}}], "artifacts": [{{"id": 1, "pathFragmentId": 1}}, {{"id": 2, "pathFragmentId": 2}}], "actions": [' + copy + '{{"mnemonic": "TemplateExpand", "outputIds": [1]}}]}}'
+    if argv[1] == "cquery":
+        return "bazel-out/app.txt\n"
+    return "/output-base" if argv[1] == "info" else ""
+ctx = {{
+    "label": {{"id": "app", "name": "app", "package": ""}},
+    "attr": {{"_bazel_resolved": True, "bazel_label": "//:app", "bazel_rule_kind": "genrule"}},
+    "capability": "build",
+}}
+mode = bazel_target["impl"](ctx)["execution_mode"]
+result = repr([mode, len([argv for argv in calls if "--include_param_files" in argv])])
+"#,
+            all_prelude_source(),
+            delegated = if delegated { "True" } else { "False" },
+        );
+        let (store, result) = with_active_store(store_for(workspace.path(), ""), || {
+            eval_prelude_source_to_repr(source)
+        });
+        let argv = &store.actions.last().unwrap().argv;
+        if delegated {
+            assert_eq!(result.unwrap(), r#"["delegated", 0]"#);
+            assert_eq!(
+                argv,
+                &[
+                    "/tools/bazel",
+                    "build",
+                    "//:app",
+                    "--noshow_progress",
+                    "--experimental_convenience_symlinks=ignore"
+                ]
+            );
+        } else {
+            assert_eq!(result.unwrap(), r#"["own", 1]"#);
+            assert_eq!(argv, &["cp"]);
+        }
+    }
+}
+
 fn package_source(source: &str) -> String {
     format!(
         "{}\n{}\n{source}",

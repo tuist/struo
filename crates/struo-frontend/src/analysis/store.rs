@@ -980,7 +980,7 @@ impl HostCache {
             command.env(key, value);
         }
         let (status, stdout, stderr) = capture_host_command_output(&mut command, max_output_bytes)
-            .with_context(|| format!("running `{program}`"))?;
+            .map_err(|error| anyhow!("running `{program}`: {error:#}"))?;
         if check && !status.success() {
             let rendered_args = command_args
                 .iter()

@@ -25,12 +25,17 @@ matching Bazel's clean-output contract. Warm hits restore those outputs instead
 of rerunning the command.
 
 Unknown required action contracts fall back to `bazel build <label>` and
-record the unsupported mnemonics on the provider. Delegated commands remain
+record the unsupported mnemonics on the provider. Struo settles this from an
+action graph without file contents or parameter files before it requests the
+full graph, which for a large workspace can be hundreds of mebibytes.
+Delegated commands run with the workspace's own configuration, so they share
+Bazel's caches and outputs with native `bazel build` invocations, and remain
 uncached by Struo.
 
 Ownership-mode outputs land under `<workspace>/.struo/bazel-actions/bazel-out/`.
-Fallback-mode outputs land under Bazel's `bazel-bin` and `bazel-out` as
-usual.
+Fallback-mode outputs land in Bazel's output tree, reported by
+`bazel info output_path`. Struo leaves the `bazel-bin` and `bazel-out`
+convenience links untouched.
 
 ## Attributes
 
