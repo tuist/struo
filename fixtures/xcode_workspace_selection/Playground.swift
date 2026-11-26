@@ -1,0 +1,1 @@
+public let playgroundName = "Playground"

@@ -36,7 +36,12 @@ that cross a project boundary are wired. A referenced project that is not on
 disk is skipped instead of failing the graph.
 
 Xcode projects, including projects in nested packages, are recognized
-automatically, so their seeds are supplied without any `struo.toml`.
+automatically, so their seeds are supplied without any `struo.toml`. When
+`project` is omitted, a single `.xcworkspace` at the top of the package is
+resolved, so nested demo or tool projects it does not reference stay out of the
+graph. Without one, the single top-level `.xcodeproj` is resolved. A directory
+that holds only an `.xcworkspace`, with every project in a subdirectory, is
+discovered as one seed for that workspace rather than one seed per project.
 
 When an Xcode project uses a workspace-level `Package.resolved`, Struo uses its
 matching pinned revisions while lowering remote Swift packages. Checksum-pinned
@@ -67,7 +72,7 @@ for native propagation, dependency errors, and current limitations.
 | Attribute | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `coverage_per_test` | bool | no | `false` | Instrument reachable product dependencies and measure complete test bundles as atomic LLVM coverage units |
-| `project` | string | no | single `*.xcodeproj` in the package | Package-relative path to the `.xcodeproj` or `.xcworkspace` |
+| `project` | string | no | single top-level `*.xcworkspace`, else single top-level `*.xcodeproj` | Package-relative path to the `.xcodeproj` or `.xcworkspace` |
 | `configuration` | string | no | `Debug` | Xcode build configuration whose settings drive target lowering |
 | `build_settings` | map&lt;string,string&gt; | no | `{}` | Native build-setting overrides applied after project, target, and xcconfig settings |
 | `sdk_variant` | string | no | `simulator` | `simulator` or `device` selection applied to lowered targets on non-macOS platforms |

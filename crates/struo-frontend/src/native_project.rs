@@ -581,6 +581,38 @@ mod tests {
     }
 
     #[test]
+    fn a_root_xcode_workspace_owns_projects_in_subdirectories() {
+        let temporary = tempfile::tempdir().unwrap();
+        for file in [
+            "App.xcworkspace/contents.xcworkspacedata",
+            "Apps/App.xcodeproj/project.pbxproj",
+            "Apps/App.xcodeproj/project.xcworkspace/contents.xcworkspacedata",
+            "Tools/Demo/Demo.xcodeproj/project.pbxproj",
+            "Standalone/Tool.xcodeproj/project.pbxproj",
+            "Standalone/Tool.xcodeproj/project.xcworkspace/contents.xcworkspacedata",
+        ] {
+            let path = temporary.path().join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "").unwrap();
+        }
+
+        let seeds = |root: &Path| {
+            detect_native_projects(root)
+                .unwrap()
+                .into_iter()
+                .filter(|matched| matched.seed_target == "xcode")
+                .map(|matched| matched.package)
+                .collect::<BTreeSet<_>>()
+        };
+
+        assert_eq!(seeds(temporary.path()), BTreeSet::from([String::new()]));
+        assert_eq!(
+            seeds(&temporary.path().join("Standalone")),
+            BTreeSet::from([String::new()])
+        );
+    }
+
+    #[test]
     fn built_in_native_projects_detect_swift_packages_without_execution() {
         let temporary = tempfile::tempdir().unwrap();
         std::fs::write(temporary.path().join("Package.swift"), "not Swift").unwrap();

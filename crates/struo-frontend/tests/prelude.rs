@@ -294,6 +294,48 @@ result = repr(_unique_args(
 }
 
 #[test]
+fn prelude_native_entry_point_prefers_earlier_patterns_and_reports_ambiguity() {
+    let entry_point = |files: &str| {
+        eval_prelude_source_to_repr(format!(
+            r#"{}
+def glob(patterns):
+    return {files}
+ctx = {{"label": {{"package": "apps/tool", "name": "seed", "id": "apps/tool/seed"}}, "attr": {{}}}}
+result = repr(native_entry_point(ctx, "native_workspace", "entry", [
+    "*.suite/suite.manifest",
+    ["*.proj/build.manifest", "*.proj/build.v2.manifest"],
+]))
+"#,
+            include_str!("../prelude/common.star")
+        ))
+    };
+
+    assert_eq!(
+        entry_point(r#"["apps/tool/Main.suite/suite.manifest", "apps/tool/A.proj/build.manifest", "apps/tool/B.proj/build.manifest"]"#).unwrap(),
+        r#""apps/tool/Main.suite""#
+    );
+    assert_eq!(
+        entry_point(r#"["apps/tool/A.proj/build.manifest", "apps/tool/A.proj/build.v2.manifest", "apps/tool/nested/B.proj/build.manifest", "apps/other/C.proj/build.manifest"]"#).unwrap(),
+        r#""apps/tool/A.proj""#
+    );
+    assert_eq!(entry_point("[]").unwrap(), "None");
+
+    let error = entry_point(r#"["apps/tool/B.proj/build.v2.manifest", "apps/tool/A.proj/build.manifest", "apps/tool/Main.suite/other.manifest"]"#)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains(r#""code":"native_entry_point_ambiguous""#),
+        "{error}"
+    );
+    assert!(error.contains(r#""attribute":"entry""#), "{error}");
+    assert!(error.contains("A.proj, B.proj"), "{error}");
+    assert!(
+        error.contains(r#"Declare the target in `apps/tool/struo.toml` to use `B.proj`:\n\n[[target]]\nname = \"seed\"\nkind = \"native_workspace\"\n\n[target.attrs]\nentry = \"B.proj\""#),
+        "{error}"
+    );
+}
+
+#[test]
 fn prelude_apple_module_scan_uses_whole_module_optimization() {
     // Swift 6.3's `-scan-dependencies` refuses to accept a compile invocation
     // with several `.swift` sources unless it is also passed `-wmo` (whole-

@@ -326,6 +326,39 @@ native = native_project(
   workspace whose checked tree intentionally contains another package format,
   examples, or third-party projects that belong to the outer build.
 
+### Choosing an entry point
+
+A seed's package can hold several native entry points, such as a workspace file
+beside the projects it groups, or demo and tool projects beside the main one. A
+resolver picks the one to load with `native_entry_point` when its owner leaves
+the entry attribute unset:
+
+```python
+def _native_workspace_resolver(ctx):
+    entry = ctx["attr"].get("entry") or native_entry_point(
+        ctx,
+        "native_workspace",
+        "entry",
+        [
+            "*.suite/suite.manifest",
+            ["*.proj/build.manifest", "*.proj/build.v2.manifest"],
+        ],
+    )
+    if not entry:
+        fail(ctx["label"]["id"] + ": no native entry point found")
+    ...
+```
+
+`native_entry_point(ctx, kind, attribute, preferences)` checks `preferences` in
+order. Each item is a package-relative pattern, or a list of equally preferred
+patterns, matched only at the package's top level. The first item that matches
+returns the workspace-relative path of the top-level file or directory it
+matched; it returns `None` when nothing matches. When that item matches several
+entry points, the seed reports a `native_entry_point_ambiguous` diagnostic for
+`attribute` instead of loading. It carries one repair per candidate holding the
+exact `struo.toml` target, of kind `kind`, that selects it. Other seeds in the
+workspace still load.
+
 Detection reads file names only. It does not evaluate executable manifests or
 invoke native tools. Loading the graph runs the seed target's resolver through
 the normal trusted analysis boundary.

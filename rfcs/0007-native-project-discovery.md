@@ -119,6 +119,14 @@ ecosystem resolver may ask its package manager to create a missing lockfile
 before importing pinned dependencies. Missing tools, unresolved dependencies,
 or unavailable sources surface as structured diagnostics.
 
+A package can hold several native entry points, such as a workspace beside the
+projects it groups. Discovery does not choose between them: the seed's target
+kind does, through the common prelude's `native_entry_point` helper, which
+checks an ordered list of entry patterns. When the preferred pattern matches
+more than one entry point, the seed reports a `native_entry_point_ambiguous`
+diagnostic with one exact `struo.toml` repair per candidate, and unrelated
+seeds keep loading.
+
 ## Precedence
 
 Discovered seeds fill uncovered ecosystem entry points:

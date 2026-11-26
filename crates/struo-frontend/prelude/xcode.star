@@ -39,30 +39,16 @@ def _xcode_project_path(ctx):
     if configured:
         package = ctx["label"]["package"]
         return _xcode_join(package, configured) if package else configured
-    package = ctx["label"]["package"]
-    prefix = package + "/" if package else ""
-    candidates = []
-    seen = {}
-    for path in glob(["*.xcodeproj/project.pbxproj", "*.xcodeproj/project.xcproj"]):
-        if not (_ends_with(path, "/project.pbxproj") or _ends_with(path, "/project.xcproj")):
-            continue
-        if not path.startswith(prefix):
-            continue
-        relative = path[len(prefix):]
-        if len(relative.split("/")) == 2:
-            bundle = _parent_dir(path)
-            if bundle in seen:
-                continue
-            seen[bundle] = True
-            candidates.append(path)
-    if len(candidates) == 0:
-        fail(ctx["label"]["id"] + ": no `project` attribute was set and no `*.xcodeproj/project.pbxproj` or `*.xcodeproj/project.xcproj` was found in the package")
-    if len(candidates) > 1:
-        fail(ctx["label"]["id"] + ": multiple Xcode projects found; set the `project` attribute to one of: " + ", ".join(candidates))
-    # `glob` always returns workspace-relative paths, including when the
-    # native seed belongs to a nested package. The resolver reads project
-    # files through the workspace root, so keep that coordinate system.
-    return _parent_dir(candidates[0])
+    # A top-level workspace decides which projects Xcode opens together, so it
+    # wins over the projects beside it. `glob` returns workspace-relative paths,
+    # which is the coordinate system the resolver reads project files in.
+    path = native_entry_point(ctx, "xcode_workspace", "project", [
+        "*.xcworkspace/contents.xcworkspacedata",
+        ["*.xcodeproj/project.pbxproj", "*.xcodeproj/project.xcproj"],
+    ])
+    if not path:
+        fail(ctx["label"]["id"] + ": no `project` attribute was set and no `*.xcworkspace`, `*.xcodeproj/project.pbxproj`, or `*.xcodeproj/project.xcproj` was found in the package")
+    return path
 
 def _xcode_is_workspace(path):
     return _ends_with(path, ".xcworkspace") or _ends_with(path, "/contents.xcworkspacedata")
@@ -5624,7 +5610,7 @@ def _xcode_workspace_impl(ctx):
 xcode_workspace = target_kind(
     docs = "Native Xcode project seed. Its resolver reads `project.pbxproj` through `plutil`, flattens `.xcconfig` includes and layered build settings, resolves file references including Xcode file-system synchronized groups, and lowers every native target into the existing Apple target kinds so Struo can compile and test the project directly.",
     attrs = [
-        attr("project", "string", docs = "Package-relative path to the `.xcodeproj` directory, such as `App.xcodeproj`. Inferred from a single `*.xcodeproj` when omitted.", configurable = False),
+        attr("project", "string", docs = "Package-relative path to the `.xcodeproj` or `.xcworkspace` directory, such as `App.xcodeproj`. Inferred when omitted from the single top-level `*.xcworkspace`, or else the single top-level `*.xcodeproj`.", configurable = False),
         attr("configuration", "string", default = "Debug", docs = "Xcode build configuration whose settings drive target lowering.", configurable = False),
         attr("build_settings", "map<string,string>", default = "{}", docs = "Native command-line build-setting overrides applied after project, target, and xcconfig settings.", configurable = False),
         attr("coverage_per_test", "bool", default = "false", docs = "Instrument reachable native products and measure each complete test bundle as an atomic LLVM coverage unit.", configurable = False),
@@ -5672,6 +5658,26 @@ xcode = native_project(
     docs = "Recognizes a native Xcode project from a checked-in `*.xcodeproj/project.pbxproj`.",
     markers = ["*.xcodeproj/project.pbxproj"],
     inputs = ["*.xcodeproj/**/*.xcscheme", "*.xcworkspace/contents.xcworkspacedata", "**/*.xcconfig"],
+    manifests = ["**/*.xcodeproj/project.pbxproj", "**/*.xcodeproj/project.xcproj", "**/*.xcscheme", "**/*.xctestplan", "**/*.xcworkspace/contents.xcworkspacedata", "**/Package.resolved", "**/Package.swift", "**/*.xcconfig", "**/*.xcdatamodeld/.xccurrentversion", "**/*.modulemap", "**/*.entitlements", "**/*.xcfilelist"],
+    exclude = _native_project_generated_dirs() + ["Pods", "Carthage", "DerivedData", "node_modules"],
+    input_exclude = ["DerivedData", ".build", ".git"],
+    on_match = "all",
+    max_depth = 16,
+    requires_tools = ["plutil", "xcrun"],
+    owns_descendants = True,
+)
+
+# A workspace can sit above every project it groups. Owning its descendants
+# keeps those projects, and unreferenced demo or tool projects, from becoming
+# seeds of their own. The `project.xcworkspace` embedded in every `.xcodeproj`
+# also matches, but the project's own seed owns that bundle.
+xcode_workspace_file = native_project(
+    target_kind = "xcode_workspace",
+    name = "xcode_workspace_file",
+    target_name = "xcode",
+    docs = "Recognizes a native Xcode workspace from a checked-in `*.xcworkspace/contents.xcworkspacedata`, including one whose projects all live in subdirectories.",
+    markers = ["*.xcworkspace/contents.xcworkspacedata"],
+    inputs = ["*.xcodeproj/**/*.xcscheme", "**/*.xcconfig"],
     manifests = ["**/*.xcodeproj/project.pbxproj", "**/*.xcodeproj/project.xcproj", "**/*.xcscheme", "**/*.xctestplan", "**/*.xcworkspace/contents.xcworkspacedata", "**/Package.resolved", "**/Package.swift", "**/*.xcconfig", "**/*.xcdatamodeld/.xccurrentversion", "**/*.modulemap", "**/*.entitlements", "**/*.xcfilelist"],
     exclude = _native_project_generated_dirs() + ["Pods", "Carthage", "DerivedData", "node_modules"],
     input_exclude = ["DerivedData", ".build", ".git"],

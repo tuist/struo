@@ -478,7 +478,55 @@ def _json_string(value):
     return "".join(out)
 
 def _diagnostic_fail(code, attribute, message, repair):
-    fail("struo.diagnostic.v1 " + _json_encode({"code": code, "message": message, "attribute": attribute, "repairs": [repair]}))
+    fail("struo.diagnostic.v1 " + _json_encode({"code": code, "message": message, "attribute": attribute, "repairs": [repair] if type(repair) == "string" else repair}))
+
+def _native_entry_point_matches(relative, pattern):
+    segments = relative.split("/")
+    expected = pattern.split("/")
+    if len(segments) != len(expected):
+        return False
+    for index in range(len(segments)):
+        part = expected[index]
+        if part.startswith("*"):
+            if not _ends_with(segments[index], part[1:]):
+                return False
+        elif segments[index] != part:
+            return False
+    return True
+
+def native_entry_point(ctx, kind, attribute, preferences):
+    # Each preference is a pattern, or a list of equally preferred patterns,
+    # relative to the package. The entry point is the top-level file or
+    # directory a pattern matched.
+    package = ctx["label"]["package"]
+    prefix = package + "/" if package else ""
+    for preference in preferences:
+        patterns = preference if type(preference) == "list" else [preference]
+        entries = []
+        for path in glob(patterns):
+            if not path.startswith(prefix):
+                continue
+            relative = path[len(prefix):]
+            if not any([_native_entry_point_matches(relative, pattern) for pattern in patterns]):
+                continue
+            entry = relative.split("/")[0]
+            if entry not in entries:
+                entries.append(entry)
+        if len(entries) == 1:
+            return prefix + entries[0]
+        if len(entries) > 1:
+            entries = sorted(entries)
+            manifest = prefix + "struo.toml"
+            _diagnostic_fail(
+                "native_entry_point_ambiguous",
+                attribute,
+                ctx["label"]["id"] + ": " + str(len(entries)) + " entry points match " + ", ".join(["`" + pattern + "`" for pattern in patterns]) + ": " + ", ".join(entries) + ". Set `" + attribute + "` to choose one.",
+                [
+                    "Declare the target in `" + manifest + "` to use `" + entry + "`:\n\n[[target]]\nname = \"" + ctx["label"]["name"] + "\"\nkind = \"" + kind + "\"\n\n[target.attrs]\n" + attribute + " = \"" + entry + "\""
+                    for entry in entries
+                ],
+            )
+    return None
 
 def _json_encode(value):
     if value == None:

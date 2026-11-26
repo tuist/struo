@@ -26,8 +26,10 @@ execute a bootstrap script before pointing Struo at the result.
 
 ### Inspect the derived graph
 
-An Xcode project at the repository root is discovered automatically, so there is
-nothing to write. From the directory holding the `.xcodeproj`:
+An Xcode project or workspace at the repository root is discovered
+automatically, so there is nothing to write. A root workspace whose projects
+all live in subdirectories is discovered as one seed for the whole workspace.
+From the directory holding the `.xcodeproj` or `.xcworkspace`:
 
 ```sh
 struo query workspace
@@ -153,10 +155,15 @@ srcs = ["App.xcodeproj/project.pbxproj"]
 project = "App.xcodeproj"
 ```
 
-`project` can be omitted when the package contains exactly one `*.xcodeproj`,
-and is required when a directory holds more than one. For a project in a
-subdirectory, declare the target in the workspace root package and point
-`project` at the nested path.
+`project` can be omitted when the package contains exactly one top-level
+`*.xcworkspace`, which Struo resolves the way Xcode opens it, or otherwise
+exactly one top-level `*.xcodeproj`. Projects nested deeper, such as demo apps
+and tools, never make the choice ambiguous. When a directory holds several
+top-level workspaces, or several top-level projects and no workspace, the
+`xcode` seed reports a `native_entry_point_ambiguous` diagnostic whose repairs
+give the exact target to add to `struo.toml` for each candidate; other seeds in
+the repository still load. For a project in a subdirectory, declare the target
+in the workspace root package and point `project` at the nested path.
 
 Editing a file in `srcs` re-resolves the graph. Keep `srcs` to
 `project.pbxproj` and other text files such as `.xcconfig` and `.xcscheme`: a
