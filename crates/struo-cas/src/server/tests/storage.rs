@@ -109,7 +109,8 @@ async fn interrupted_upload_and_restart_preserve_old_value() {
             if std::fs::read_dir(root.path()).unwrap().any(|entry| {
                 let entry = entry.unwrap();
                 entry.file_name().to_string_lossy().starts_with(".upload-")
-                    && entry.metadata().unwrap().len() > 0
+                    // Windows directory listings report stale sizes for open files.
+                    && std::fs::metadata(entry.path()).unwrap().len() > 0
             }) {
                 break;
             }
