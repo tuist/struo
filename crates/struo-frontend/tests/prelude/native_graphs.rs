@@ -514,3 +514,65 @@ result = repr([app["srcs"], _package_relative(target, app["attrs"]["info_plist"]
         r#"[["Sources/App.swift", "../shared/Shared.swift"], "shared/Info.plist"]"#
     );
 }
+
+#[test]
+fn apple_inputs_outside_the_workspace_are_snapshotted_into_the_build_directory() {
+    let root = TempDir::new().unwrap();
+    let workspace = root.path().join("app");
+    std::fs::create_dir_all(workspace.join("Sources")).unwrap();
+    std::fs::create_dir_all(root.path().join("shared")).unwrap();
+    std::fs::write(
+        workspace.join("Sources/main.swift"),
+        "print(sharedGreeting)\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join("shared/Shared.swift"),
+        "let sharedGreeting = \"\"\n",
+    )
+    .unwrap();
+    std::fs::write(root.path().join("shared/Shared.h"), "\n").unwrap();
+    let source = format!(
+        r#"{}
+ctx = {{"label": {{"package": "", "name": "ReproApp", "id": "ReproApp"}}, "attr": {{}}, "srcs": ["Sources/main.swift", "../shared/Shared.swift"], "build_dir": ".struo/out/ReproApp"}}
+result = repr([_apple_declared_source_paths(ctx), _apple_header_inputs(ctx, ["../shared"])])
+"#,
+        apple_prelude_source()
+    );
+    let (store, result) = with_active_store(store_for(&workspace, ""), || {
+        eval_prelude_source_to_repr(source)
+    });
+    let result = result.unwrap();
+    assert!(!result.contains(".."), "{result}");
+    let shared = std::fs::canonicalize(root.path().join("shared")).unwrap();
+    let sources = store
+        .actions
+        .iter()
+        .filter_map(|action| match &action.operation {
+            Some(
+                DeclaredActionOperation::MaterializeHostFile {
+                    source,
+                    destination,
+                    ..
+                }
+                | DeclaredActionOperation::MaterializeHostTree {
+                    source,
+                    destination,
+                    ..
+                },
+            ) => {
+                assert!(
+                    struo_core::WorkspacePath::try_from(destination.as_str()).is_ok(),
+                    "{destination}"
+                );
+                assert!(
+                    result.contains(destination.as_str()),
+                    "{result} lacks {destination}"
+                );
+                Some(std::fs::canonicalize(source).unwrap())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(sources, vec![shared.join("Shared.swift"), shared]);
+}

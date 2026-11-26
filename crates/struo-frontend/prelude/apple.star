@@ -926,7 +926,7 @@ def _apple_header_inputs(ctx, header_dirs):
         if not host_path_exists(absolute_header_dir):
             continue
         if not host_path_is_within(absolute_header_dir, workspace_root()):
-            snapshot = declare_output("external-header-inputs/tree/" + header_dir)
+            snapshot = declare_output("external-header-inputs/tree/" + _apple_external_input_name(header_dir))
             materialize_host_tree(absolute_header_dir, snapshot)
             inputs.append(snapshot)
             continue
@@ -942,7 +942,7 @@ def _apple_header_inputs(ctx, header_dirs):
             if host_path_is_within(absolute_candidate, workspace_root()):
                 inputs.append(candidate)
             elif host_file_exists(absolute_candidate):
-                snapshot = declare_output("external-header-inputs/file/" + candidate)
+                snapshot = declare_output("external-header-inputs/file/" + _apple_external_input_name(candidate))
                 materialize_host_file(absolute_candidate, snapshot)
                 inputs.append(snapshot)
     return _unique(inputs)
@@ -5206,8 +5206,23 @@ def _apple_declared_source_paths(ctx):
             continue
         if _filter_swift_sources([path]) or _filter_objc_sources([path]) or _filter_c_sources([path]) or _filter_cxx_sources([path]) or _filter_assembly_sources([path]):
             matches = glob([path])
-            out.extend(matches if matches else [_apple_script_output_path(ctx, _package_relative(ctx, path))])
+            if matches:
+                out.extend(matches)
+                continue
+            resolved = _apple_script_output_path(ctx, _package_relative(ctx, path))
+            absolute = workspace_root() + "/" + resolved
+            if resolved.startswith("../") and host_file_exists(absolute):
+                # Actions only take workspace paths, so snapshot a source that
+                # lives outside the workspace into the build directory.
+                snapshot = declare_output("external-sources/" + _apple_external_input_name(resolved))
+                materialize_host_file(absolute, snapshot)
+                out.append(snapshot)
+            else:
+                out.append(resolved)
     return _unique(out)
+
+def _apple_external_input_name(path):
+    return "/".join(["__parent__" if part == ".." else part for part in path.split("/")])
 
 def _apple_swift_emits_single_object(flags):
     whole_module = False
