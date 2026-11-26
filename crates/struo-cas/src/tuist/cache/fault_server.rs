@@ -72,12 +72,23 @@ impl FaultServer {
     }
 
     pub(super) fn serve_on(&self, listener: tokio::net::TcpListener) {
+        self.serve_on_with_stream_limit(listener, None);
+    }
+
+    /// Serves with HTTP/2 `SETTINGS_MAX_CONCURRENT_STREAMS` set to `streams`,
+    /// like the ingress in front of Kura.
+    pub(super) fn serve_on_with_stream_limit(
+        &self,
+        listener: tokio::net::TcpListener,
+        streams: Option<u32>,
+    ) {
         let incoming = stream::unfold(listener, |listener| async {
             Some((listener.accept().await.map(|(socket, _)| socket), listener))
         });
         let service = self.clone();
         tokio::spawn(async move {
             tonic::transport::Server::builder()
+                .max_concurrent_streams(streams)
                 .add_service(ContentAddressableStorageServer::new(service.clone()))
                 .add_service(ActionCacheServer::new(service.clone()))
                 .add_service(ByteStreamServer::new(service))

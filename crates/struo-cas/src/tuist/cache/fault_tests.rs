@@ -542,3 +542,42 @@ async fn cancelling_the_caller_of_a_pending_half_open_probe_still_serves_every_w
         "the outage and one half-open probe, nothing more"
     );
 }
+
+/// A server may allow fewer concurrent streams than the client assumes before
+/// the server's SETTINGS arrive. Calls sent on a new connection must wait for
+/// that limit instead of being refused.
+#[tokio::test]
+async fn a_new_connection_respects_the_server_stream_limit() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let server = FaultServer::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    server.serve_on_with_stream_limit(listener, Some(2));
+    let mut cache = connected_cache(&temp, "reader", &server.serve().await).await;
+    cache.grpc_channel_cache = Arc::default();
+    cache.endpoint_override = Some(format!("http://{address}"));
+
+    let channel = cache.grpc_channel().await.unwrap();
+    let calls = (0..32).map(|index| {
+        let mut client = ActionCacheClient::new(channel.clone());
+        async move {
+            client
+                .get_action_result(reapi::GetActionResultRequest {
+                    action_digest: Some(reapi::Digest {
+                        hash: format!("{index:064}"),
+                        size_bytes: 0,
+                    }),
+                    ..Default::default()
+                })
+                .await
+                .map(|_| ())
+                .map_err(|status| status.code())
+        }
+    });
+    let codes: Vec<_> = futures::future::join_all(calls).await;
+
+    assert!(
+        codes.iter().all(|code| *code == Err(Code::NotFound)),
+        "{codes:?}"
+    );
+}

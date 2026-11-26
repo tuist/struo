@@ -250,6 +250,22 @@ impl TuistCache {
                             format!("could not connect to {}", redact::endpoint(&url)),
                         )
                     })?;
+                // Until the server's SETTINGS arrive, the client assumes 100
+                // concurrent streams; Kura's ingress allows 32 and refuses the
+                // rest. A response proves the SETTINGS were applied, so one
+                // round trip here keeps the first burst of callers from being
+                // refused. Its answer, even a failure, does not matter.
+                let request = reapi::GetCapabilitiesRequest {
+                    instance_name: this.instance_name(),
+                };
+                if let Ok(request) = this
+                    .authorized_grpc_request(request, "discover capabilities")
+                    .await
+                {
+                    let _ = CapabilitiesClient::new(requests.clone())
+                        .get_capabilities(request)
+                        .await;
+                }
                 Ok(GrpcChannels {
                     requests,
                     uploads: endpoint.connect_lazy(),
