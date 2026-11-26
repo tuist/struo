@@ -12,6 +12,9 @@ contain `sdk` configure the
 [Apple software development kit (SDK)](https://developer.apple.com/documentation/xcode)
 used for the build.
 
+Asset catalogs compile for the platform and the device families in `families`,
+with the `app_icon` and `accent_color` sets when they are named.
+
 Framework dependencies are transitive at runtime. Declare the framework the
 application imports directly. Struo links the direct dynamic boundary, embeds
 its complete framework closure, removes duplicate paths, signs every embedded
@@ -125,6 +128,7 @@ import inference and should not be authored manually.
 | `prebuild_actions` | list&lt;string&gt; | no | `[]` | Adapter-owned serialized build preparation actions that run before compilation. Records may opt into caching when they declare complete inputs and outputs; always-run records remain uncached |
 | `application_extension` | bool | no | `false` | Build an `.appex` bundle entered through `NSExtensionMain` and compiled against the app-extension-safe interface |
 | `app_icon` | string | no |  | Asset catalog app-icon set name compiled into the application icon |
+| `accent_color` | string | no |  | Asset catalog color set name used as the application's global accent color |
 | `asset_symbols` | bool | no | `true` | Generate Swift asset symbols for the application's asset catalogs |
 | `enable_testing` | bool | no | `false` | Compile Swift with testability enabled so hosted test bundles can use `@testable import` |
 

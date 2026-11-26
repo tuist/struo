@@ -17064,6 +17064,7 @@ fn prelude_xcode_finds_the_app_icon_of_a_project_in_a_nested_package() {
     for icon_set in [
         "app/Assets.xcassets/AppIcon.appiconset",
         "app/Assets.xcassets/Icons/Beta.appiconset",
+        "app/Assets.xcassets/AccentColor.colorset",
     ] {
         std::fs::create_dir_all(workspace.path().join(icon_set)).unwrap();
         std::fs::write(workspace.path().join(icon_set).join("Contents.json"), "{}").unwrap();
@@ -17074,6 +17075,8 @@ result = repr([
     _xcode_app_icon_exists(["app/Assets.xcassets"], "AppIcon"),
     _xcode_app_icon_exists(["app/Assets.xcassets"], "Beta"),
     _xcode_app_icon_exists(["app/Assets.xcassets"], "Missing"),
+    _xcode_asset_set_exists(["app/Assets.xcassets"], "AccentColor", [".colorset"]),
+    _xcode_asset_set_exists(["app/Assets.xcassets"], "AppIcon", [".colorset"]),
 ])
 "#,
         xcode_prelude_source()
@@ -17081,7 +17084,68 @@ result = repr([
     let (_, result) = with_active_store(store_for(workspace.path(), "app"), || {
         eval_prelude_source_to_repr(source)
     });
-    assert_eq!(result.unwrap(), "[True, True, False]");
+    assert_eq!(result.unwrap(), "[True, True, False, True, False]");
+}
+
+#[cfg(unix)]
+#[test]
+fn prelude_apple_application_passes_device_families_and_accent_color_to_actool() {
+    let workspace = TempDir::new().unwrap();
+    std::fs::create_dir_all(workspace.path().join("app/Sources")).unwrap();
+    std::fs::create_dir_all(workspace.path().join("app/Assets.xcassets")).unwrap();
+    std::fs::write(workspace.path().join("app/Sources/App.swift"), "").unwrap();
+    let source = format!(
+        r#"{}
+def host_which(name):
+    return "/usr/bin/" + name
+
+def host_command(argv, env = None, merge_stderr = None):
+    if "--find" in argv:
+        return "/toolchain/" + argv[len(argv) - 1] + "\n"
+    if "--show-sdk-path" in argv:
+        return "/sdks/iPhoneSimulator.sdk\n"
+    if "--version" in argv:
+        return "Swift version test\n"
+    if "-print-resource-dir" in argv:
+        return "/toolchain/resource\n"
+    fail("unexpected host_command: " + str(argv))
+
+ctx = {{
+    "label": {{"package": "app", "name": "App", "id": "app/App"}},
+    "attr": {{
+        "platform": "ios",
+        "bundle_id": "dev.struo.App",
+        "minimum_os": "17.0",
+        "sdk_variant": "simulator",
+        "families": ["iphone", "ipad"],
+        "asset_catalogs": ["Assets.xcassets"],
+        "accent_color": "AccentColor",
+    }},
+    "deps": [],
+    "srcs": ["Sources/**/*.swift"],
+    "build_dir": ".struo/out/app/App",
+    "capability": "build",
+}}
+result = repr(_apple_application_impl(ctx)["app_path"])
+"#,
+        macos_prelude_source()
+    );
+    let (store, result) = with_active_store(store_for(workspace.path(), "app"), || {
+        eval_prelude_source_to_repr(source)
+    });
+    result.unwrap();
+    let compile = action_by_identifier(&store, "apple_application_assets_App");
+    for flag in [
+        ["--target-device", "iphone"],
+        ["--target-device", "ipad"],
+        ["--accent-color", "AccentColor"],
+    ] {
+        assert!(
+            compile.argv.windows(2).any(|pair| pair == flag),
+            "{flag:?} missing from {:?}",
+            compile.argv
+        );
+    }
 }
 
 #[test]

@@ -4751,10 +4751,14 @@ def _xcode_app_icon_exists(catalogs, name):
     # sticker/icon-stack variant) containing a `Contents.json`. Catalog paths
     # are workspace-relative, so walk them from the workspace root rather than
     # globbing from the project's package.
-    markers = ["/" + name + suffix + "/Contents.json" for suffix in [".appiconset", ".stickersiconset", ".icon", ".solidimagestacklayer"]]
     for catalog in catalogs:
         if _basename(catalog) == name + ".icon":
             return True
+    return _xcode_asset_set_exists(catalogs, name, [".appiconset", ".stickersiconset", ".icon", ".solidimagestacklayer"])
+
+def _xcode_asset_set_exists(catalogs, name, suffixes):
+    markers = ["/" + name + suffix + "/Contents.json" for suffix in suffixes]
+    for catalog in catalogs:
         for path in _xcode_package_files(catalog):
             for marker in markers:
                 if path.endswith(marker):
@@ -4844,6 +4848,9 @@ def _xcode_application_attrs(ctx, target, settings, subs, platform, files):
         # error and fails the build.
         if app_icon and _xcode_app_icon_exists(files["asset_catalogs"], app_icon):
             attrs["app_icon"] = app_icon
+        accent_color = _xcode_scalar(settings.get("ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME"))
+        if accent_color and _xcode_asset_set_exists(files["asset_catalogs"], accent_color, [".colorset"]):
+            attrs["accent_color"] = accent_color
         if _xcode_scalar(settings.get("ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS")) == "NO":
             attrs["asset_symbols"] = False
     if files["resources"]:

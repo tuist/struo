@@ -387,6 +387,15 @@ def _apple_actool_platform(platform, sdk_variant):
         return "xros" if device else "xrsimulator"
     return "iphoneos" if device else "iphonesimulator"
 
+def _apple_actool_target_devices(platform, families):
+    if platform == "ios":
+        return [family for family in families if family in ["iphone", "ipad"]]
+    if platform == "tvos":
+        return ["tv"]
+    if platform == "watchos":
+        return ["watch"]
+    return []
+
 def _resolve_apple_thinning_tools(xcode_developer_dir):
     if _apple_execution_os() == "linux":
         fail("Apple app thinning requires Xcode on macOS; build the application bundle on Linux without apple_thinned_package")
@@ -5235,6 +5244,7 @@ def _apple_application_impl(ctx):
     # the symbol pass is absent, so the two run as separate actions.
     asset_catalogs = [_apple_resource_path(ctx, catalog) for catalog in (attrs.get("asset_catalogs") or [])]
     app_icon = attrs.get("app_icon") or ""
+    accent_color = attrs.get("accent_color") or ""
     asset_car = ""
     car_partial_plist = ""
     if asset_catalogs:
@@ -5282,11 +5292,15 @@ def _apple_application_impl(ctx):
             "--output-partial-info-plist",
             car_partial_plist,
         ]
+        for device in _apple_actool_target_devices(platform, families):
+            car_argv.extend(["--target-device", device])
         if app_icon:
             # Loose icon PNGs vary by platform and device and cannot be declared
             # ahead of time; the system reads the icon from `Assets.car`
             # through `CFBundleIconName`, so keep the bundle to declared files.
             car_argv.extend(["--app-icon", app_icon, "--standalone-icon-behavior", "none"])
+        if accent_color:
+            car_argv.extend(["--accent-color", accent_color])
         run_action(
             display_name = "Compile asset catalog · " + ctx["label"]["name"],
             source_files = _action_source_files(asset_catalogs),
@@ -8287,6 +8301,7 @@ apple_application = target_kind(
         attr("application_extension", "bool", default = "false", docs = "Build a .appex bundle entered through NSExtensionMain and compiled against the app-extension-safe API surface; application dependencies embed it in PlugIns"),
         attr("asset_catalogs", "list<string>", default = "[]", docs = "Asset catalogs (`.xcassets`) compiled into the bundle's `Assets.car` and used to generate type-safe `ImageResource`/`ColorResource` accessors"),
         attr("app_icon", "string", docs = "Asset catalog app-icon set name (`ASSETCATALOG_COMPILER_APPICON_NAME`) compiled into the app icon"),
+        attr("accent_color", "string", docs = "Asset catalog color set name (`ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME`) used as the app's global accent color"),
         attr("asset_symbols", "bool", default = "true", docs = "Generate Swift asset symbols from `asset_catalogs` (`ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS`)"),
         attr("enable_testing", "bool", default = "false", docs = "Compile Swift with testability enabled so hosted test bundles can `@testable import` the application module"),
     ],
