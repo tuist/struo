@@ -86,6 +86,8 @@ through the generic test capability with normalized results.
   bundle assembled for an external runner
 - [`apple_xcframework_import`](/reference/prelude/apple_xcframework_import):
   one platform and architecture slice of a prebuilt XCFramework
+- [`apple_artifact_bundle_import`](/reference/prelude/apple_artifact_bundle_import):
+  one triple's variant of a prebuilt static library artifact bundle
 
 ## Core target kinds
 

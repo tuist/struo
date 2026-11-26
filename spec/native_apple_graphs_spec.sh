@@ -122,6 +122,39 @@ SWIFT
     ' "$WORKSPACE/graph.json" >/dev/null
   }
 
+  exercise_artifact_bundle_binary_target() {
+    local bundle triple="$(uname -m)-apple-macosx"
+    bundle="$WORKSPACE/CHegel.artifactbundle"
+    mkdir -p "$bundle/include" "$bundle/$triple" "$bundle/x86_64-unknown-linux-gnu" "$WORKSPACE/Sources/Probe"
+    printf 'int hegel(void) { return 41; }\n' > "$SPEC_ROOT/hegel.c"
+    xcrun clang -c "$SPEC_ROOT/hegel.c" -o "$SPEC_ROOT/hegel.o" || return
+    xcrun libtool -static -o "$bundle/$triple/libhegel_c.a" "$SPEC_ROOT/hegel.o" || return
+    printf 'not an archive\n' > "$bundle/x86_64-unknown-linux-gnu/libhegel_c.a"
+    printf 'int hegel(void);\n' > "$bundle/include/hegel.h"
+    printf 'module CHegel {\n  header "hegel.h"\n  export *\n}\n' > "$bundle/include/module.modulemap"
+    cat > "$bundle/info.json" <<JSON
+{"schemaVersion": "1.0", "artifacts": {"CHegel": {"type": "staticLibrary", "version": "0.41.0", "variants": [
+  {"path": "x86_64-unknown-linux-gnu/libhegel_c.a", "supportedTriples": ["x86_64-unknown-linux-gnu"], "staticLibraryMetadata": {"headerPaths": ["include"], "moduleMapPath": "include/module.modulemap"}},
+  {"path": "$triple/libhegel_c.a", "supportedTriples": ["$triple"], "staticLibraryMetadata": {"headerPaths": ["include"], "moduleMapPath": "include/module.modulemap"}}
+]}}}
+JSON
+    cat > "$WORKSPACE/Package.swift" <<'SWIFT'
+// swift-tools-version: 5.9
+import PackageDescription
+let package = Package(
+    name: "ArtifactBundles",
+    products: [.executable(name: "Probe", targets: ["Probe"])],
+    targets: [
+        .binaryTarget(name: "CHegel", path: "CHegel.artifactbundle"),
+        .executableTarget(name: "Probe", dependencies: ["CHegel"]),
+    ]
+)
+SWIFT
+    printf 'import CHegel\nprint(hegel() + 1)\n' > "$WORKSPACE/Sources/Probe/main.swift"
+    graph_build SwiftPackage_ArtifactBundles_Probe || return
+    [ "$("$WORKSPACE/.struo/out/SwiftPackage_ArtifactBundles_Probe/Probe.app/Contents/MacOS/Probe")" = 42 ]
+  }
+
   exercise_vapor_graph() {
     cp "$REPO_ROOT/fixtures/native_graphs/vapor/Package.swift" "$WORKSPACE/"
     cp -R "$REPO_ROOT/fixtures/native_graphs/vapor/Sources" "$REPO_ROOT/fixtures/native_graphs/vapor/Tests" "$REPO_ROOT/fixtures/native_graphs/vapor/Dependencies" "$WORKSPACE/"
@@ -351,6 +384,13 @@ JSON
   It 'builds and tests an Xcode workspace with source-built tools, prebuild discovery, resources, and output-free commands'
     Skip if 'requires Xcode' native_graph_toolchain_unavailable
     When call exercise_xcode_build_tools
+    The status should be success
+    The output should equal ''
+  End
+
+  It 'links a Swift package binary target backed by a static library artifact bundle'
+    Skip if 'requires Xcode' native_graph_toolchain_unavailable
+    When call exercise_artifact_bundle_binary_target
     The status should be success
     The output should equal ''
   End

@@ -311,8 +311,8 @@ defmodule StruoSiteWeb.Docs.Sidebar do
             "Apple",
             ~w(apple_library apple_system_module swift_macro apple_framework apple_application
                 apple_executable apple_resource_bundle apple_thinned_package apple_test_bundle
-                apple_xcframework_import swift_package_workspace swift_package_dependencies swift_package_pin
-                swift_package_build_tools)
+                apple_xcframework_import apple_artifact_bundle_import swift_package_workspace
+                swift_package_dependencies swift_package_pin swift_package_build_tools)
           ),
           target_group("Bazel", ~w(bazel_workspace bazel_target bazel_test bazel_binary)),
           target_group("C and C++", ~w(c_library)),

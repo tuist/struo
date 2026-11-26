@@ -51,6 +51,13 @@ Struo supplies a `swift_package_workspace` seed and derives first-party
 libraries, executables, macros, binary targets, and tests. Discovery skips the
 generated `.build` and `.swiftpm` directories and does not write `struo.toml`.
 
+Binary targets become
+[`apple_xcframework_import`](/reference/prelude/apple_xcframework_import)
+targets, or
+[`apple_artifact_bundle_import`](/reference/prelude/apple_artifact_bundle_import)
+targets when their path or download URL names a static library
+`.artifactbundle`.
+
 `struo build` selects the package when it is the only discovered build root.
 `struo test` runs first-party test bundles only. Use `struo test --all` when
 you want the complete resolved test graph, including dependencies' tests.

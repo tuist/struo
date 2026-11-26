@@ -105,6 +105,9 @@ mod cargo_sources;
 #[path = "prelude/swift_package_paths.rs"]
 mod swift_package_paths;
 
+#[path = "prelude/swift_package_artifact_bundles.rs"]
+mod swift_package_artifact_bundles;
+
 #[cfg(unix)]
 #[path = "prelude/swift_package_git.rs"]
 mod swift_package_git;

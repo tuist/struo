@@ -2928,6 +2928,88 @@ def _apple_xcframework_static_library_name(path):
         name = name[3:]
     return name
 
+def _apple_prebuilt_library_provider(ctx, deps, library, module_name, files, header_dirs, modulemaps, archives):
+    transitive_framework_bundles = _apple_collect_runtime_framework_bundles(deps)
+    return {
+        "label_id": ctx["label"]["id"],
+        "framework_path": library,
+        "framework_module_name": module_name,
+        "framework_files": files,
+        "transitive_swiftmodule_dirs": _collect_transitive(deps, "transitive_swiftmodule_dirs", []),
+        "transitive_swiftmodule_inputs": _collect_transitive(deps, "transitive_swiftmodule_inputs", [path for path in files if path.endswith(".swiftmodule")]),
+        "transitive_exported_header_dirs": _collect_transitive(deps, "transitive_exported_header_dirs", header_dirs),
+        "transitive_modulemaps": _collect_transitive(deps, "transitive_modulemaps", modulemaps),
+        "transitive_archives": archives,
+        "transitive_framework_search_dirs": _collect_transitive(deps, "transitive_framework_search_dirs", []),
+        "transitive_framework_files": _collect_transitive(deps, "transitive_framework_files", files),
+        "transitive_link_framework_bundles": _apple_collect_link_framework_bundles(deps),
+        "transitive_framework_bundles": transitive_framework_bundles,
+        "transitive_frameworks": _apple_framework_bundle_paths(transitive_framework_bundles),
+        "transitive_sdk_frameworks": [],
+        "transitive_weak_sdk_frameworks": [],
+        "transitive_sdk_dylibs": [],
+        "transitive_linkopts": [],
+    }
+
+# Swift Package Manager matches artifact bundle variants on architecture,
+# vendor, operating system, and environment, ignoring OS versions.
+def _apple_artifact_bundle_triple(triple):
+    parts = triple.split("-")
+    if len(parts) < 3:
+        return triple
+    arch = "arm64" if parts[0] == "aarch64" else parts[0]
+    os = parts[2].rstrip("0123456789.")
+    if os == "macos":
+        os = "macosx"
+    return "-".join([arch, parts[1], os] + parts[3:])
+
+def _apple_artifact_bundle_import_impl(ctx):
+    attrs = _resolve_attrs(ctx, ctx["attr"], ctx["label"]["id"], ["bundle"])
+    label = ctx["label"]["id"]
+    bundle = attrs.get("bundle") or ""
+    platform = attrs.get("platform") or ""
+    sdk_variant = attrs.get("sdk_variant") or "simulator"
+    if not bundle or not platform:
+        fail(label + ": bundle and platform are required")
+    root = workspace_root() + "/"
+    if not host_file_exists(root + bundle + "/info.json"):
+        # A downloaded archive extracts to a directory that contains the bundle.
+        candidates = [path for path in host_command([host_which("find"), "-L", root + bundle, "-mindepth", "1", "-maxdepth", "1", "-type", "d", "-name", "*.artifactbundle"]).split("\n") if path]
+        if len(candidates) != 1:
+            fail(label + ": expected one `.artifactbundle` with info.json in `" + bundle + "`, found " + str(len(candidates)))
+        bundle = candidates[0][len(root):]
+    info = json_decode(host_file_read(root + bundle + "/info.json"))
+    artifacts = info.get("artifacts") or {}
+    names = [name for name in sorted(artifacts.keys()) if (artifacts[name].get("type") or "") == "staticLibrary"]
+    if not names:
+        fail(label + ": artifact bundle `" + bundle + "` has no staticLibrary artifact; only static library artifact bundles can be linked")
+    name = ctx["label"]["name"] if ctx["label"]["name"] in names else names[0]
+    arch = attrs.get("arch") or _apple_default_arch(platform, sdk_variant)
+    wanted = _apple_artifact_bundle_triple(_apple_triple(platform, "", sdk_variant, arch, False))
+    selected = None
+    offered = []
+    for variant in artifacts[name].get("variants") or []:
+        triples = variant.get("supportedTriples") or []
+        offered.extend(triples)
+        if selected == None and wanted in [_apple_artifact_bundle_triple(triple) for triple in triples]:
+            selected = variant
+    if selected == None:
+        fail(label + ": artifact bundle `" + bundle + "` has no variant for " + wanted + "; it supports " + ", ".join(sorted(offered)))
+    library = bundle + "/" + selected["path"]
+    if not host_file_exists(root + library):
+        fail(label + ": artifact bundle `" + bundle + "` is missing `" + selected["path"] + "`")
+    metadata = selected.get("staticLibraryMetadata") or {}
+    header_dirs = [bundle + "/" + path for path in metadata.get("headerPaths") or []]
+    modulemaps = [bundle + "/" + metadata["moduleMapPath"]] if metadata.get("moduleMapPath") else []
+    files = [library]
+    for directory in header_dirs:
+        files.extend([path[len(root):] for path in host_command([host_which("find"), "-L", root + directory, "-type", "f"]).split("\n") if path])
+    if not modulemaps:
+        modulemaps = [path for path in files if _basename(path) == "module.modulemap"]
+    files = _unique(files + modulemaps)
+    module_name = attrs.get("module_name") or _apple_xcframework_module_name(modulemaps, name)
+    return _apple_prebuilt_library_provider(ctx, _apple_native_deps(ctx), library, module_name, files, header_dirs, modulemaps, [library])
+
 def _apple_xcframework_import_impl(ctx):
     attrs = _resolve_attrs(ctx, ctx["attr"], ctx["label"]["id"], ["bundle"])
     bundle = attrs.get("bundle") or ""
@@ -2992,27 +3074,7 @@ def _apple_xcframework_import_impl(ctx):
                 if path.endswith(".modulemap"):
                     modulemaps.append(path)
         module_name = attrs.get("module_name") or _apple_xcframework_module_name(modulemaps, _apple_xcframework_static_library_name(library_path))
-        transitive_framework_bundles = _apple_collect_runtime_framework_bundles(deps)
-        return {
-            "label_id": ctx["label"]["id"],
-            "framework_path": library,
-            "framework_module_name": module_name,
-            "framework_files": files,
-            "transitive_swiftmodule_dirs": _collect_transitive(deps, "transitive_swiftmodule_dirs", []),
-            "transitive_swiftmodule_inputs": _collect_transitive(deps, "transitive_swiftmodule_inputs", [path for path in files if path.endswith(".swiftmodule")]),
-            "transitive_exported_header_dirs": _collect_transitive(deps, "transitive_exported_header_dirs", [headers_dir] if headers_dir else []),
-            "transitive_modulemaps": _collect_transitive(deps, "transitive_modulemaps", modulemaps),
-            "transitive_archives": [binary] if linkage == "static" else [],
-            "transitive_framework_search_dirs": _collect_transitive(deps, "transitive_framework_search_dirs", []),
-            "transitive_framework_files": _collect_transitive(deps, "transitive_framework_files", files),
-            "transitive_link_framework_bundles": _apple_collect_link_framework_bundles(deps),
-            "transitive_framework_bundles": transitive_framework_bundles,
-            "transitive_frameworks": _apple_framework_bundle_paths(transitive_framework_bundles),
-            "transitive_sdk_frameworks": [],
-            "transitive_weak_sdk_frameworks": [],
-            "transitive_sdk_dylibs": [],
-            "transitive_linkopts": [],
-        }
+        return _apple_prebuilt_library_provider(ctx, deps, library, module_name, files, [headers_dir] if headers_dir else [], modulemaps, [binary] if linkage == "static" else [])
     module_name = attrs.get("module_name") or _basename(library_path).replace(".framework", "")
     own_bundle = _apple_framework_bundle(library, module_name, files, ctx["label"]["id"])
     own_bundle["linkage"] = linkage
@@ -7538,6 +7600,29 @@ apple_xcframework_import = target_kind(
             "apple-xcframework-import-minimal",
             name = "Minimal XCFramework import",
             use_when = "You want to link a prebuilt XCFramework for a selected Apple platform and architecture.",
+        ),
+    ],
+)
+
+apple_artifact_bundle_import = target_kind(
+    docs = "Selects the variant of a Swift Package Manager static library artifact bundle that matches the destination triple and exposes its library, headers, and module map to Apple targets.",
+    impl = _apple_artifact_bundle_import_impl,
+    attrs = [
+        attr("bundle", "string", required = True, docs = "Workspace-relative `.artifactbundle` directory with `info.json`, or a directory that contains exactly one such bundle, such as an extracted archive"),
+        attr("platform", "string", required = True, docs = "Apple platform whose variant is imported", configurable = False),
+        attr("sdk_variant", "string", default = "\"simulator\"", docs = "`simulator` or `device` variant selection. Ignored on macOS", configurable = False),
+        attr("arch", "string", docs = "Target architecture. Defaults to the execution host architecture.", configurable = False),
+        attr("module_name", "string", docs = "Clang module name. Defaults to the module declared by the variant's module map", configurable = False),
+    ],
+    deps = [dep("deps", ["artifact"], "Optional checksum-pinned archive artifact that materializes the artifact bundle before this target is analysed.", max_count = 1)],
+    providers = ["apple_linkable", "apple_framework", "apple_bundle"],
+    capabilities = [capability("build", ["default", "framework"])],
+    examples = [
+        example(
+            "apple-artifact-bundle-import-minimal",
+            name = "Minimal artifact bundle import",
+            use_when = "You want to link a prebuilt Swift Package Manager static library artifact bundle for a selected Apple platform and architecture.",
+            platforms = ["macos"],
         ),
     ],
 )

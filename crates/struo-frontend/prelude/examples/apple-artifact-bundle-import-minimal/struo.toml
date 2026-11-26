@@ -1,0 +1,9 @@
+[[target]]
+name = "Example"
+kind = "apple_artifact_bundle_import"
+srcs = ["Example.artifactbundle/info.json"]
+
+[target.attrs]
+bundle = "Example.artifactbundle"
+platform = "macos"
+arch = "arm64"

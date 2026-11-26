@@ -97,6 +97,7 @@ PRELUDE_TARGET_KINDS = {
         "apple_system_module",
         "apple_resource_bundle",
         "apple_xcframework_import",
+        "apple_artifact_bundle_import",
         "apple_framework",
         "apple_application",
         "apple_executable",

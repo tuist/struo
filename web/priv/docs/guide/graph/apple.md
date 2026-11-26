@@ -159,6 +159,8 @@ Apple targets can consume native outputs from other ecosystems through normal
   Apple static library for an Apple consumer.
 - [`apple_xcframework_import`](/reference/prelude/apple_xcframework_import)
   selects the matching slice of a prebuilt XCFramework.
+- [`apple_artifact_bundle_import`](/reference/prelude/apple_artifact_bundle_import)
+  selects the matching variant of a prebuilt static library artifact bundle.
 
 Add these only after the application builds on its own, then query the
 consumer again to confirm that the dependency contract is satisfied. For Swift
@@ -381,7 +383,8 @@ for distribution requirements.
 - Signing modes other than `ad_hoc` and `development` are not supported. See
   [development signing](/reference/prelude/apple_application#development-signing)
   for installable device builds.
-- Prebuilt framework archives other than XCFrameworks need a project module,
+- Prebuilt framework archives other than XCFrameworks and static library
+  artifact bundles need a project module,
   and the built-in `archive_download` accepts ZIP archives, not tar.
 
 ## Target kinds
@@ -393,6 +396,7 @@ for distribution requirements.
 - [`apple_thinned_package`](/reference/prelude/apple_thinned_package)
 - [`apple_test_bundle`](/reference/prelude/apple_test_bundle)
 - [`apple_xcframework_import`](/reference/prelude/apple_xcframework_import)
+- [`apple_artifact_bundle_import`](/reference/prelude/apple_artifact_bundle_import)
 - [`swift_macro`](/reference/prelude/swift_macro)
 
 ## Next steps

@@ -3132,6 +3132,14 @@ def _xcode_swift_package_binary_artifact(ctx, package_path, target_id, target):
         artifact_target = target_id + "_Artifact"
         package = ctx["label"].get("package") or ""
         output = ".struo/out/" + ((package + "/") if package else "") + artifact_target + "/archive"
+        if ".artifactbundle" in url.split("?")[0]:
+            return {
+                "target": artifact_target,
+                "kind": "apple_artifact_bundle_import",
+                "bundle": output,
+                "url": url,
+                "sha256": checksum,
+            }
         return {
             "target": artifact_target,
             "bundle": output + "/" + name + ".xcframework",
@@ -3139,6 +3147,10 @@ def _xcode_swift_package_binary_artifact(ctx, package_path, target_id, target):
             "sha256": checksum,
         }
     target_path = target.get("path") or ""
+    if target_path.endswith(".artifactbundle"):
+        candidate = _xcode_join(package_path, target_path)
+        if _xcode_host_directory_exists(_xcode_abs(candidate)):
+            return {"kind": "apple_artifact_bundle_import", "bundle": candidate}
     if target_path.endswith(".xcframework"):
         candidate = package_path + "/" + target_path
         absolute = _xcode_abs(candidate)
@@ -3593,7 +3605,7 @@ def _xcode_local_swift_package_specs(ctx, package_infos, platform, minimum_os, s
                         })
                     specs.append({
                         "name": target_id,
-                        "kind": "apple_xcframework_import",
+                        "kind": artifact.get("kind") or "apple_xcframework_import",
                         "deps": ["./" + artifact_target] if artifact_target else [],
                         "srcs": [],
                         "attrs": {
