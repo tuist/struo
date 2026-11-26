@@ -25,7 +25,7 @@ fn coverage_opt_in_reaches_only_generated_test_targets() {
             test.attrs
                 .get("coverage_per_test")
                 .map(|v| serde_json::to_value(v).unwrap()),
-            enabled.then(|| json!(true))
+            enabled.then_some(json!(true))
         );
         if enabled {
             assert_eq!(
