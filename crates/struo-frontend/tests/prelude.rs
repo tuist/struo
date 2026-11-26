@@ -93,6 +93,9 @@ mod apple_linux;
 #[path = "prelude/apple_resources.rs"]
 mod apple_resources;
 
+#[path = "prelude/apple_bundle_metadata.rs"]
+mod apple_bundle_metadata;
+
 #[path = "prelude/native_graphs.rs"]
 mod native_graphs;
 

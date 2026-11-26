@@ -1098,6 +1098,50 @@ EOF
     End
   End
 
+  Describe 'Xcode application bundle parity'
+    It 'writes PkgInfo and the Info.plist build keys Xcode reports for the selected SDK'
+      Skip if 'apple toolchain unavailable on this host' apple_toolchain_unavailable
+
+      verify_xcode_bundle_parity() {
+        printf '%s\n' 'import SwiftUI' '@main struct ReproApp: App { var body: some Scene { WindowGroup { Text("Hi") } } }' > "$WORKSPACE/App.swift"
+        cat > "$WORKSPACE/struo.toml" <<'TOML'
+[[target]]
+name = "ReproApp"
+kind = "apple_application"
+srcs = ["App.swift"]
+[target.attrs]
+platform = "ios"
+sdk_variant = "simulator"
+bundle_id = "dev.example.repro"
+minimum_os = "17.0"
+TOML
+        struo build ReproApp >/dev/null 2>&1 || return
+        app="$WORKSPACE/.struo/out/ReproApp/ReproApp.app"
+        [ "$(cat "$app/PkgInfo")" = 'APPL????' ] || return
+        codesign --verify --strict "$app" || return
+        sdk_version="$(xcrun --sdk iphonesimulator --show-sdk-version)"
+        sdk_build="$(xcrun --sdk iphonesimulator --show-sdk-build-version)"
+        xcode_version="$(xcodebuild -version | awk 'NR == 1 { split($2, v, "."); printf "%02d%d%d", v[1], v[2], v[3] }')"
+        xcode_build="$(xcodebuild -version | awk '/Build version/ { print $3 }')"
+        for entry in \
+          "DTSDKName=iphonesimulator$sdk_version" \
+          "DTSDKBuild=$sdk_build" \
+          "DTPlatformVersion=$sdk_version" \
+          "DTPlatformBuild=$sdk_build" \
+          "DTCompiler=com.apple.compilers.llvm.clang.1_0" \
+          "DTXcode=$xcode_version" \
+          "DTXcodeBuild=$xcode_build" \
+          "BuildMachineOSBuild=$(sw_vers -buildVersion)"; do
+          actual="$(plutil -extract "${entry%%=*}" raw -o - "$app/Info.plist")" || return
+          [ "$actual" = "${entry#*=}" ] || { printf '%s: %s\n' "$entry" "$actual" >&2; return 1; }
+        done
+      }
+
+      When call verify_xcode_bundle_parity
+      The status should be success
+    End
+  End
+
   Describe 'apple_framework + apple_application end-to-end'
     It 'compiles a static library, a dynamic framework that links it, and an app that embeds the framework'
       Skip if 'apple toolchain unavailable on this host' apple_toolchain_unavailable

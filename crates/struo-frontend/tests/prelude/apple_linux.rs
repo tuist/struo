@@ -18,7 +18,9 @@ def host_path_exists(path):
 def host_path_is_within(path, root):
     return path == root or path.startswith(root + "/")
 def host_file_exists(path):
-    return True
+    return not _xcode_version_file(path)
+def _xcode_version_file(path):
+    return path.endswith("/SDKSettings.json") or path.endswith("/SystemVersion.plist") or path.endswith("/version.plist")
 def host_tree_sha256(path):
     return "tree:" + path
 def host_file_sha256(path):
@@ -527,7 +529,7 @@ def host_file_cms_content(path):
 def host_file_sha256(path):
     return "sha256-of-key-material" if path.endswith(".p12") or path.endswith(".pem") else "file:" + path
 def host_file_exists(path):
-    return "missing" not in path
+    return "missing" not in path and not _xcode_version_file(path)
 def host_file_read(path):
     if path.endswith("App.entitlements"):
         return ENTITLEMENTS

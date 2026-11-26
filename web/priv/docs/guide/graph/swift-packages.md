@@ -58,6 +58,12 @@ targets, or
 targets when their path or download URL names a static library
 `.artifactbundle`.
 
+Executable products are built as `apple_application` targets, so `struo build`
+produces `<Name>.app/Contents/MacOS/<Name>` rather than the bare `<Name>`
+binary that `swift build` writes to `.build/debug`. The bundle lets a test
+target `@testable import` the executable by running hosted in it, and it
+carries the executable target's resources. Run the tool from inside the bundle.
+
 `struo build` selects the package when it is the only discovered build root.
 `struo test` runs first-party test bundles only. Use `struo test --all` when
 you want the complete resolved test graph, including dependencies' tests.

@@ -3389,6 +3389,48 @@ def _apple_plist_with_build_entries(contents, entries, array_entries, replace = 
     body = rendered[rendered.find("<dict>\n") + len("<dict>\n"):rendered.rfind("</dict>")]
     return contents[:closing] + body + contents[closing:]
 
+def _apple_version_file_value(path, key):
+    if not host_file_exists(path):
+        return ""
+    contents = host_file_read(path)
+    entry = _apple_plist_entry(contents, key)
+    return contents[entry[1]:entry[2]].strip() if entry != None else ""
+
+def _apple_xcode_build_plist_entries(sdk_path):
+    # The build environment keys Xcode writes into every product's Info.plist.
+    # Each comes from the version file of the selected SDK, the Xcode that
+    # contains it, or the build machine, and is omitted when that file is
+    # absent, such as for an SDK outside Xcode. A remote worker's files are
+    # not readable from the coordinator, so its builds omit them all.
+    if _apple_execution_toolchain():
+        return {}
+    entries = {}
+    settings_path = sdk_path + "/SDKSettings.json"
+    if host_file_exists(settings_path):
+        settings = json_decode(host_file_read(settings_path))
+        if settings.get("CanonicalName"):
+            entries["DTSDKName"] = settings["CanonicalName"]
+        if settings.get("Version"):
+            entries["DTPlatformVersion"] = settings["Version"]
+    sdk_build = _apple_version_file_value(sdk_path + "/System/Library/CoreServices/SystemVersion.plist", "ProductBuildVersion")
+    if sdk_build:
+        entries["DTSDKBuild"] = sdk_build
+        entries["DTPlatformBuild"] = sdk_build
+    developer = sdk_path.find("/Contents/Developer/")
+    if developer >= 0:
+        version_plist = sdk_path[:developer] + "/Contents/version.plist"
+        xcode_version = _apple_version_file_value(version_plist, "CFBundleShortVersionString")
+        if xcode_version:
+            # Xcode 16.2 is "1620" and 9.4.1 is "0941".
+            parts = (xcode_version.split(".") + ["0", "0"])[:3]
+            entries["DTXcode"] = ("0" + parts[0])[-2:] + parts[1][:1] + parts[2][:1]
+            entries["DTXcodeBuild"] = _apple_version_file_value(version_plist, "ProductBuildVersion")
+            entries["DTCompiler"] = "com.apple.compilers.llvm.clang.1_0"
+    machine_build = _apple_version_file_value("/System/Library/CoreServices/SystemVersion.plist", "ProductBuildVersion")
+    if machine_build:
+        entries["BuildMachineOSBuild"] = machine_build
+    return {key: value for key, value in entries.items() if value}
+
 def _apple_entitlements_with_application_identifier(contents, development_team, bundle_id):
     if not development_team or not bundle_id or "<key>application-identifier</key>" in contents:
         return contents
@@ -5615,10 +5657,12 @@ def _apple_application_impl(ctx):
             device_family_codes.append({"integer": 1})
         elif family == "ipad":
             device_family_codes.append({"integer": 2})
-    build_entries = {
+    xcode_entries = _apple_xcode_build_plist_entries(swiftc["sdk_path"])
+    build_entries = dict(xcode_entries)
+    build_entries.update({
         "LSMinimumSystemVersion" if is_macos else "MinimumOSVersion": minimum_os,
         "DTPlatformName": swiftc["sdk_name"],
-    }
+    })
     build_arrays = {"CFBundleSupportedPlatforms": [_apple_supported_platform(swiftc["sdk_name"])]}
     if not is_macos:
         build_arrays["UIDeviceFamily"] = device_family_codes
@@ -5630,7 +5674,7 @@ def _apple_application_impl(ctx):
             info_plist_contents = info_plist_contents.replace("$(" + key + ")", value).replace("${" + key + "}", value)
         # Only iPhone and iPad device family codes are modelled.
         template_arrays = build_arrays if platform == "ios" else {"CFBundleSupportedPlatforms": build_arrays["CFBundleSupportedPlatforms"]}
-        info_plist_contents = _apple_plist_with_build_entries(info_plist_contents, build_entries, template_arrays, ["UIDeviceFamily"])
+        info_plist_contents = _apple_plist_with_build_entries(info_plist_contents, build_entries, template_arrays, ["UIDeviceFamily"] + list(xcode_entries.keys()))
     else:
         plist_entries = {
             "CFBundleDevelopmentRegion": "en",
@@ -5659,8 +5703,14 @@ def _apple_application_impl(ctx):
         )
     else:
         write_path(info_plist, info_plist_contents)
+    bundle_metadata = [info_plist]
+    if not application_extension:
+        # Xcode writes the package type and creator code of an application.
+        pkg_info = declare_output(contents_dir + "/PkgInfo")
+        write_path(pkg_info, "APPL????")
+        bundle_metadata.append(pkg_info)
 
-    prepackage_outputs = _apple_run_prepackage_actions(ctx, attrs, [executable, info_plist], app_path)
+    prepackage_outputs = _apple_run_prepackage_actions(ctx, attrs, [executable] + bundle_metadata, app_path)
     resource_files = _apple_materialize_resources(
         ctx,
         resources,
@@ -5701,7 +5751,7 @@ def _apple_application_impl(ctx):
     # extensions and the provisioning profile land so the bundle's resource
     # envelope seals them.
     app_cs_stamp = declare_output(contents_dir + "/_CodeSignature/CodeResources")
-    cs_inputs = [executable, info_plist] + embedded_profile
+    cs_inputs = [executable] + bundle_metadata + embedded_profile
     if asset_car:
         cs_inputs.append(asset_car)
     cs_inputs.extend(resource_files)
@@ -5714,7 +5764,7 @@ def _apple_application_impl(ctx):
     cs_inputs = _unique(cs_inputs + script_outputs)
     resource_files = _unique(resource_files + script_outputs)
     signing_entitlements = processed_entitlements if processed_entitlements and not embeds_simulator_entitlements else ""
-    bundle_files = [executable, info_plist, app_cs_stamp] + embedded_profile + resource_files + embedded_frameworks["files"] + embedded_resource_bundles["files"] + embedded_extensions + ([asset_car] if asset_car else [])
+    bundle_files = [executable, app_cs_stamp] + bundle_metadata + embedded_profile + resource_files + embedded_frameworks["files"] + embedded_resource_bundles["files"] + embedded_extensions + ([asset_car] if asset_car else [])
     # Build scripts may leave undeclared files in the bundle on purpose.
     if not attrs.get("prepackage_actions") and not attrs.get("postbuild_actions"):
         _apple_remove_undeclared_bundle_entries(ctx, app_path, bundle_files + [ctx["build_dir"] + "/" + contents_dir + "/_CodeSignature"], "apple_application_stale_" + product_name)
