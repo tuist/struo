@@ -58,6 +58,17 @@ Each project's `test` task becomes one cacheable suite. Both application and
 library suites run by default. Struo records the exit status, duration, and
 log; a failed command produces a failed suite.
 
+To list only the suites a change can affect, pass the changed files:
+
+```sh
+struo query affected-tests --changed-path libs/core/src/index.ts
+```
+
+Like `nx affected`, a change to a project selects its own tests and the tests
+of every project that depends on it, directly or through other projects. A
+project rooted at the workspace root does not pass its changes on to the
+projects that depend on it, because it would otherwise claim every file.
+
 ## Choose which tasks to include
 
 By default Struo emits the `build`, `test`, and `lint` tasks of every project,

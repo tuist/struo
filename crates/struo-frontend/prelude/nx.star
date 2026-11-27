@@ -38,9 +38,20 @@ def _nx_node(ctx):
     return resolved
 
 # Prefer the workspace-local install so we run the exact nx version pinned in
-# package.json. Fall back to nx on PATH so a repo without node_modules but
-# with a globally installed nx still loads its graph.
+# package.json. Its package.json `bin` names the script, which moved across Nx
+# versions; `.bin/nx` can be a pnpm shell shim, from whose directory Node.js
+# cannot resolve Nx's own modules. Fall back to nx on PATH so a repo without
+# node_modules but with a globally installed nx still loads its graph.
 def _nx_binary(ctx):
+    manifest = workspace_root() + "/node_modules/nx/package.json"
+    if host_file_exists(manifest):
+        declared = json_decode(host_file_read(manifest)).get("bin")
+        if type(declared) == type({}):
+            declared = declared.get("nx")
+        if type(declared) == type("") and declared:
+            resolved = _resolve_host_executable("node_modules/nx/" + declared.removeprefix("./"))
+            if resolved:
+                return resolved
     for candidate in ["node_modules/nx/bin/nx.js", "node_modules/.bin/nx"]:
         resolved = _resolve_host_executable(candidate)
         if resolved:
@@ -125,9 +136,20 @@ def _nx_expand_output(project_root, project_name, template, options = {}):
     replaced = replaced.replace("{workspaceRoot}", "")
     replaced = replaced.replace("{projectRoot}", project_root or ".")
     replaced = replaced.replace("{projectName}", project_name)
-    if replaced.startswith("./"):
-        replaced = replaced[2:]
-    return replaced
+    # Nx joins the parts with `path.posix.join`, which keeps a trailing slash
+    # such as `outputPath: "dist/"`; the exclusion globs need the bare path.
+    negated = replaced.startswith("!")
+    bare = replaced.removeprefix("!")
+    parts = []
+    for part in bare.split("/"):
+        if part == ".." and parts and parts[-1] != "..":
+            parts.pop()
+        elif part and part != ".":
+            parts.append(part)
+    absolute = bare.startswith("/")
+    if not parts:
+        return "/" if absolute else ("" if bare in ["", "./"] else ".")
+    return ("!" if negated else "") + ("/" if absolute else "") + "/".join(parts)
 
 def _nx_project_dependencies(graph_root):
     graph = graph_root.get("graph") or graph_root
@@ -141,6 +163,26 @@ def _nx_project_dependencies(graph_root):
                 upstream.append(target)
         out[source] = _unique(upstream)
     return out
+
+def _nx_affected_deps(project_name, nodes, project_dependencies, emitted):
+    pending = project_dependencies.get(project_name) or []
+    seen = {project_name: True}
+    out = []
+    for _ in range(len(nodes)):
+        if not pending:
+            break
+        next_projects = []
+        for project in pending:
+            if project in seen:
+                continue
+            seen[project] = True
+            root = (((nodes.get(project) or {}).get("data") or {}).get("root") or "")
+            if project in emitted and root not in ["", "."]:
+                out.append("./" + emitted[project])
+            else:
+                next_projects.extend(project_dependencies.get(project) or [])
+        pending = next_projects
+    return sorted(out)
 
 def _nx_upstream_tasks(project_name, task_name, nodes, project_dependencies):
     pending = project_dependencies.get(project_name) or []
@@ -243,6 +285,7 @@ def _nx_workspace_resolver(ctx):
     targets = []
     roots = []
     workspace_outputs = []
+    executor_graph = ""
     for project_name, node_entry in nodes.items():
         data = node_entry.get("data") or {}
         project_root = data.get("root") or ""
@@ -290,8 +333,10 @@ def _nx_workspace_resolver(ctx):
                     attrs["command_cwd"] = project_root
                     attrs["command_env"] = (task_config.get("options") or {}).get("env") or {}
             elif executor:
+                # Encode once: every plugin task shares the same string.
+                executor_graph = executor_graph or _json_encode(graph)
                 attrs["runnable"] = True
-                attrs["executor_graph"] = _json_encode(graph)
+                attrs["executor_graph"] = executor_graph
             if task_name == "test" and _nx_attr(ctx, "coverage_per_test", False):
                 attrs["coverage_per_test"] = True
                 attrs["coverage_sources"] = _nx_attr(ctx, "coverage_sources", [])
@@ -326,6 +371,24 @@ def _nx_workspace_resolver(ctx):
         targets = [target for target in targets if target["name"] in selected]
         roots = [name for name in roots if name in selected]
 
+    # Like `nx affected`, a change to a project affects every project that
+    # depends on it. Each task names one task of each direct upstream project,
+    # and test selection follows those names transitively. A project rooted at
+    # the workspace root owns every path, so naming it would select its
+    # dependents for any change; Nx assigns a file to the project with the
+    # deepest root instead. The walk passes through it to its own upstreams.
+    emitted = {}
+    for target in targets:
+        project = target["attrs"]["project"]
+        if project not in emitted or target["name"] < emitted[project]:
+            emitted[project] = target["name"]
+    affected_deps = {}
+    for target in targets:
+        project = target["attrs"]["project"]
+        if project not in affected_deps:
+            affected_deps[project] = _nx_affected_deps(project, nodes, project_dependencies, emitted)
+        target["attrs"]["_affected_deps"] = affected_deps[project]
+
     return {
         "targets": targets,
         "roots": _unique(roots),
@@ -354,7 +417,7 @@ _NX_SNAPSHOT_OUTPUTS = """
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const spec = JSON.parse(process.argv[1]);
+const spec = JSON.parse(process.argv[2]);
 const root = process.cwd();
 async function main() {
 let status = 1;
@@ -370,12 +433,17 @@ try {
       nxJsonConfiguration: readJsonFile('nx.json'),
       isVerbose: false,
     };
-    let success = false;
-    for await (const result of await runExecutor({ project: spec.project, target: spec.task }, {}, context)) {
-      success = result.success === true;
-      if (!success) break;
-    }
-    status = success ? 0 : 1;
+    // Like Nx's getLastValueFromAsyncIterableIterator: the final value counts,
+    // including one an executor returns rather than yields, as ng-packagr does.
+    const iterator = (await runExecutor({ project: spec.project, target: spec.task }, {}, context))[Symbol.asyncIterator]();
+    let previous;
+    let current;
+    do {
+      previous = current;
+      current = await iterator.next();
+    } while (!current.done);
+    const last = current.value !== undefined || !previous ? current.value : previous.value;
+    status = last?.success === true ? 0 : 1;
   } else {
     const result = spawnSync(spec.argv[0], spec.argv.slice(1), { cwd: spec.cwd, stdio: 'inherit' });
     if (result.error) throw result.error;
@@ -506,6 +574,9 @@ def _nx_task_impl(ctx, is_test = False):
         snapshot = declare_output("nx-outputs")
         action_outputs = [snapshot]
     provider["artifact_inputs"] = dependency_artifacts + ([snapshot] if snapshot else [])
+    # A file rather than `node -e`: workers forked with a copy of
+    # `process.execArgv`, such as jest-worker's, would rerun an `-e` script.
+    runner = declare_output("nx-run.cjs")
     spec = {
         "argv": argv, "cwd": cwd, "outputs": outputs, "snapshot": snapshot,
         "graph": declare_output("nx-graph.json") if executor_graph else "", "project": project, "task": task,
@@ -517,7 +588,7 @@ def _nx_task_impl(ctx, is_test = False):
         results = test_dir + "/test_results.json"
         log = test_dir + "/nx.log"
         spec.update({"results": results, "log": log, "target": ctx["label"]["id"]})
-        argv = [node, "-e", _NX_SNAPSHOT_OUTPUTS, _json_encode(spec)]
+        argv = [node, runner, _json_encode(spec)]
         action_outputs = action_outputs + [results, log]
         provider["affected_inputs"] = inputs
         provider["test_discovery_inputs"] = inputs
@@ -535,7 +606,9 @@ def _nx_task_impl(ctx, is_test = False):
         }
         if ctx["capability"] not in ["build", "test"]:
             return provider
-    argv = [node, "-e", _NX_SNAPSHOT_OUTPUTS, _json_encode(spec)]
+    argv = [node, runner, _json_encode(spec)]
+    write_path(runner, _NX_SNAPSHOT_OUTPUTS)
+    inputs = inputs + [runner]
     if executor_graph:
         write_path(spec["graph"], executor_graph)
         inputs = inputs + [spec["graph"]]
@@ -613,6 +686,7 @@ def _nx_task_attrs():
         attr("config", "list<string>", default = "[\"nx.json\", \"package.json\", \"pnpm-lock.yaml\", \"yarn.lock\", \"package-lock.json\"]", docs = "Workspace-level configuration inputs.", configurable = False),
         attr("env", "map<string, string>", default = "{}", docs = "User-supplied environment variables applied last.", configurable = True),
         attr("env_inherit", "list<string>", default = "[]", docs = "Host environment variables inherited by name.", configurable = False),
+        attr("_affected_deps", "list<string>", default = "[]", docs = "Resolver-owned names of one task per upstream Nx project. `struo query affected-tests` selects this target's tests when one of those targets' inputs changes, as `nx affected` does. Builds do not wait for them.", configurable = False),
     ]
 
 nx_task = target_kind(

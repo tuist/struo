@@ -509,9 +509,18 @@ claims this way selects no tests. Use these when `srcs` must cover a whole
 directory for staging or input discovery but only some of its files can change
 the target's tests. The Cargo resolver sets them for workspace packages.
 
+A resolver can also connect tests to targets they do not build from. The
+non-configurable `_affected_deps` attribute, a `list<string>` of target names
+written like `deps` entries, makes a changed input of any named target select
+this target's tests, followed transitively through further `deps` and
+`_affected_deps`. Builds do not wait for those targets. The Nx resolver sets it
+to one task of each upstream project, so a change to a project selects the
+tests of the projects that depend on it, as `nx affected` does.
+
 The Nx resolver emits `nx_task` for ordinary tasks and `nx_test` for test
 suites, and records every first-party test in `_default_test_roots`. Both
-kinds carry resolver-owned `executor_graph` and `workspace_outputs` attributes.
+kinds carry resolver-owned `executor_graph`, `workspace_outputs`, and
+`_affected_deps` attributes.
 Live discovery uses Nx's full project-graph API rather than its display graph,
 retaining external package nodes required by compiler executors. Plugin actions
 consume that canonical graph through Nx's executor API without delegating

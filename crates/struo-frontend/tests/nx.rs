@@ -175,7 +175,7 @@ fn plugin_outputs_resolve_nested_default_configuration_options() {
 #[test]
 fn test_tasks_report_suite_success_and_failure_without_hashing_generated_outputs() {
     use std::process::Command;
-    use struo_frontend::analysis::AnalysisEngine;
+    use struo_frontend::analysis::{AnalysisEngine, DeclaredActionOperation};
 
     let workspace = TempDir::new().unwrap();
     fs::create_dir_all(workspace.path().join("app/generated")).unwrap();
@@ -234,6 +234,11 @@ fn test_tasks_report_suite_success_and_failure_without_hashing_generated_outputs
             .path()
             .join(info["outputs"]["results"].as_str().unwrap());
         fs::create_dir_all(results.parent().unwrap()).unwrap();
+        for written in &result.actions {
+            if let Some(DeclaredActionOperation::WriteFile { path, bytes }) = &written.operation {
+                fs::write(workspace.path().join(path), bytes).unwrap();
+            }
+        }
         let output = Command::new(&action.argv[0])
             .args(&action.argv[1..])
             .current_dir(workspace.path())

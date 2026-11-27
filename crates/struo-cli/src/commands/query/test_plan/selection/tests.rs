@@ -31,6 +31,40 @@ fn deleted_source_still_matches_its_declared_pattern() {
 }
 
 #[test]
+fn affected_deps_reach_tests_transitively_within_the_package() {
+    let workspace = TempDir::new().unwrap();
+    let affected_deps = |name: &str| {
+        BTreeMap::from([(
+            "_affected_deps".to_string(),
+            AttrValue::List(vec![AttrValue::String(name.to_string())]),
+        )])
+    };
+    let mut ui = target("ws/ui", "test", &["libs/ui/**/*"], &[], true);
+    ui.attrs = affected_deps("./core");
+    let mut app = target("ws/app", "test", &["apps/app/**/*"], &[], true);
+    app.attrs = affected_deps("ui");
+    let graph = vec![
+        target("ws/core", "library", &["libs/core/**/*"], &[], false),
+        ui,
+        app,
+        target("ws/other", "test", &["libs/other/**/*"], &[], true),
+    ];
+
+    let report =
+        selection_report(workspace.path(), &graph, &["ws/libs/core/a.ts".to_string()]).unwrap();
+
+    let reason = "changed dependency `ws/core` input `ws/libs/core/a.ts`".to_string();
+    assert_eq!(
+        report
+            .tests
+            .iter()
+            .map(|test| (test.id.as_str(), test.reasons.clone()))
+            .collect::<Vec<_>>(),
+        vec![("ws/ui", vec![reason.clone()]), ("ws/app", vec![reason])]
+    );
+}
+
+#[test]
 fn graph_definition_changes_select_every_test() {
     let workspace = TempDir::new().unwrap();
     let graph = vec![

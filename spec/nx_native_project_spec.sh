@@ -265,6 +265,199 @@ TOML
     The stdout should include '"status":"completed"'
   End
 
+  It 'loads the graph from the binary Nx declares when node_modules/.bin holds shell shims'
+    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    nx="$WORKSPACE/node_modules/nx"
+    mkdir -p "$nx/dist/bin" "$nx/dist/src/project-graph" "$nx/dist/src/utils" "$WORKSPACE/node_modules/.bin"
+    printf '%s\n' 'exports.loadRootEnvFiles = () => {};' > "$nx/dist/src/utils/dotenv.js"
+    printf '%s\n' '{}' > "$WORKSPACE/nx.json"
+    printf '%s\n' '{"name":"nx","version":"23.0.0","bin":{"nx":"./dist/bin/nx.js"}}' > "$nx/package.json"
+    printf '%s\n' '' > "$nx/dist/bin/nx.js"
+    cat > "$nx/dist/src/project-graph/project-graph.js" <<'JS'
+exports.createProjectGraphAsync = async () => ({
+  nodes: { app: { name: 'app', type: 'app', data: { root: 'app', targets: { build: { executor: 'nx:run-commands', options: { command: 'true' } } } } } },
+  dependencies: {},
+});
+JS
+    # pnpm links binaries with a shell script instead of a symlink.
+    printf '#!/bin/sh\nexec node "$(dirname "$0")/../nx/dist/bin/nx.js" "$@"\n' > "$WORKSPACE/node_modules/.bin/nx"
+    chmod +x "$WORKSPACE/node_modules/.bin/nx"
+
+    When call target_ids
+    The status should be success
+    The stdout should include 'nx_task app__build'
+  End
+
+  It 'loads many plugin tasks over a large external package graph within a bounded memory budget'
+    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    node -e '
+      const projects = {};
+      for (let p = 0; p < 10; p++) {
+        const targets = {};
+        for (const t of ["build", "test", "lint", "build-package"]) targets[t] = { executor: "@probe/plugin:" + t };
+        projects["lib" + p] = { type: "lib", data: { root: "libs/lib" + p, targets } };
+      }
+      const externalNodes = {};
+      for (let i = 0; i < 4000; i++) {
+        externalNodes["npm:pkg-" + i] = { type: "npm", name: "npm:pkg-" + i, data: { version: "1.0." + i, packageName: "pkg-" + i, hash: "sha512-" + "x".repeat(160) } };
+      }
+      require("node:fs").writeFileSync(process.argv[1], JSON.stringify({ graph: { nodes: projects, externalNodes, dependencies: {} } }));
+    ' "$WORKSPACE/graph.json"
+    cat > "$WORKSPACE/struo.toml" <<'TOML'
+[[target]]
+name = "nx"
+kind = "nx_workspace"
+[target.attrs]
+graph_file = "graph.json"
+TOML
+
+    [ "$(uname -s)" = Linux ] || Skip 'ulimit -v is enforced on Linux'
+    # Each task encoding the graph again needed about 5 GiB of address space.
+    # Two malloc arenas keep the reservation independent of the CPU count.
+    bounded_query() { (ulimit -v 2097152 && MALLOC_ARENA_MAX=2 struo --format json query targets) | jq -r '.[].id' | grep -c '__'; }
+    When call bounded_query
+    The status should be success
+    The stdout should equal 30
+  End
+
+  affected_by() {
+    struo --format json query affected-tests --changed-path "$1" | jq -r '.[].id' | sort | tr '\n' ' '
+  }
+
+  It 'selects the tests of projects that depend on a changed project, like nx affected'
+    mkdir -p "$WORKSPACE/apps/app" "$WORKSPACE/libs/core" "$WORKSPACE/libs/ui" "$WORKSPACE/libs/other"
+    for root in apps/app libs/core libs/ui libs/other; do printf x > "$WORKSPACE/$root/index.ts"; done
+    cat > "$WORKSPACE/graph.json" <<'JSON'
+{"graph": {"nodes": {
+  "app": {"type": "app", "data": {"root": "apps/app", "targets": {"test": {"executor": "nx:run-commands", "options": {"command": "true"}}}}},
+  "ui": {"type": "lib", "data": {"root": "libs/ui", "targets": {"test": {"executor": "nx:run-commands", "options": {"command": "true"}}}}},
+  "core": {"type": "lib", "data": {"root": "libs/core", "targets": {"test": {"executor": "nx:run-commands", "options": {"command": "true"}}}}},
+  "other": {"type": "lib", "data": {"root": "libs/other", "targets": {"test": {"executor": "nx:run-commands", "options": {"command": "true"}}}}},
+  "tools": {"type": "lib", "data": {"root": ".", "targets": {"test": {"executor": "nx:run-commands", "options": {"command": "true"}}}}}
+}, "dependencies": {
+  "app": [{"source": "app", "target": "ui", "type": "static"}, {"source": "app", "target": "npm:react", "type": "static"}],
+  "ui": [{"source": "ui", "target": "core", "type": "implicit"}, {"source": "ui", "target": "tools", "type": "static"}],
+  "core": [], "other": [], "tools": [{"source": "tools", "target": "other", "type": "static"}]
+}}}
+JSON
+    cat > "$WORKSPACE/struo.toml" <<'TOML'
+[[target]]
+name = "nx"
+kind = "nx_workspace"
+[target.attrs]
+graph_file = "graph.json"
+TOML
+
+    selections() {
+      affected_by libs/core/index.ts && echo
+      affected_by libs/other/index.ts && echo
+      affected_by README.md
+    }
+    When call selections
+    The status should be success
+    The line 1 of stdout should equal 'app__test core__test tools__test ui__test '
+    The line 2 of stdout should equal 'app__test other__test tools__test ui__test '
+    The line 3 of stdout should equal 'tools__test '
+  End
+
+  build_cache() { struo --format json build "$1" | jq -r .cache; }
+
+  It 'keeps outputs declared with a trailing slash out of other tasks inputs'
+    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    mkdir -p "$WORKSPACE/app"
+    printf x > "$WORKSPACE/app/index.ts"
+    cat > "$WORKSPACE/graph.json" <<'JSON'
+{"graph": {"nodes": {"app": {"type": "app", "data": {"root": "app", "targets": {
+  "build": {"executor": "nx:run-commands", "outputs": ["{options.outputPath}"],
+    "options": {"outputPath": "staging/../dist-app/", "command": "mkdir -p dist-app && date +%s%N > dist-app/out.txt"}},
+  "lint": {"executor": "nx:run-commands", "options": {"command": "true"}}
+}}}}, "dependencies": {}}}
+JSON
+    cat > "$WORKSPACE/struo.toml" <<'TOML'
+[[target]]
+name = "nx"
+kind = "nx_workspace"
+[target.attrs]
+graph_file = "graph.json"
+TOML
+
+    lint_around_build() {
+      build_cache app__lint && build_cache app__build >/dev/null && build_cache app__lint
+    }
+    When call lint_around_build
+    The status should be success
+    The stdout should equal 'miss
+hit'
+  End
+
+  It 'accepts plugin executors that return their result instead of yielding it, like ng-packagr'
+    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    mkdir -p "$WORKSPACE/node_modules/@nx/devkit"
+    printf '%s\n' '{"name":"@nx/devkit","main":"index.js"}' > "$WORKSPACE/node_modules/@nx/devkit/package.json"
+    cat > "$WORKSPACE/node_modules/@nx/devkit/index.js" <<'JS'
+exports.readJsonFile = () => ({});
+// @nx/angular:package returns its result from an async generator.
+exports.runExecutor = async function* () {
+  require('node:fs').writeFileSync('result.txt', 'returned');
+  return { success: true };
+};
+JS
+    cat > "$WORKSPACE/struo.toml" <<'TOML'
+[[target]]
+name = "probe"
+kind = "nx_task"
+[target.attrs]
+project = "app"
+task = "build"
+runnable = true
+executor = "probe:return"
+outputs = ["result.txt"]
+executor_graph = '{"nodes":{"app":{"name":"app","type":"app","data":{"root":".","targets":{"build":{"executor":"probe:return"}}}}},"dependencies":{}}'
+TOML
+
+    When call struo --format json build probe
+    The status should be success
+    The stderr should be blank
+    The stdout should include '"status":"completed"'
+    The contents of file "$WORKSPACE/result.txt" should equal 'returned'
+  End
+
+  It 'lets plugin executors fork Node.js workers in an ES module workspace'
+    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    mkdir -p "$WORKSPACE/node_modules/@nx/devkit"
+    printf '%s\n' '{"type":"module"}' > "$WORKSPACE/package.json"
+    printf '%s\n' '{"name":"@nx/devkit","main":"index.js"}' > "$WORKSPACE/node_modules/@nx/devkit/package.json"
+    cat > "$WORKSPACE/node_modules/@nx/devkit/index.js" <<'JS'
+const { fork } = require('node:child_process');
+exports.readJsonFile = () => ({});
+exports.runExecutor = async function* () {
+  // Like jest-worker, pass a copy of the parent's Node.js flags to the worker.
+  const execArgv = process.execArgv.filter((flag) => !flag.startsWith('--inspect'));
+  const code = await new Promise((resolve) => fork(require.resolve('./worker.js'), [], { execArgv }).on('exit', resolve));
+  yield { success: code === 0 };
+};
+JS
+    printf '%s\n' "require('node:fs').writeFileSync('result.txt', 'forked')" > "$WORKSPACE/node_modules/@nx/devkit/worker.js"
+    cat > "$WORKSPACE/struo.toml" <<'TOML'
+[[target]]
+name = "probe"
+kind = "nx_task"
+[target.attrs]
+project = "app"
+task = "build"
+runnable = true
+executor = "probe:fork"
+outputs = ["result.txt"]
+executor_graph = '{"nodes":{"app":{"name":"app","type":"app","data":{"root":".","targets":{"build":{"executor":"probe:fork"}}}}},"dependencies":{}}'
+TOML
+
+    When call struo --format json build probe
+    The status should be success
+    The stderr should be blank
+    The stdout should include '"status":"completed"'
+    The contents of file "$WORKSPACE/result.txt" should equal 'forked'
+  End
+
   compiler_dependency_outputs() {
     result=$(struo --format json build app__build) || return
     printf '%s\n' "$result" | jq -er '.cache == "miss"' >/dev/null || return

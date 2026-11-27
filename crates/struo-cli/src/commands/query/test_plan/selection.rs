@@ -329,7 +329,7 @@ fn add_owner_tests(
     path: &str,
     owners: &[&str],
     targets: &BTreeMap<&str, &GraphTarget>,
-    reverse_dependencies: &BTreeMap<&str, Vec<&str>>,
+    reverse_dependencies: &BTreeMap<String, Vec<&str>>,
     reasons: &mut BTreeMap<String, BTreeSet<String>>,
 ) {
     let seed_roots = owners
@@ -355,7 +355,7 @@ fn add_affected_tests(
     path: &str,
     owner: &str,
     targets: &BTreeMap<&str, &GraphTarget>,
-    reverse_dependencies: &BTreeMap<&str, Vec<&str>>,
+    reverse_dependencies: &BTreeMap<String, Vec<&str>>,
     reasons: &mut BTreeMap<String, BTreeSet<String>>,
 ) {
     let mut queue = VecDeque::from([owner]);
@@ -383,14 +383,32 @@ fn add_affected_tests(
     }
 }
 
-fn reverse_dependencies(graph: &[GraphTarget]) -> BTreeMap<&str, Vec<&str>> {
-    let mut reverse = BTreeMap::<&str, Vec<&str>>::new();
+fn reverse_dependencies(graph: &[GraphTarget]) -> BTreeMap<String, Vec<&str>> {
+    let mut reverse = BTreeMap::<String, Vec<&str>>::new();
     for target in graph {
         // Include named dependency roles, not just the legacy `deps` role, so a
         // changed input reaches tests that depend on it through any role.
-        for dependency in target.dependency_ids() {
+        // `_affected_deps` names targets, relative to this target's package,
+        // whose changes reach its tests without being build prerequisites,
+        // such as a native project graph's dependency on another project.
+        let affected_deps = match target.attrs.get("_affected_deps") {
+            Some(AttrValue::List(values)) => values
+                .iter()
+                .filter_map(AttrValue::as_str)
+                .map(|name| {
+                    let name = name.strip_prefix("./").unwrap_or(name);
+                    if target.label.package.is_empty() {
+                        name.to_string()
+                    } else {
+                        format!("{}/{name}", target.label.package)
+                    }
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        for dependency in target.dependency_ids().cloned().chain(affected_deps) {
             reverse
-                .entry(dependency.as_str())
+                .entry(dependency)
                 .or_default()
                 .push(target.label.id.as_str());
         }
