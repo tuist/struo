@@ -159,6 +159,8 @@ pub async fn start_with(
         "max_concurrency": max_concurrency,
         "leases": false,
         "execution_root": execution_root,
+        // The server lists up to 2,000 size keys meant for its gateway.
+        "sized_keys": (0..2_000).map(|key| format!("{key:064x}")).collect::<Vec<_>>(),
     })
     .to_string();
     let endpoints = serde_json::json!({ "endpoints": [grpc] }).to_string();

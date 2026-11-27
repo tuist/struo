@@ -31,8 +31,9 @@ pub const DEFAULT_EXECUTION_TIMEOUT: Duration = Duration::from_mins(10);
 /// Wait before resubmitting to a full queue, doubling up to the maximum.
 const QUEUE_BACKOFF: Duration = Duration::from_millis(500);
 const MAX_QUEUE_BACKOFF: Duration = Duration::from_secs(10);
-/// The capabilities document is a handful of short fields.
-const CAPABILITIES_LIMIT: usize = 64 * 1024;
+/// The capabilities document is a handful of short fields plus fields meant for
+/// the execution gateway, such as up to 2,000 size keys, which Struo ignores.
+const CAPABILITIES_LIMIT: usize = 1024 * 1024;
 const PRECONDITION_FAILURE_TYPE: &str = "type.googleapis.com/google.rpc.PreconditionFailure";
 
 /// A connection to the project's remote execution service and the CAS its
