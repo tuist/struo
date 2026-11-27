@@ -289,7 +289,8 @@ JS
   End
 
   It 'loads many plugin tasks over a large external package graph within a bounded memory budget'
-    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    Skip if 'ulimit -v is enforced on Linux' [ "$(uname -s)" != Linux ]
+    Skip if 'node is required' ! command -v node >/dev/null 2>&1
     node -e '
       const projects = {};
       for (let p = 0; p < 10; p++) {
@@ -311,7 +312,6 @@ kind = "nx_workspace"
 graph_file = "graph.json"
 TOML
 
-    [ "$(uname -s)" = Linux ] || Skip 'ulimit -v is enforced on Linux'
     # Each task encoding the graph again needed about 5 GiB of address space.
     # Two malloc arenas keep the reservation independent of the CPU count.
     bounded_query() { (ulimit -v 2097152 && MALLOC_ARENA_MAX=2 struo --format json query targets) | jq -r '.[].id' | grep -c '__'; }
