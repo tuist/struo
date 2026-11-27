@@ -4595,6 +4595,9 @@ def _apple_framework_impl(ctx):
     sdk_dylibs_attr = attrs.get("sdk_dylibs") or []
     linkopts = attrs.get("linkopts") or []
     swift_flags = attrs.get("swift_flags") or []
+    defines = attrs.get("defines") or []
+    swift_defines = _unique(defines + (attrs.get("swift_defines") or []))
+    clang_defines = _unique(defines + (attrs.get("clang_defines") or []))
     private_header_dirs = []
     for header_dir in (attrs.get("exported_header_dirs") or []) + (attrs.get("private_header_dirs") or []):
         resolved_header_dir = _package_relative(ctx, header_dir)
@@ -4724,6 +4727,10 @@ def _apple_framework_impl(ctx):
     for opt in _apple_unique_linkopts(linkopts + dep_linkopts):
         swift_argv.append(opt)
     _apple_add_swift_plugin_args(swift_argv, plugin_dylibs, plugin_executables)
+    for define in swift_defines:
+        swift_argv.extend(["-D", define])
+    for define in clang_defines:
+        swift_argv.extend(["-Xcc", "-D" + define])
     for flag in _apple_swift_link_flags(swift_flags):
         swift_argv.append(flag)
     for src in swift_srcs:

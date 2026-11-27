@@ -8457,6 +8457,9 @@ ctx = {{
         "minimum_os": "17.0",
         "sdk_variant": "simulator",
         "private_header_dirs": ["Vendor/include"],
+        "defines": ["SHARED"],
+        "swift_defines": ["SWIFT_ONLY"],
+        "clang_defines": ["CLANG_ONLY"],
     }},
     "deps": [{{
         "label_id": "vendor/Binary",
@@ -8494,6 +8497,17 @@ result = repr([
         .argv
         .windows(4)
         .any(|args| { args == ["-Xcc", "-I", "-Xcc", "framework/Vendor/include"] }));
+    for define in [
+        ["-D", "SHARED"],
+        ["-D", "SWIFT_ONLY"],
+        ["-Xcc", "-DSHARED"],
+        ["-Xcc", "-DCLANG_ONLY"],
+    ] {
+        assert!(
+            compile.argv.windows(2).any(|args| args == define),
+            "missing {define:?}"
+        );
+    }
     assert!(action_has_input_suffix(
         compile,
         "framework/Vendor/include/yoga/YGEnums.h"

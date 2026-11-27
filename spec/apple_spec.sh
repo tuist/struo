@@ -428,6 +428,35 @@ TOML
     The status should be success
   End
 
+  It 'compiles a Swift-only framework with its conditional compilation conditions'
+    Skip if 'apple toolchain unavailable on this host' apple_toolchain_unavailable
+
+    build_conditional_framework() {
+      cat > "$WORKSPACE/struo.toml" <<'TOML'
+[[target]]
+name = "Conditional"
+kind = "apple_framework"
+srcs = ["Value.swift"]
+[target.attrs]
+platform = "macos"
+defines = ["SHARED_CONDITION"]
+swift_defines = ["SWIFT_CONDITION"]
+TOML
+      cat > "$WORKSPACE/Value.swift" <<'SWIFT'
+#if SHARED_CONDITION && SWIFT_CONDITION
+public func value() -> Int { 1 }
+#else
+#error("conditions are missing")
+#endif
+SWIFT
+      struo --memory-limit 2GiB build Conditional --format json
+    }
+
+    When call build_conditional_framework
+    The status should be success
+    The stdout should include '"status":"completed"'
+  End
+
   It 'evaluates package manifests with the host SDK when building for iOS'
     Skip if 'apple toolchain unavailable on this host' apple_toolchain_unavailable
     ios_sdk_unavailable() { ! xcrun --sdk iphonesimulator --show-sdk-path >/dev/null 2>&1; }
