@@ -232,6 +232,7 @@ async fn spawn_and_capture(
         "spawning local command"
     );
 
+    let started = std::time::Instant::now();
     let mut group =
         spawn(&mut command, network, stdout, stderr).map_err(|source| Error::Spawn {
             program: program.clone(),
@@ -246,6 +247,7 @@ async fn spawn_and_capture(
     debug!(
         program = %program,
         exit_code,
+        duration_ms = started.elapsed().as_millis(),
         "local command finished"
     );
     Ok(ActionResult {

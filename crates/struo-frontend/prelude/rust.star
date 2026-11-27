@@ -1040,6 +1040,16 @@ def _rust_dep_args(deps, aliases):
             args.extend(["--extern", crate_name + "=" + artifact])
     return args
 
+def _rust_metadata_deps(deps):
+    result = []
+    for dep in deps:
+        if dep.get("rlib"):
+            dep = dict(dep)
+            dep["rlib"] = dep.get("rmeta") or dep["rlib"]
+            dep["transitive_rlibs"] = dep.get("transitive_metadata") or dep.get("transitive_rlibs") or []
+        result.append(dep)
+    return result
+
 def _rust_dep_search_artifacts(deps):
     artifacts = []
     for dep in deps:
@@ -1954,9 +1964,10 @@ def _rust_compile(ctx, crate_type, default_root, output_name, test = False, prov
     output = declare_output(_rust_declared_output(ctx, _rust_compile_output_name(ctx, crate_type, output_name)))
     aliases = _rust_aliases(ctx)
     deps = _rust_resolved_deps(ctx, include_dev = test)
-    dep_args = _rust_dep_args(deps, aliases)
-    dep_search_args, dep_search_inputs = _rust_search_path_args(deps)
-    dep_inputs = _rust_dep_inputs(deps)
+    compile_deps = _rust_metadata_deps(deps) if crate_type == "rlib" and not test else deps
+    dep_args = _rust_dep_args(compile_deps, aliases)
+    dep_search_args, dep_search_inputs = _rust_search_path_args(compile_deps)
+    dep_inputs = _rust_dep_inputs(compile_deps)
     build_deps = _rust_build_deps(ctx)
     build_dep_args = _rust_dep_args(build_deps, aliases)
     build_dep_search_args, build_dep_search_inputs = _rust_search_path_args(build_deps)
@@ -1981,8 +1992,15 @@ def _rust_compile(ctx, crate_type, default_root, output_name, test = False, prov
         rustc_args.extend(["-C", "instrument-coverage", "-C", "link-dead-code"])
     rustc_args.extend(_rust_extra_filename_args(ctx, crate_type))
     rustc_args.extend(_rust_output_args(crate_type, output))
+    metadata = None
+    ready_outputs = []
+    diagnostic_flags = [flag for flag in _rust_user_flags(ctx) if flag.startswith("--error-format") or flag.startswith("--json") or flag.startswith("--color")]
+    if crate_type == "rlib" and not materialized_sources and not test and host_os() != "windows" and not diagnostic_flags:
+        metadata = declare_output(_rust_declared_output(ctx, "metadata/" + _basename(output)[:-5] + ".rmeta"))
+        rustc_args.extend(["--error-format=json", "--json=artifacts"])
+        ready_outputs = [{"path": metadata, "stream": "stderr", "event": {"$message_type": "artifact", "emit": "metadata", "artifact": metadata}, "rendered_field": "rendered"}]
     if not materialized_sources or host_os() == "windows":
-        rustc_args.append("--emit=link,dep-info=" + output + ".d")
+        rustc_args.append("--emit=link,dep-info=" + output + ".d" + (",metadata=" + metadata if metadata else ""))
     else:
         rustc_args.append("--emit=link,dep-info=" + execution_path(output + ".d"))
     rustc_args.extend(_rust_compile_target_args(target, host_triple))
@@ -2022,7 +2040,8 @@ def _rust_compile(ctx, crate_type, default_root, output_name, test = False, prov
         source_files = _action_source_files(srcs),
         argv = argv,
         inputs = _unique(srcs + source_inputs + dep_inputs + dep_search_inputs + build_inputs + dependency_build_outputs + dependency_build_inputs + linker_script_inputs + (_rust_native_dep_link_inputs(deps) if crate_type != "rlib" else []) + _rust_extra_inputs(ctx)),
-        outputs = [output],
+        outputs = [output] + ([metadata] if metadata else []),
+        ready_outputs = ready_outputs,
         input_discovery = _rust_input_discovery(output + ".d", output + ".struo-inputs", [] if materialized_sources else srcs + source_inputs + _rust_extra_inputs(ctx), environment_only = True),
         env = compile_env,
         cwd = compile_cwd,
@@ -2055,6 +2074,8 @@ def _rust_compile(ctx, crate_type, default_root, output_name, test = False, prov
         "links": _rust_manifest_links(ctx),
         "build_script_stdout": build_stdout,
         "rlib": output if crate_type == "rlib" else None,
+        "rmeta": metadata,
+        "transitive_metadata": _collect_transitive(_rust_metadata_deps(_rust_rlib_deps(deps)), "transitive_rlibs", [metadata or output] if crate_type == "rlib" else []),
         "binary": output if crate_type == "bin" else None,
         "binary_name": _rust_attr(ctx, "_binary_output_name", crate_name) if crate_type == "bin" else "",
         "staticlib": output if crate_type == "staticlib" else None,
@@ -4989,6 +5010,7 @@ cargo_dependencies = target_kind(
 )
 
 rust_library = target_kind(
+    accepts_ready_dependencies = True,
     docs = "Rust library compiled with rustc. Rlibs feed Rust deps, staticlibs feed Apple linkers, and Android cdylibs are packaged as native shared libraries.",
     attrs = _RUST_COMMON_ATTRS + [
         attr("crate_type", "string", default = "rlib", docs = "Rust crate type for the library output. Defaults to `rlib`; final artifacts may use `staticlib`, `cdylib`, or `dylib`.", configurable = False),
@@ -5098,6 +5120,7 @@ rust_test = target_kind(
 )
 
 rust_crate = target_kind(
+    accepts_ready_dependencies = True,
     docs = "Resolved third-party Rust crate lowered from Cargo package metadata into a normal Struo Rust library target.",
     attrs = _RUST_COMMON_ATTRS + [
         attr("package_name", "string", required = True, docs = "Original Cargo package name."),

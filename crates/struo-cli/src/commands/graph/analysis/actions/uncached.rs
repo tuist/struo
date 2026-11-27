@@ -50,6 +50,7 @@ pub(super) async fn execute_declared(
         context.output_observer,
         context.workspace,
         lease,
+        &declared.ready_outputs,
     )
     .await?;
     Ok(result)

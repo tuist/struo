@@ -27,6 +27,7 @@ pub(super) fn test_action_globals(builder: &mut GlobalsBuilder) {
         inputs.dedup();
         record_action(DeclaredAction {
             input_discovery: None,
+            ready_outputs: Vec::new(),
             operation: Some(DeclaredActionOperation::MergeTestCoverage {
                 target: target.into(),
                 inventory: inventory.into(),

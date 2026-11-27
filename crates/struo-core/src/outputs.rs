@@ -432,7 +432,7 @@ pub(crate) async fn capture(
     capture_admitted(outputs, workspace_root, cache, symlink_mode, None).await
 }
 
-pub(crate) async fn capture_admitted(
+pub async fn capture_admitted(
     outputs: &[WorkspacePath],
     workspace_root: &Path,
     cache: &CacheProvider,
@@ -452,6 +452,7 @@ pub(crate) async fn capture_admitted(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 async fn capture_scoped(
     outputs: &[WorkspacePath],
     workspace_root: &Path,
@@ -467,6 +468,7 @@ async fn capture_scoped(
     let header_len = if remote { REMOTE_OUTPUT_MAGIC.len() } else { 0 };
     let mut captured = BTreeMap::new();
     for rel in outputs {
+        let started = std::time::Instant::now();
         let abs = rel.resolve(workspace_root);
         let metadata = match tokio::fs::metadata(&abs).await {
             Ok(metadata) => metadata,
@@ -554,10 +556,22 @@ async fn capture_scoped(
                 .put_stream_sized(tokio::io::AsyncReadExt::chain(header, file), expected)
                 .await?
         };
+        tracing::debug!(
+            path = rel.as_str(),
+            %digest,
+            duration_ms = started.elapsed().as_millis(),
+            "captured action output locally"
+        );
         captured.insert(rel.as_str().to_string(), digest);
     }
     let digests = captured.values().copied().collect::<Vec<_>>();
+    let started = std::time::Instant::now();
     remote_cache.publish_blobs(&digests).await?;
+    tracing::debug!(
+        outputs = digests.len(),
+        duration_ms = started.elapsed().as_millis(),
+        "published action output blobs"
+    );
     Ok(captured)
 }
 

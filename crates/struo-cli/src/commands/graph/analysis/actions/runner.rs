@@ -57,6 +57,7 @@ pub(in crate::commands::graph::analysis) fn run_declared_actions<'a>(
             event_bus,
             workers,
             &producers,
+            None,
         )
         .await
     })
@@ -88,6 +89,7 @@ pub(in crate::commands::graph::analysis) fn run_declared_actions_with<'a>(
     event_bus: Option<&'a struo_core::RunEventBus>,
     workers: &'a crate::bus_events::WorkerSlots,
     producers: &'a Producers,
+    pipeline: Option<&'a super::super::pipeline::Pipeline>,
 ) -> Pin<Box<dyn Future<Output = Result<BuildOutcome>> + Send + 'a>> {
     Box::pin(async move {
         producers.report_to(event_bus, workers);
@@ -103,6 +105,14 @@ pub(in crate::commands::graph::analysis) fn run_declared_actions_with<'a>(
             provider,
             ..
         } = analysis;
+        if let Some(pipeline) = pipeline {
+            pipeline.register(
+                &target.label.id,
+                provider.clone().into(),
+                &actions,
+                dependency_inputs,
+            )?;
+        }
         let local_tools = producers
             .execution()
             .map(struo_core::Executor::from_binding)
@@ -137,6 +147,13 @@ pub(in crate::commands::graph::analysis) fn run_declared_actions_with<'a>(
                 declared.operation,
                 Some(DeclaredActionOperation::ExpandActions { .. })
             ) {
+                if let Some(pipeline) = pipeline {
+                    state.available_inputs.extend(
+                        pipeline
+                            .inputs(&target.label.id, declared.inputs.iter().map(String::as_str))
+                            .await?,
+                    );
+                }
                 if let Some(inputs) =
                     super::unmaterialized_inputs_for(&declared, &state.available_inputs)
                 {
@@ -159,6 +176,12 @@ pub(in crate::commands::graph::analysis) fn run_declared_actions_with<'a>(
                 planner = Some(engine);
                 let expansion = expansion?;
                 let mut expanded = expansion.actions;
+                anyhow::ensure!(
+                    expanded
+                        .iter()
+                        .all(|action| action.ready_outputs.is_empty()),
+                    "ready_outputs must be declared during target analysis, not deferred expansion"
+                );
                 if local_tools {
                     expose_target_tools(workspace, target, &mut expanded, Some(tool_paths)).await?;
                 }
@@ -172,6 +195,17 @@ pub(in crate::commands::graph::analysis) fn run_declared_actions_with<'a>(
                 &mut pending,
                 resources.limits().max_parallel_actions(),
             );
+            if let Some(pipeline) = pipeline {
+                let inputs = pipeline
+                    .inputs(
+                        &target.label.id,
+                        batch
+                            .iter()
+                            .flat_map(|action| action.inputs.iter().map(String::as_str)),
+                    )
+                    .await?;
+                state.available_inputs.extend(inputs);
+            }
             let input_digests = batch
                 .iter()
                 .map(|action| state.input_action_digests(action, dep_action_digests))
@@ -249,6 +283,7 @@ pub(in crate::commands::graph::analysis) fn run_declared_actions_with<'a>(
                                 output_observer,
                                 producers,
                                 worker: Some(&worker),
+                                pipeline,
                             })
                             .await;
                             let worker_id = worker.claim().await.to_string();

@@ -17,6 +17,8 @@ struct Schema {
     docs: String,
     attrs: Vec<AttrSchema>,
     has_resolver: bool,
+    #[serde(default)]
+    accepts_ready_dependencies: bool,
     deps: Vec<DepSchema>,
     providers: Vec<String>,
     capabilities: Vec<Capability>,

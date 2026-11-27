@@ -219,6 +219,14 @@ discovery.
   the contract owner must validate its semantics.
 - `deps`: `dep(...)` declarations that name expected providers.
 - `providers`: provider names this target kind can return.
+- `accepts_ready_dependencies`: `False` by default. Set `True` only when
+  analysis uses dependency providers as descriptions, without reading their
+  generated files or probing whether those files exist. Struo may analyze
+  this target before a dependency finishes. Every generated file consumed by
+  an action, including deferred expansion, must be declared in its `inputs`.
+  Struo waits for those specific outputs before hashing or executing the action.
+  Other target kinds retain the complete-dependency analysis barrier. `rule(...)`
+  accepts the same option.
 - `capabilities`: command surfaces this target kind supports, such as
   `build`, `lint`, `run`, `test`, or `metadata`.
 - `tools`: `tool(...)` declarations for workspace tools the implementation
@@ -1295,6 +1303,42 @@ and includes its identity in the action's cache key.
   generated output directories in `transitive_build_script_inputs`, not the
   source files that produced them, so downstream linking and build scripts
   consuming dependency metadata hash and materialize those generated files.
+- `ready_outputs`: optional list of early-output declarations, each with
+  `path`, `stream` (`"stdout"` or `"stderr"`), and `event` (a nonempty string map).
+  The path must also be in `outputs`. A newline-delimited JSON object on the
+  selected stream announces readiness when all event fields match exactly.
+  Lines over 64 KiB and malformed JSON are ignored. Streams cannot be redirected
+  when observed this way. Missing notifications fall back to normal completion.
+  Optional `rendered_field` selects a string field to display from JSON objects
+  on that stream instead of raw JSON; objects without that field are control
+  events and are hidden. Non-JSON output remains visible. Captured streams stay
+  unmodified in the cache, and failure messages apply the same projection.
+  The announced path must be an immutable regular file, not an intermediate
+  output, and must not overlap another action's writes or cleanup. Producers with
+  `ready_outputs` cannot contain deferred action expansion, and expansions cannot
+  declare early outputs. Do not change its bytes after notification. Struo captures
+  and hashes the file before releasing consumers, then checks its digest again
+  at producer completion.
+  Early readiness is not action success: the producer retains its resource
+  reservation and output ownership until it finishes, and a producer failure
+  still fails the build. Cacheable local commands with `sandbox = "off"` can
+  publish early; sandboxed commands, remote execution and cache hits use the
+  completion barrier.
+  Readiness does not replace declared inputs or change content-based cache keys.
+  Targets analyzed against incomplete dependencies do not reuse or record a
+  whole-target outcome; their individual actions retain normal cache lookup.
+
+  Built-in Rust libraries on Unix emit metadata and link output from one rustc
+  invocation. Library consumers use metadata when available, while linking,
+  procedural macros and build scripts still require full artifacts. Rust providers
+  expose the optional metadata path as `rmeta` and its dependency closure as
+  `transitive_metadata`; consumers fall back to `rlib` and `transitive_rlibs`
+  when metadata is unavailable. Registry source materialization and Windows
+  retain the full-artifact producer barrier.
+  Explicit diagnostic-format or color flags also retain that barrier rather than
+  overriding the requested diagnostics.
+  Incremental compiler state remains disabled; no mutable local state is hidden
+  from action cache identity.
 - `intermediate`: `False` by default. Set `True` on an action whose outputs only
   later actions of the same target read, such as a step that feeds the next
   one. When the action is a cache hit, its outputs stay in the cache instead of

@@ -21,6 +21,7 @@ mod cache_record;
 mod graph_tools;
 mod materialization;
 mod output_state;
+mod pipeline;
 mod resolution_cache;
 mod scheduler;
 mod source_digest_cache;
@@ -708,6 +709,7 @@ impl BuildSession {
                         self.event_bus.as_ref(),
                         &workers,
                         &self.producers,
+                        None,
                     )
                     .await
                     .with_context(|| format!("executing {capability} for {}", target.label.id))?;
@@ -987,6 +989,7 @@ impl BuildSession {
             suppressed_target_lifecycle: Arc::clone(&self.suppressed_target_lifecycle),
             workers,
             producers: self.producers.clone(),
+            pipeline: None,
         }
     }
 
@@ -1098,6 +1101,7 @@ struct BuildContext {
     /// plus the remote request quota, the concurrency the runner allows.
     pub workers: crate::bus_events::WorkerSlots,
     pub producers: Producers,
+    pub pipeline: Option<Arc<pipeline::Pipeline>>,
 }
 
 impl BuildContext {
@@ -1208,12 +1212,14 @@ async fn build_one(
         suppressed_target_lifecycle,
         workers,
         producers,
+        pipeline,
     } = context;
     let DependencyInputs {
         providers,
         providers_by_role,
         action_digests,
         available_inputs,
+        early_dependencies,
     } = inputs;
 
     ensure_graph_target_valid(&target)?;
@@ -1243,6 +1249,7 @@ async fn build_one(
     if let Some(key) = analysis_key
         .as_deref()
         .map(|key| target_outcomes::key(key, &action_digests, &available_inputs))
+        .filter(|_| !early_dependencies)
     {
         let reused = match target_outcomes.reuse_with_inputs(
             &target,
@@ -1380,6 +1387,7 @@ async fn build_one(
         event_bus.as_ref(),
         &workers,
         &producers,
+        pipeline.as_deref(),
     )
     .await?;
     target_outcomes.note_used(&outcome);
@@ -1404,7 +1412,7 @@ async fn build_one(
         .as_deref()
         .map(|key| target_outcomes::key(key, &action_digests, &available_inputs))
     {
-        if !requires_action_replay && discovered_complete {
+        if !requires_action_replay && discovered_complete && !early_dependencies {
             target_outcomes.record_with_inputs(
                 &target,
                 key,

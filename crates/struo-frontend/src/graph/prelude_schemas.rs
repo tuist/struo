@@ -307,6 +307,10 @@ pub(super) fn target_kind_schema_from_value(
         kind,
         docs: field_string(value, path, "docs")?,
         has_resolver,
+        accepts_ready_dependencies: DictRef::from_value(value)
+            .and_then(|dict| dict.get_str("accepts_ready_dependencies"))
+            .and_then(Value::unpack_bool)
+            .unwrap_or(false),
         attrs: field_list(value, path, "attrs")?
             .iter()
             .enumerate()
@@ -639,6 +643,7 @@ pub(super) fn script_schema() -> TargetKindSchema {
         kind: "script".to_string(),
         docs: "Adapter target that wraps existing executable automation.".to_string(),
         has_resolver: false,
+        accepts_ready_dependencies: false,
         attrs: vec![
             attr(
                 "script_path",

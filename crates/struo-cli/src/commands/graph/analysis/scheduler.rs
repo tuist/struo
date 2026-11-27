@@ -48,9 +48,21 @@ impl<'a> BuildScheduler<'a> {
         }
     }
 
-    pub(super) async fn run(self) -> Result<HashMap<String, BuildOutcome>> {
+    pub(super) async fn run(mut self) -> Result<HashMap<String, BuildOutcome>> {
         let mut state = BuildState::new(self.targets, self.reachable, self.retained)?;
         let mut running = JoinSet::new();
+        let (pipeline, mut ready_outputs) = super::pipeline::Pipeline::new(self.reachable.len());
+        self.context.pipeline = Some(Arc::new(pipeline));
+        let eligible = self
+            .targets
+            .iter()
+            .filter(|(_, target)| {
+                self.context
+                    .analyzer
+                    .target_kind_accepts_ready_dependencies(&target.kind)
+            })
+            .map(|(id, _)| id.clone())
+            .collect::<HashSet<_>>();
 
         if let Some(bus) = &self.context.event_bus {
             let suppressed = &self.context.suppressed_target_lifecycle;
@@ -71,10 +83,15 @@ impl<'a> BuildScheduler<'a> {
                 );
             }
 
-            let joined = running
-                .join_next()
-                .await
-                .context("build task set ended unexpectedly")?;
+            let joined = tokio::select! {
+                event = ready_outputs.recv() => {
+                    let event = event.context("output readiness channel closed")?;
+                    state.record_early(event, &eligible)?;
+                    self.spawn_ready(&mut state, &mut running)?;
+                    continue;
+                }
+                joined = running.join_next() => joined.context("build task set ended unexpectedly")?,
+            };
             let (target_id, outcome) = joined.context("joining graph build task")??;
             tracing::trace!(
                 target = %target_id,
@@ -135,6 +152,9 @@ impl<'a> BuildScheduler<'a> {
                 let finish = Box::pin(async {
                     let (target_id, outcome) = build.await?;
                     materialize_completed(&context, &target_id, &outcome).await?;
+                    if let Some(pipeline) = &context.pipeline {
+                        pipeline.complete(&target_id, &outcome)?;
+                    }
                     Ok((target_id, outcome))
                 });
                 crate::bus_events::observe_target_transfers(bus.as_ref(), &target_id, finish).await

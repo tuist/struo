@@ -546,6 +546,7 @@ fn select_on_non_configurable_attribute_emits_a_diagnostic() {
         kind: "demo_kind".to_string(),
         docs: "Demo kind".to_string(),
         has_resolver: false,
+        accepts_ready_dependencies: false,
         attrs: vec![attr(
             "fixed_name",
             "string",

@@ -42,6 +42,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
         let bytes = unpack_write_content(content)?;
         let action = DeclaredAction {
             input_discovery: None,
+            ready_outputs: Vec::new(),
             presentation: unpack_presentation(presentation),
             history: None,
             resources: struo_core::ResourceRequest::default(),
@@ -113,6 +114,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
         inputs.dedup();
         let action = DeclaredAction {
             input_discovery: None,
+            ready_outputs: Vec::new(),
             presentation: unpack_presentation(presentation),
             history: None,
             resources: struo_core::ResourceRequest::default(),
@@ -193,6 +195,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
         });
         let action = DeclaredAction {
             input_discovery: None,
+            ready_outputs: Vec::new(),
             presentation: unpack_presentation(presentation),
             history: None,
             resources: struo_core::ResourceRequest::default(),
@@ -274,6 +277,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
         });
         let action = DeclaredAction {
             input_discovery: None,
+            ready_outputs: Vec::new(),
             presentation: unpack_presentation(presentation),
             history: None,
             resources: struo_core::ResourceRequest::default(),
@@ -332,6 +336,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
         }
         let action = DeclaredAction {
             input_discovery: None,
+            ready_outputs: Vec::new(),
             presentation: unpack_presentation(presentation),
             history: None,
             resources: struo_core::ResourceRequest::default(),
@@ -392,6 +397,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
         };
         let action = DeclaredAction {
             input_discovery: None,
+            ready_outputs: Vec::new(),
             presentation: unpack_presentation(presentation),
             history: None,
             resources: struo_core::ResourceRequest::default(),
@@ -466,6 +472,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
         inputs.dedup();
         let action = DeclaredAction {
             input_discovery: None,
+            ready_outputs: Vec::new(),
             presentation: unpack_presentation(presentation),
             history: None,
             resources: struo_core::ResourceRequest::default(),
@@ -549,6 +556,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
         }
         let action = DeclaredAction {
             input_discovery: None,
+            ready_outputs: Vec::new(),
             presentation: unpack_presentation(presentation),
             history: None,
             resources: struo_core::ResourceRequest::default(),
@@ -627,6 +635,7 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
         }
         let action = DeclaredAction {
             input_discovery: None,
+            ready_outputs: Vec::new(),
             presentation: unpack_presentation(presentation),
             history: None,
             resources: struo_core::ResourceRequest::default(),

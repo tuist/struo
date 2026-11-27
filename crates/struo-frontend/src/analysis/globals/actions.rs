@@ -20,6 +20,7 @@ use crate::analysis::action_history::unpack_history;
 use crate::analysis::presentation::{record_action, unpack_presentation, unpack_source_files};
 use crate::analysis::store::{
     with_store_mut, DeclaredAction, DeclaredActionOperation, DeclaredInputDiscovery,
+    DeclaredReadyOutput,
 };
 use crate::analysis::transitive_set;
 use crate::analysis::values::{unpack_string_dict, unpack_string_list};
@@ -72,6 +73,7 @@ pub(super) fn action_globals(builder: &mut GlobalsBuilder) {
             if let Some(store) = store {
                 store.actions.push(DeclaredAction {
                     input_discovery: None,
+                    ready_outputs: Vec::new(),
                     presentation,
                     history: None,
                     resources: struo_core::ResourceRequest::default(),
@@ -215,6 +217,7 @@ pub(super) fn action_globals(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] intermediate: Option<bool>,
         #[starlark(require = named)] resources: Option<Value<'v>>,
         #[starlark(require = named)] input_discovery: Option<Value<'v>>,
+        #[starlark(require = named)] ready_outputs: Option<Value<'v>>,
     ) -> anyhow::Result<NoneType> {
         validate_sandbox(sandbox.as_deref())?;
         validate_network(network.as_deref())?;
@@ -270,8 +273,44 @@ pub(super) fn action_globals(builder: &mut GlobalsBuilder) {
             .filter(|value| !value.is_none())
             .map(|value| unpack_input_discovery(value, &inputs, &outputs))
             .transpose()?;
+        let ready_outputs: Vec<DeclaredReadyOutput> = ready_outputs
+            .filter(|value| !value.is_none())
+            .map(|value| -> anyhow::Result<_> {
+                Ok(serde_json::from_value(value.to_json_value()?)?)
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let mut ready_paths = std::collections::BTreeSet::new();
+        for ready in &ready_outputs {
+            struo_core::WorkspacePath::try_from(ready.path.as_str())?;
+            anyhow::ensure!(
+                outputs.contains(&ready.path),
+                "ready_outputs path must be a declared output"
+            );
+            anyhow::ensure!(
+                ready_paths.insert(&ready.path),
+                "duplicate ready_outputs path"
+            );
+            anyhow::ensure!(
+                matches!(ready.stream.as_str(), "stdout" | "stderr"),
+                "ready_outputs stream must be stdout or stderr"
+            );
+            anyhow::ensure!(
+                !ready.event.is_empty(),
+                "ready_outputs event must not be empty"
+            );
+            anyhow::ensure!(
+                if ready.stream == "stdout" {
+                    stdout.is_none()
+                } else {
+                    stderr.is_none()
+                },
+                "ready_outputs cannot observe a redirected stream"
+            );
+        }
         let action = DeclaredAction {
             input_discovery,
+            ready_outputs,
             presentation: unpack_presentation(presentation),
             history: unpack_history(history),
             resources,

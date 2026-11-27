@@ -35,6 +35,7 @@ mod output_locks;
 mod pending_outputs;
 mod preparation;
 mod provider;
+mod readiness;
 mod recovery;
 mod runner;
 
@@ -79,6 +80,7 @@ struct DeclaredActionRun<'a> {
     output_observer: Option<&'a dyn ActionOutputObserver>,
     producers: &'a Producers,
     worker: Option<&'a WorkerLease<'a>>,
+    pipeline: Option<&'a super::pipeline::Pipeline>,
 }
 
 struct DeclaredActionOutcome {
@@ -283,6 +285,7 @@ struct DeclaredActionContext<'a> {
     producers: &'a Producers,
     worker: Option<&'a WorkerLease<'a>>,
     input_discovery: Option<&'a DeclaredInputDiscovery>,
+    pipeline: Option<&'a super::pipeline::Pipeline>,
 }
 
 impl DeclaredActionContext<'_> {
@@ -322,6 +325,7 @@ struct DeclaredActionFailure<'a> {
     argv: &'a [String],
     arg_files: &'a [DeclaredArgFile],
     result: &'a ActionResult,
+    ready_outputs: &'a [struo_frontend::analysis::DeclaredReadyOutput],
 }
 
 #[derive(Debug, Serialize)]
@@ -879,6 +883,7 @@ async fn run_declared_action(run: DeclaredActionRun<'_>) -> Result<DeclaredActio
         output_observer,
         producers,
         worker,
+        pipeline,
     } = run;
     let identifier_for_error = declared
         .identifier
@@ -983,6 +988,7 @@ async fn run_declared_action(run: DeclaredActionRun<'_>) -> Result<DeclaredActio
         producers,
         worker,
         input_discovery,
+        pipeline,
     };
 
     let execute_started = std::time::Instant::now();
@@ -998,6 +1004,14 @@ async fn run_declared_action(run: DeclaredActionRun<'_>) -> Result<DeclaredActio
             })
     };
     let execute_ms = i64::try_from(execute_started.elapsed().as_millis()).unwrap_or(i64::MAX);
+    tracing::debug!(
+        target = %target_id,
+        action_index = index,
+        identifier = %identifier_for_error,
+        prepare_ms,
+        execute_ms,
+        "finished declared action phases"
+    );
     outcome.map(|mut o| {
         o.prepare_ms = prepare_ms;
         o.execute_ms = execute_ms;
@@ -1102,6 +1116,7 @@ async fn run_cacheable_declared_action(
                 argv: context.argv,
                 arg_files: context.arg_files,
                 result: &outcome.result,
+                ready_outputs: &declared.ready_outputs,
             })
             .await,
             exit_code,
@@ -1440,16 +1455,7 @@ async fn execute_declared_cache_miss(
     };
     let result = struo_cas::request_metadata::with_action(
         label,
-        provider::execute(
-            action,
-            context.workspace,
-            context.cache,
-            if local { context.output_observer } else { None },
-            lease.clone(),
-            &declared.clean_paths,
-            &declared.create_dirs,
-            &declared.arg_files,
-        ),
+        readiness::execute(context, action, declared, lease.clone()),
     )
     .await
     .with_context(|| {
@@ -1465,6 +1471,7 @@ async fn execute_declared_cache_miss(
             context.output_observer,
             context.workspace,
             &lease,
+            &declared.ready_outputs,
         )
         .await?;
     }
@@ -1641,8 +1648,7 @@ async fn run_uncacheable_declared_action(
             context.index, context.target_id, context.identifier
         )
     })?;
-    let exit_code = result.exit_code;
-    if exit_code != 0 {
+    if result.exit_code != 0 {
         record_declared_action_evidence(
             &context,
             &action,
@@ -1657,13 +1663,14 @@ async fn run_uncacheable_declared_action(
                 identifier: context.identifier,
                 index: context.index,
                 target: context.target_id,
-                exit_code,
+                exit_code: result.exit_code,
                 argv: context.argv,
                 arg_files: context.arg_files,
                 result: &result,
+                ready_outputs: &declared.ready_outputs,
             })
             .await,
-            exit_code,
+            exit_code: result.exit_code,
             was_cached: false,
         }
         .into());
@@ -1762,13 +1769,28 @@ async fn declared_action_failure_message(failure: DeclaredActionFailure<'_>) -> 
         argv,
         arg_files,
         result,
+        ready_outputs,
     } = failure;
     let mut message =
         format!("{identifier} ({index}) failed for {target} with exit code {exit_code}");
     append_declared_argv(&mut message, argv);
     append_declared_arg_files(&mut message, arg_files);
-    append_captured_output(cache, &mut message, "stdout", result.stdout.as_ref()).await;
-    append_captured_output(cache, &mut message, "stderr", result.stderr.as_ref()).await;
+    append_captured_output(
+        cache,
+        &mut message,
+        "stdout",
+        result.stdout.as_ref(),
+        readiness::rendered_field(ready_outputs, "stdout"),
+    )
+    .await;
+    append_captured_output(
+        cache,
+        &mut message,
+        "stderr",
+        result.stderr.as_ref(),
+        readiness::rendered_field(ready_outputs, "stderr"),
+    )
+    .await;
     message
 }
 
@@ -1828,6 +1850,7 @@ async fn append_captured_output(
     message: &mut String,
     name: &str,
     digest: Option<&Digest>,
+    rendered_field: Option<&str>,
 ) {
     let Some(digest) = digest else {
         return;
@@ -1859,7 +1882,11 @@ async fn append_captured_output(
     message.push_str(&prefix);
     message.push_str(name);
     message.push_str(":\n");
-    message.push_str(&String::from_utf8_lossy(&bytes));
+    if let Some(field) = rendered_field {
+        message.push_str(&String::from_utf8_lossy(&readiness::render(&bytes, field)));
+    } else {
+        message.push_str(&String::from_utf8_lossy(&bytes));
+    }
 }
 
 async fn render_execution_error(error: struo_core::Error, cache: &CacheProvider) -> anyhow::Error {
@@ -1867,8 +1894,8 @@ async fn render_execution_error(error: struo_core::Error, cache: &CacheProvider)
         return error.into();
     };
     let mut message = String::new();
-    append_captured_output(cache, &mut message, "stdout", stdout.as_ref()).await;
-    append_captured_output(cache, &mut message, "stderr", stderr.as_ref()).await;
+    append_captured_output(cache, &mut message, "stdout", stdout.as_ref(), None).await;
+    append_captured_output(cache, &mut message, "stderr", stderr.as_ref(), None).await;
     let error = anyhow::Error::new(error);
     if message.is_empty() {
         error

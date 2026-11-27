@@ -51,7 +51,7 @@ pub use store::{
     with_active_store, AnalysisObservations, AnalysisStore, CachedToolCommand, CommandPolicy,
     DeclaredAction, DeclaredActionOperation, DeclaredArchiveEntry, DeclaredArchiveEntryKind,
     DeclaredArchiveFormat, DeclaredArgFile, DeclaredArgFileFormat, DeclaredCopyPathMode,
-    DeclaredInputDiscovery, DeclaredPreparePathMode, Observation,
+    DeclaredInputDiscovery, DeclaredPreparePathMode, DeclaredReadyOutput, Observation,
 };
 pub use transitive_set::{transitive_sets_available, Node, TransitiveSets};
 /// If `value` is the canonical select-shape Map (`{ "select": { ... }

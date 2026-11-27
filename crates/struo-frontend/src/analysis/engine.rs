@@ -267,6 +267,13 @@ impl AnalysisEngine {
         self.target_kind_callbacks.has_impl(kind)
     }
 
+    pub fn target_kind_accepts_ready_dependencies(&self, kind: &str) -> bool {
+        self.target_kind_callbacks
+            .by_kind
+            .get(kind)
+            .is_some_and(|flags| flags.accepts_ready_dependencies)
+    }
+
     #[must_use]
     pub fn target_kind_has_resolver(&self, kind: &str) -> bool {
         self.target_kind_schemas
@@ -599,6 +606,7 @@ struct TargetKindCallbacks {
 struct TargetKindCallbackFlags {
     export_name: String,
     has_impl: bool,
+    accepts_ready_dependencies: bool,
 }
 
 impl TargetKindCallbacks {
@@ -719,6 +727,10 @@ fn compile_target_kind_callbacks(
                     TargetKindCallbackFlags {
                         export_name: export.name.to_string(),
                         has_impl: impl_value.is_some_and(|value| !value.is_none()),
+                        accepts_ready_dependencies: dict
+                            .get_str("accepts_ready_dependencies")
+                            .and_then(Value::unpack_bool)
+                            .unwrap_or(false),
                     },
                 )
                 .is_some()

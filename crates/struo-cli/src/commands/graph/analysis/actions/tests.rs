@@ -169,6 +169,7 @@ fn missing_declared_inputs_reports_only_absent_paths() {
     std::fs::write(workspace.path().join("present.rs"), b"fn main() {}").unwrap();
     let declared = DeclaredAction {
         input_discovery: None,
+        ready_outputs: Vec::new(),
         resources: ResourceRequest::default(),
         history: None,
         presentation: None,
@@ -243,6 +244,7 @@ fn declared_action_uses_direct_argv_without_creating_output_parents() {
     let workspace = tempfile::tempdir().unwrap();
     let declared = DeclaredAction {
         input_discovery: None,
+        ready_outputs: Vec::new(),
         resources: ResourceRequest::default(),
         operation: None,
         history: None,
@@ -348,6 +350,7 @@ async fn declared_command_setup_cleans_paths_and_creates_dirs() {
     std::fs::write(workspace.path().join(".struo/out/stale-file.txt"), b"stale").unwrap();
     let declared = DeclaredAction {
         input_discovery: None,
+        ready_outputs: Vec::new(),
         resources: ResourceRequest::default(),
         operation: None,
         argv: vec!["tool".to_string()].into(),
@@ -443,6 +446,7 @@ async fn declared_action_failure_message_appends_captured_output() {
         argv: &[],
         arg_files: &[],
         result: &result,
+        ready_outputs: &[],
     })
     .await;
 
@@ -474,6 +478,7 @@ async fn declared_action_failure_message_truncates_large_output() {
         argv: &[],
         arg_files: &[],
         result: &result,
+        ready_outputs: &[],
     })
     .await;
 
@@ -523,6 +528,7 @@ async fn declared_action_failure_message_appends_arg_file_context() {
         argv: &command_argv,
         arg_files: &arg_files,
         result: &result,
+        ready_outputs: &[],
     })
     .await;
 
@@ -545,8 +551,8 @@ async fn append_captured_output_ignores_missing_digest_and_missing_blob() {
     let missing = Digest::of_bytes(b"missing");
     let mut message = "base".to_string();
 
-    append_captured_output(&cache, &mut message, "stdout", None).await;
-    append_captured_output(&cache, &mut message, "stdout", Some(&missing)).await;
+    append_captured_output(&cache, &mut message, "stdout", None, None).await;
+    append_captured_output(&cache, &mut message, "stdout", Some(&missing), None).await;
 
     assert_eq!(message, "base");
 }
@@ -909,6 +915,7 @@ async fn single_action_outcome_preserves_streams_for_capability_evidence() {
     let analysis = AnalysisResult {
         actions: vec![DeclaredAction {
             input_discovery: None,
+            ready_outputs: Vec::new(),
             resources: ResourceRequest::default(),
             operation: None,
             argv: vec![
@@ -1076,6 +1083,7 @@ fn cached_test_analysis(dependency_path: &str) -> AnalysisResult {
     AnalysisResult {
         actions: vec![DeclaredAction {
             input_discovery: None,
+            ready_outputs: Vec::new(),
             resources: ResourceRequest::default(),
             operation: None,
             argv: vec![
@@ -1542,6 +1550,7 @@ async fn declared_actions_record_success_evidence_per_action() {
     };
     let action = |name: &str| DeclaredAction {
         input_discovery: None,
+        ready_outputs: Vec::new(),
         resources: ResourceRequest::default(),
         history: None,
         presentation: None,
@@ -1652,6 +1661,7 @@ async fn declared_action_can_skip_prior_same_target_digests() {
         actions: vec![
             DeclaredAction {
                 input_discovery: None,
+                ready_outputs: Vec::new(),
                 resources: ResourceRequest::default(),
                 operation: None,
                 argv: vec![
@@ -1685,6 +1695,7 @@ async fn declared_action_can_skip_prior_same_target_digests() {
             },
             DeclaredAction {
                 input_discovery: None,
+                ready_outputs: Vec::new(),
                 resources: ResourceRequest::default(),
                 operation: None,
                 argv: vec![
@@ -1820,6 +1831,7 @@ fn input_digest_changes_with_toolchain_identity() {
     std::fs::write(workspace.path().join("input.txt"), b"content").unwrap();
     let declared = DeclaredAction {
         input_discovery: None,
+        ready_outputs: Vec::new(),
         resources: ResourceRequest::default(),
         operation: None,
         argv: vec!["tool".to_string()].into(),
@@ -1893,6 +1905,7 @@ fn input_fingerprint_explains_inputs_without_exposing_values() {
     std::fs::write(workspace.path().join("input.txt"), b"content").unwrap();
     let declared = DeclaredAction {
         input_discovery: None,
+        ready_outputs: Vec::new(),
         resources: ResourceRequest::default(),
         operation: None,
         history: None,
@@ -2022,6 +2035,7 @@ fn input_digest_changes_with_command_setup_paths() {
     let workspace = tempfile::tempdir().unwrap();
     let declared = DeclaredAction {
         input_discovery: None,
+        ready_outputs: Vec::new(),
         resources: ResourceRequest::default(),
         operation: None,
         argv: vec!["tool".to_string()].into(),
@@ -2067,6 +2081,7 @@ fn input_digest_changes_with_declared_arg_files() {
     std::fs::write(workspace.path().join("input.txt"), b"content").unwrap();
     let declared = DeclaredAction {
         input_discovery: None,
+        ready_outputs: Vec::new(),
         resources: ResourceRequest::default(),
         operation: None,
         history: None,
@@ -2118,6 +2133,7 @@ fn input_digest_ignores_unrelated_module_source_changes() {
     std::fs::write(workspace.path().join("input.txt"), b"content").unwrap();
     let declared = DeclaredAction {
         input_discovery: None,
+        ready_outputs: Vec::new(),
         resources: ResourceRequest::default(),
         operation: None,
         argv: vec!["tool".to_string()].into(),
@@ -2168,6 +2184,7 @@ fn same_target_generated_input_uses_its_content_digest() {
     let input = ".struo/out/fingerprint.txt";
     let declared = DeclaredAction {
         input_discovery: None,
+        ready_outputs: Vec::new(),
         resources: ResourceRequest::default(),
         operation: None,
         argv: vec!["tool".to_string()].into(),
@@ -2233,6 +2250,7 @@ fn dependency_generated_input_uses_its_content_digest() {
     let input = ".struo/out/dependency.txt";
     let declared = DeclaredAction {
         input_discovery: None,
+        ready_outputs: Vec::new(),
         resources: ResourceRequest::default(),
         operation: None,
         argv: vec!["tool".to_string()].into(),
@@ -2309,6 +2327,7 @@ fn input_digest_ignores_unconsumed_dependency_digests() {
     std::fs::write(workspace.path().join("input.txt"), b"content").unwrap();
     let declared = DeclaredAction {
         input_discovery: None,
+        ready_outputs: Vec::new(),
         resources: ResourceRequest::default(),
         operation: None,
         argv: vec!["tool".to_string()].into(),
@@ -2637,6 +2656,7 @@ fn shell_action(
 ) -> DeclaredAction {
     DeclaredAction {
         input_discovery: None,
+        ready_outputs: Vec::new(),
         resources: ResourceRequest::default(),
         operation: None,
         argv: vec!["/bin/sh".to_string(), "-c".to_string(), script.to_string()].into(),

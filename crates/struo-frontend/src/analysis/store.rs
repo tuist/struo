@@ -220,6 +220,18 @@ pub struct DeclaredAction {
     pub source_files: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_discovery: Option<DeclaredInputDiscovery>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ready_outputs: Vec<DeclaredReadyOutput>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DeclaredReadyOutput {
+    pub path: String,
+    pub stream: String,
+    pub event: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rendered_field: Option<String>,
 }
 
 /// Inputs a command reports reading, so the cache can leave the ones it did

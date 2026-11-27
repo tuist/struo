@@ -123,7 +123,9 @@ def _version_manager_tool(name, path):
 def _native_project_generated_dirs():
     return ["_build", "deps", "target", "third_party", "vendor"]
 
-def target_kind(kind = None, docs = "", attrs = [], deps = [], providers = [], capabilities = [], examples = [], impl = None, resolver = None, tools = [], source_references = []):
+def target_kind(kind = None, docs = "", attrs = [], deps = [], providers = [], capabilities = [], examples = [], impl = None, resolver = None, tools = [], source_references = [], accepts_ready_dependencies = False):
+    if type(accepts_ready_dependencies) != "bool":
+        fail("accepts_ready_dependencies must be a bool")
     return {
         "_struo_target_kind": True,
         "kind": kind,
@@ -137,9 +139,10 @@ def target_kind(kind = None, docs = "", attrs = [], deps = [], providers = [], c
         "source_references": source_references,
         "impl": impl,
         "resolver": resolver,
+        "accepts_ready_dependencies": accepts_ready_dependencies,
     }
 
-def rule(kind = None, docs = "", attrs = [], deps = [], providers = [], capabilities = [], examples = [], impl = None, resolver = None, tools = [], source_references = []):
+def rule(kind = None, docs = "", attrs = [], deps = [], providers = [], capabilities = [], examples = [], impl = None, resolver = None, tools = [], source_references = [], accepts_ready_dependencies = False):
     return target_kind(
         kind = kind,
         docs = docs,
@@ -152,6 +155,7 @@ def rule(kind = None, docs = "", attrs = [], deps = [], providers = [], capabili
         resolver = resolver,
         tools = tools,
         source_references = source_references,
+        accepts_ready_dependencies = accepts_ready_dependencies,
     )
 
 def _resolver_snapshot_inputs(files, excluded_paths = []):

@@ -7206,8 +7206,13 @@ result = repr(_android_native_libraries(consumer, consumer["deps"]))
     assert_eq!(core_actions, 1);
     let left = action_by_identifier(&store, "Left:rustc:android");
     assert!(left.argv.iter().any(|arg| {
-        arg.starts_with("core=") && arg.contains("rust-mobile/Core/android/libcore-CORE.rlib")
+        arg.starts_with("core=")
+            && arg.contains("rust-mobile/Core/android/metadata/libcore-CORE.rmeta")
     }));
+    assert!(left
+        .inputs
+        .iter()
+        .any(|path| path.ends_with("rust-mobile/Core/android/metadata/libcore-CORE.rmeta")));
     let root = action_by_identifier(&store, "Root:rustc:android");
     assert!(root.argv.iter().any(|arg| arg.starts_with("left=")
         && Path::new(arg)

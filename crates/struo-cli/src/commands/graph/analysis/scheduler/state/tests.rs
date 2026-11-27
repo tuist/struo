@@ -102,6 +102,7 @@ fn repeated_roles_keep_an_outcome_alive_until_every_edge_is_read() {
     let mut state = BuildState::new(&targets, &reachable, &HashSet::new()).unwrap();
     state.record_completion("dep", outcome()).unwrap();
     assert_eq!(state.remaining_readers["dep"], 3);
+    assert_eq!(state.remaining_deps["root"], 0);
 
     let inputs = state.dependency_inputs(&root, &reachable).unwrap();
 

@@ -238,6 +238,7 @@ impl Workspace {
             bus,
             &workers,
             producers,
+            None,
         )
         .await
     }

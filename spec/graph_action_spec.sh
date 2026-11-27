@@ -313,7 +313,7 @@ EOF
       struo --format json build tools/demo/Task >/dev/null || return
     done
     latest_log="$(ls -t "$(struo_log_dir)"/*.log | head -1)"
-    jq -r 'select(.fields.identifier == "consumer") | .fields.cache' "$latest_log"
+    jq -r 'select(.fields.identifier == "consumer" and .fields.cache != null) | .fields.cache' "$latest_log"
   }
 
   It 'keeps other outputs of uncached sandboxed actions restorable, so cacheable consumers hit'

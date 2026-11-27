@@ -161,6 +161,8 @@ pub struct TargetKindSchema {
     /// Whether this target kind expands locked graph data before validation.
     #[serde(skip)]
     pub(crate) has_resolver: bool,
+    #[serde(default)]
+    pub accepts_ready_dependencies: bool,
     /// Dependency expectations for this target kind.
     pub deps: Vec<DepSchema>,
     /// Providers emitted by targets of this kind.

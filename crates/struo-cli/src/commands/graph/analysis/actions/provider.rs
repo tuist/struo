@@ -58,10 +58,12 @@ pub(super) async fn replay_output(
     observer: Option<&dyn ActionOutputObserver>,
     workspace: &Path,
     lease: &ExecutionPermit,
+    ready_outputs: &[struo_frontend::analysis::DeclaredReadyOutput],
 ) -> Result<()> {
     let Some(observer) = observer else {
         return Ok(());
     };
+    let (observer, _) = super::readiness::Observer::new(ready_outputs, Some(observer));
     let parent = workspace.join(".struo/tmp");
     tokio::fs::create_dir_all(&parent).await?;
     for (digest, stream) in [
@@ -89,5 +91,6 @@ pub(super) async fn replay_output(
             observer.observe(stream, &bytes);
         }
     }
+    observer.finish();
     Ok(())
 }

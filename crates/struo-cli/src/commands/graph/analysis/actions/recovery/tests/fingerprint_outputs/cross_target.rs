@@ -47,6 +47,7 @@ async fn dependency_fingerprint_cannot_be_restored_as_a_file_in_another_target()
         None,
         &workers,
         &producers,
+        None,
     )
     .await
     .unwrap_err();
