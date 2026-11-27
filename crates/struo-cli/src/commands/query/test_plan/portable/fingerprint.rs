@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
@@ -219,6 +219,7 @@ fn hash_target_inputs(
         }
     }
     let mut hashed_inputs = BTreeSet::new();
+    let mut file_digests = BTreeMap::new();
     for (input, include_runtime) in inputs
         .iter()
         .map(|input| (input, true))
@@ -231,6 +232,7 @@ fn hash_target_inputs(
             path.as_str(),
             include_runtime,
             &mut hashed_inputs,
+            &mut file_digests,
         )
         .with_context(|| format!("hashing portable discovery input `{input}`"))?;
     }
@@ -243,6 +245,7 @@ fn hash_input(
     input: &str,
     include_runtime: bool,
     hashed_inputs: &mut BTreeSet<PathBuf>,
+    file_digests: &mut BTreeMap<PathBuf, struo_cas::Digest>,
 ) -> Result<()> {
     let root = workspace.join(input);
     for entry in walkdir::WalkDir::new(&root)
@@ -273,11 +276,19 @@ fn hash_input(
                 entry.file_type().is_file(),
                 "discovery input must be a file or directory"
             );
+            // Package managers such as pnpm link one package into many
+            // places, so each linked file is read once.
             let resolved = std::fs::canonicalize(entry.path())?;
-            let content = struo_core::digest_source_path(
-                workspace,
-                resolved.to_str().context("non-UTF-8 discovery input")?,
-            )?;
+            let content = if let Some(content) = file_digests.get(&resolved) {
+                *content
+            } else {
+                let content = struo_core::digest_source_path(
+                    workspace,
+                    resolved.to_str().context("non-UTF-8 discovery input")?,
+                )?;
+                file_digests.insert(resolved, content);
+                content
+            };
             digest.push_keyed(b"file", &content);
         }
     }

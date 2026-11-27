@@ -1,6 +1,18 @@
 _JAVASCRIPT_TOOL = tool("node", executables = ["node"])
 _VITEST_TOOL = tool("vitest", executables = ["vitest"])
 _JEST_TOOL = tool("jest", executables = ["jest"])
+_JAVASCRIPT_TEST_CONFIG = ["package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"]
+_JAVASCRIPT_TEST_DEPENDENCIES = ["node_modules/**/*"]
+# Test runners never read these, and they differ between installs or
+# checkouts: pnpm's install state carries a timestamp and the absolute store
+# path, pnpm's `.bin` shims embed absolute paths, and tools write their own
+# caches under `.cache`. The runner is resolved through its package, not `.bin`.
+_JAVASCRIPT_PACKAGE_MANAGER_STATE = [
+    "**/node_modules/.modules.yaml",
+    "**/node_modules/.pnpm-workspace-state*.json",
+    "**/node_modules/.bin/**",
+    "**/node_modules/.cache/**",
+]
 
 def _javascript_attr(ctx, name, default):
     return _configured_attr(ctx, name, default)
@@ -59,11 +71,34 @@ def _javascript_build_impl(ctx):
         "HOME": execution_path(home),
         "PATH": _parent_dir(node) + ":" + _parent_dir(tools["executable"]) + ":/usr/bin:/bin",
     }
+    if tools["name"] == "pnpm":
+        # The dependency target already installed this tree and leaves out
+        # pnpm's install state, which `run` and `exec` would otherwise check
+        # and answer with a fresh install. pnpm sets the same opt-out, under
+        # its pnpm 10 and pnpm 11 names, for the scripts it runs itself.
+        env["npm_config_verify_deps_before_run"] = "false"
+        env["pnpm_config_verify_deps_before_run"] = "false"
     env.update(_javascript_attr(ctx, "env", {}))
     args = _javascript_attr(ctx, "args", [])
-    argv = [tools["executable"], "run", _javascript_attr(ctx, "script", "")]
-    if args and tools["name"] == "npm":
-        argv.append("--")
+    script = _javascript_attr(ctx, "script", "")
+    command = _javascript_attr(ctx, "command", "")
+    if bool(script) == bool(command):
+        fail(ctx["label"]["id"] + ": set exactly one of `script`, a package.json script, or `command`, an installed package binary such as `expo`")
+    if script:
+        argv = [tools["executable"], "run", script]
+        if args and tools["name"] == "npm":
+            argv.append("--")
+    elif tools["name"] == "npm":
+        # `--no` refuses to download a binary the lockfile did not install.
+        argv = [tools["executable"], "exec", "--no", "--", command]
+    elif tools["name"] == "pnpm":
+        argv = [tools["executable"], "exec", command]
+    elif tools["name"] == "yarn" and not tools.get("version", "").startswith("1."):
+        argv = [tools["executable"], "run", "--binaries-only", command]
+    else:
+        # Yarn 1 and Bun run installed binaries through `run`, where a
+        # package.json script of the same name takes precedence.
+        argv = [tools["executable"], "run", command]
     argv.extend(args)
     run_action(
         display_name = "Build JavaScript package · " + ctx["label"]["name"],
@@ -83,10 +118,11 @@ def _javascript_build_impl(ctx):
 javascript_build = target_kind(
     docs = "Runs a package manager script in a private copy of a locked JavaScript workspace and caches its declared build products.",
     attrs = [
-        attr("script", "string", required = True, docs = "Package script passed to the locked dependency set's package manager with `run`.", configurable = False),
+        attr("script", "string", default = "\"\"", docs = "Package script passed to the locked dependency set's package manager with `run`. Set exactly one of `script` and `command`.", configurable = False),
+        attr("command", "string", default = "\"\"", docs = "Installed package binary, such as `expo`, run through the package manager: `npm exec --no --`, `pnpm exec`, or `run` for Yarn and Bun. Set exactly one of `script` and `command`.", configurable = False),
         attr("package_dir", "string", default = "\".\"", docs = "Workspace-relative package directory used as the working directory.", configurable = False),
         attr("outputs", "list<string>", required = True, docs = "Build product paths relative to the staged workspace root, not package_dir.", configurable = False),
-        attr("args", "list<string>", default = "[]", docs = "Additional script arguments.", configurable = True),
+        attr("args", "list<string>", default = "[]", docs = "Additional script or command arguments.", configurable = True),
         attr("env", "map<string,string>", default = "{}", docs = "Explicit non-secret build environment.", configurable = True),
         attr("node", "string", default = "\"node\"", docs = "Node.js executable.", configurable = False),
     ],
@@ -148,15 +184,16 @@ def _javascript_runner(ctx, runner_type, default):
     fail(ctx["label"]["id"] + ": " + runner_type + " runner was not found; install it in the workspace or make `" + runner_type + "` available on PATH")
 
 def _javascript_discovery_inputs(ctx):
-    return _unique(glob(ctx["srcs"]) + _file_globs(_javascript_attr(ctx, "config", [])) + _file_globs(_javascript_attr(ctx, "data", [])))
+    return _unique(glob(ctx["srcs"]) + _file_globs(_javascript_attr(ctx, "config", _JAVASCRIPT_TEST_CONFIG)) + _file_globs(_javascript_attr(ctx, "data", [])))
 
 def _javascript_test_inputs(ctx, runner, runner_is_workspace_input, discovery_inputs):
     runner_inputs = glob([runner]) if runner_is_workspace_input else []
-    return _unique(discovery_inputs + _file_globs(_javascript_attr(ctx, "dependencies", [])) + runner_inputs)
+    return _unique(discovery_inputs + _file_globs(_javascript_attr(ctx, "dependencies", _JAVASCRIPT_TEST_DEPENDENCIES), exclude = _JAVASCRIPT_PACKAGE_MANAGER_STATE) + runner_inputs)
 
 def _javascript_test_adapter():
     return _javascript_coverage_adapter() + '''import { spawnSync } from "node:child_process"
 import fs from "node:fs"
+import { createRequire } from "node:module"
 import path from "node:path"
 
 const workspaceRoot = process.cwd()
@@ -226,7 +263,37 @@ function relativeFile(value) {
   return relative.split(path.sep).join("/")
 }
 
-function main() {
+// Jest indexes every file below its roots, including package copies Struo
+// stages under `.struo`, and a command-line ignore list replaces the
+// configured one. When the runner is Jest's own entry point, resolve its
+// configuration the way jest-cli does and pass the configured ignores along
+// with Struo's state directory. A wrapper runner or a multi-project
+// configuration whose projects ignore different paths cannot be expressed as
+// one command-line list, so those keep their own configuration.
+async function jestIgnoreArgs(options) {
+  const runner = fs.realpathSync(options.runner).split(path.sep).join("/")
+  if (!/\/(jest|jest-cli)\/bin\/jest\.js$/.test(runner)) return []
+  let configs
+  try {
+    const fromCli = createRequire(createRequire(runner).resolve("jest-cli"))
+    const argv = await fromCli("yargs")(options.runnerArgs).options(fromCli("jest-cli").yargsOptions).argv
+    const projects = argv.projects?.length ? argv.projects : [process.cwd()]
+    ;({ configs } = await fromCli("jest-config").readConfigs(argv, projects))
+  } catch (error) {
+    console.error("struo: could not read the Jest configuration, so Struo's state directory stays visible to Jest: " + (error instanceof Error ? error.message : String(error)))
+    return []
+  }
+  const configured = configs.map(config => config.modulePathIgnorePatterns || [])
+  if (configs.length > 1 && configured.some(patterns => patterns.length)) {
+    console.error("struo: Jest projects configure their own modulePathIgnorePatterns, so Struo's state directory stays visible to Jest")
+    return []
+  }
+  const patterns = new Set(configured.flat())
+  patterns.add("^" + escapePattern(path.join(workspaceRoot, ".struo") + path.sep))
+  return [...patterns].map(pattern => "--modulePathIgnorePatterns=" + pattern)
+}
+
+async function main() {
   const options = parseArgs(process.argv.slice(2))
   if (options.cwd) {
     for (const key of ['results', 'native_results', 'coverage_hook']) {
@@ -248,7 +315,7 @@ function main() {
     runnerArgs = ["run", ...options.runnerArgs, "--no-cache", "--reporter=json", "--outputFile=" + options.native_results, ...files]
     if (namePattern) runnerArgs.push("--testNamePattern", namePattern)
   } else {
-    runnerArgs = [...options.runnerArgs, "--no-cache", "--runInBand", "--json", "--outputFile=" + options.native_results, ...(files.length ? ["--runTestsByPath", ...files] : [])]
+    runnerArgs = [...options.runnerArgs, ...await jestIgnoreArgs(options), "--no-cache", "--runInBand", "--json", "--outputFile=" + options.native_results, ...(files.length ? ["--runTestsByPath", ...files] : [])]
     if (namePattern) runnerArgs.push("--testNamePattern", namePattern)
   }
   const command = options.runner_via_node === "true" ? process.execPath : options.runner
@@ -351,7 +418,7 @@ function main() {
 }
 
 try {
-  process.exitCode = main()
+  process.exitCode = await main()
 } catch (error) {
   console.error(error instanceof Error ? error.stack : String(error))
   process.exitCode = 2

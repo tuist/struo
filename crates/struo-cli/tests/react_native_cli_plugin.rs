@@ -44,6 +44,7 @@ exports.bundleCommand = {
     {name: '--sourcemap-output <string>'},
     {name: '--assets-dest <string>'},
     {name: '--reset-cache', default: false},
+    {name: '--max-workers <number>', parse: Number},
     {name: '--config <string>', parse: val => path.resolve(val)},
     {name: '--resolver-option <string...>', parse: (val, previous = []) => previous.concat([val])},
   ],
@@ -58,6 +59,8 @@ exports.bundleCommand = {
       resetCache: args.resetCache,
       entry: fs.readFileSync(path.resolve(ctx.root, args.entryFile), 'utf8'),
       resolverOption: args.resolverOption,
+      maxWorkers: args.maxWorkers,
+      tmpdir: require('os').tmpdir(),
     }));
     fs.writeFileSync(args.sourcemapOutput, '{}');
   },
@@ -94,8 +97,14 @@ struct Workspace {
     home: tempfile::TempDir,
 }
 
+const LOCK: &str = r#"{"lockfileVersion":3,"packages":{"node_modules/react-native":{"version":"0.86.0"},"node_modules/hermes-compiler":{"version":"0.14.0"}}}"#;
+
 impl Workspace {
     fn new(targets: &str) -> Self {
+        Self::with_install(LOCK, INSTALL, targets)
+    }
+
+    fn with_install(lock: &str, install: &str, targets: &str) -> Self {
         let root = tempfile::tempdir().unwrap();
         let node = Command::new("node")
             .args(["-p", "process.execPath"])
@@ -112,11 +121,8 @@ impl Workspace {
         std::fs::set_permissions(&manager, std::fs::Permissions::from_mode(0o755)).unwrap();
         for (path, contents) in [
             ("package.json", "{}\n"),
-            (
-                "package-lock.json",
-                r#"{"lockfileVersion":3,"packages":{"node_modules/react-native":{"version":"0.86.0"},"node_modules/hermes-compiler":{"version":"0.14.0"}}}"#,
-            ),
-            ("install.js", INSTALL),
+            ("package-lock.json", lock),
+            ("install.js", install),
             (
                 "index.js",
                 "export default function App() { return null }\n",
@@ -149,7 +155,17 @@ package_manager_executable = {manager:?}
     }
 
     fn struo(&self, args: &[&str]) -> Output {
-        let output = Command::new(env!("CARGO_BIN_EXE_struo"))
+        let output = self.struo_unchecked(args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    }
+
+    fn struo_unchecked(&self, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_struo"))
             .arg("-C")
             .arg(self.root.path())
             .args(["--memory-limit", "512MiB"])
@@ -162,13 +178,7 @@ package_manager_executable = {manager:?}
             .env("STRUO_CACHE_PROVIDER", "local")
             .env("STRUO_CHANGE_TRACKER", "0")
             .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        output
+            .unwrap()
     }
 
     fn read_json(&self, path: &str) -> serde_json::Value {
@@ -194,8 +204,22 @@ bundle_args = ["--resolver-option", "a=1", "--resolver-option", "b=2"]
 "#,
     );
     workspace.struo(&["build", "Bundle"]);
+    let mut bundle = workspace.read_json(".struo/out/Bundle/bundle/main.jsbundle");
+    // Metro keeps its cache under `os.tmpdir()` and `--reset-cache` clears it,
+    // so a shared host temporary directory lets concurrent bundles wipe each
+    // other's cache.
+    let tmpdir = bundle["tmpdir"].take();
+    let tmpdir = std::path::Path::new(tmpdir.as_str().unwrap());
+    let private = std::path::Path::new(".struo/tmp/analysis/Bundle/tmp");
+    assert!(
+        tmpdir == workspace.root.path().join(private)
+            || tmpdir == workspace.root.path().canonicalize().unwrap().join(private),
+        "Metro temporary directory {} is not the target's private directory",
+        tmpdir.display(),
+    );
+    bundle.as_object_mut().unwrap().remove("tmpdir");
     assert_eq!(
-        workspace.read_json(".struo/out/Bundle/bundle/main.jsbundle"),
+        bundle,
         serde_json::json!({
             "platform": "android",
             "dev": false,
@@ -203,8 +227,33 @@ bundle_args = ["--resolver-option", "a=1", "--resolver-option", "b=2"]
             "resetCache": true,
             "entry": "export default function App() { return null }\n",
             "resolverOption": ["a=1", "b=2"],
+            // Metro otherwise starts a worker per core, whatever memory the
+            // action reserved.
+            "maxWorkers": 4,
         })
     );
+}
+
+#[test]
+fn bundle_rejects_max_workers_in_bundle_args() {
+    let workspace = Workspace::new(
+        r#"
+[[target]]
+name = "Bundle"
+kind = "react_native_bundle"
+srcs = ["index.js"]
+deps = ["./Dependencies"]
+[target.attrs]
+platform = "android"
+hermes = false
+node = {node}
+bundle_args = ["--max-workers=16"]
+"#,
+    );
+    let output = workspace.struo_unchecked(&["build", "Bundle"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("set `max_workers` instead"), "{stderr}");
 }
 
 #[test]
@@ -234,4 +283,61 @@ node = {node}
             "clientLogs": false,
         })
     );
+}
+
+// Through React Native 0.82, `hermesc` ships inside `react-native/sdks/hermesc`
+// and the lockfile has no `hermes-compiler` with a binary: 0.81 has none, and
+// 0.82 depends on an empty `hermes-compiler@0.0.0` placeholder.
+#[test]
+fn bundle_compiles_hermes_with_the_compiler_bundled_in_react_native() {
+    let hermesc = r"#!/usr/bin/env node
+const fs = require('fs');
+const args = process.argv.slice(2);
+const out = args[args.indexOf('-out') + 1];
+fs.writeFileSync(out, 'bytecode:' + fs.readFileSync(args[args.indexOf('-out') + 2], 'utf8'));
+fs.writeFileSync(out + '.map', '{}');
+";
+    for (version, placeholder) in [("0.81.5", false), ("0.82.1", true)] {
+        let lock = format!(
+            r#"{{"lockfileVersion":3,"packages":{{"node_modules/react-native":{{"version":"{version}"}}{}}}}}"#,
+            if placeholder {
+                r#","node_modules/hermes-compiler":{"version":"0.0.0"}"#
+            } else {
+                ""
+            }
+        );
+        let install = INSTALL.replace("0.86.0", version)
+            + &format!(
+                "for (const os of ['osx-bin', 'linux64-bin']) {{ write('node_modules/react-native/sdks/hermesc/' + os + '/hermesc', {hermesc:?}); fs.chmodSync('node_modules/react-native/sdks/hermesc/' + os + '/hermesc', 0o755); }}\n\
+write('node_modules/react-native/scripts/compose-source-maps.js', \"require('fs').writeFileSync(process.argv[process.argv.indexOf('-o') + 1], '{{}}')\");\n{}",
+                if placeholder {
+                    "write('node_modules/hermes-compiler/package.json', JSON.stringify({name: 'hermes-compiler', version: '0.0.0'}));\n"
+                } else {
+                    ""
+                }
+            );
+        let workspace = Workspace::with_install(
+            &lock,
+            &install,
+            r#"
+[[target]]
+name = "Bundle"
+kind = "react_native_bundle"
+srcs = ["index.js"]
+deps = ["./Dependencies"]
+[target.attrs]
+platform = "ios"
+node = {node}
+"#,
+        );
+        workspace.struo(&["build", "Bundle"]);
+        let bundle = std::fs::read_to_string(
+            workspace
+                .root
+                .path()
+                .join(".struo/out/Bundle/bundle/main.jsbundle"),
+        )
+        .unwrap();
+        assert!(bundle.starts_with("bytecode:{"), "{version}: {bundle}");
+    }
 }

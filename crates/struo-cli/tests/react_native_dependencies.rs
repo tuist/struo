@@ -264,3 +264,161 @@ fn workspace_root_target_installs_sibling_workspace_packages() {
         "blue:0.86.0"
     );
 }
+
+// `npm run` and `pnpm run` only run package.json scripts, so a package binary
+// such as `expo` runs through the manager's exec command instead.
+#[test]
+fn javascript_build_runs_package_binaries_through_the_package_manager() {
+    let node = Command::new("node")
+        .args(["-p", "process.execPath"])
+        .output()
+        .unwrap();
+    assert!(node.status.success());
+    let node = String::from_utf8(node.stdout).unwrap().trim().to_string();
+    for (manager, lockfile, expected) in [
+        (
+            "npm",
+            "package-lock.json",
+            "exec --no -- tool export --out dist",
+        ),
+        // pnpm must not reinstall the staged tree before running the binary.
+        (
+            "pnpm",
+            "pnpm-lock.yaml",
+            "exec tool export --out dist falsefalse",
+        ),
+    ] {
+        let workspace = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let executable = workspace.path().join(manager);
+        std::fs::write(
+            &executable,
+            "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 10.0.0; elif [ \"$1\" = install ] || [ \"$1\" = ci ]; then mkdir -p node_modules; else mkdir -p dist && echo \"$@\" \"${pnpm_config_verify_deps_before_run:-}${npm_config_verify_deps_before_run:-}\" > dist/argv; fi\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(workspace.path().join("package.json"), "{}\n").unwrap();
+        std::fs::write(
+            workspace.path().join(lockfile),
+            if manager == "npm" {
+                r#"{"lockfileVersion":3,"packages":{"node_modules/react-native":{"version":"0.86.0"},"node_modules/hermes-compiler":{"version":"0.14.0"}}}"#
+            } else {
+                "lockfileVersion: '9.0'\n\npackages:\n\n  react-native@0.86.0:\n    resolution: {}\n\n  hermes-compiler@0.14.0:\n    resolution: {}\n"
+            },
+        )
+        .unwrap();
+        std::fs::write(
+            workspace.path().join("struo.toml"),
+            format!(
+                r#"
+[[target]]
+name = "Dependencies"
+kind = "react_native_dependencies"
+[target.attrs]
+lockfile = "{lockfile}"
+resolver_inputs = ["package.json", "{lockfile}"]
+node = {node:?}
+package_manager_executable = {executable:?}
+
+[[target]]
+name = "Export"
+kind = "javascript_build"
+deps = ["./Dependencies"]
+[target.attrs]
+command = "tool"
+args = ["export", "--out", "dist"]
+outputs = ["dist"]
+node = {node:?}
+"#,
+                executable = executable.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_struo"))
+            .arg("-C")
+            .arg(workspace.path())
+            .args(["--memory-limit", "512MiB", "build", "Export"])
+            .env("HOME", home.path())
+            .env("XDG_CACHE_HOME", home.path().join("cache"))
+            .env("XDG_CONFIG_HOME", home.path().join("config"))
+            .env("XDG_STATE_HOME", home.path().join("state"))
+            .env("STRUO_CACHE_PROVIDER", "local")
+            .env("STRUO_CHANGE_TRACKER", "0")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{manager}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace.path().join(".struo/out/Export/project/dist/argv"))
+                .unwrap()
+                .trim(),
+            expected,
+            "{manager}"
+        );
+    }
+}
+
+#[test]
+fn pnpm_install_leaves_out_its_checkout_specific_state() {
+    let node = Command::new("node")
+        .args(["-p", "process.execPath"])
+        .output()
+        .unwrap();
+    assert!(node.status.success());
+    let node = String::from_utf8(node.stdout).unwrap().trim().to_string();
+    let workspace = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let executable = workspace.path().join("pnpm");
+    // pnpm writes its install state with the absolute store path and a
+    // timestamp, so it differs between checkouts and between runs.
+    std::fs::write(
+        &executable,
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 10.33.4; else mkdir -p node_modules/dep && echo ok > node_modules/dep/index.js && pwd > node_modules/.modules.yaml && date +%s%N > node_modules/.pnpm-workspace-state-v1.json; fi\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(workspace.path().join("package.json"), "{}\n").unwrap();
+    std::fs::write(
+        workspace.path().join("pnpm-lock.yaml"),
+        "lockfileVersion: '9.0'\n\npackages:\n\n  react-native@0.86.0:\n    resolution: {}\n\n  hermes-compiler@0.14.0:\n    resolution: {}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.path().join("struo.toml"),
+        format!(
+            "[[target]]\nname = \"Dependencies\"\nkind = \"react_native_dependencies\"\n[target.attrs]\nlockfile = \"pnpm-lock.yaml\"\nresolver_inputs = [\"package.json\", \"pnpm-lock.yaml\"]\nnode = {node:?}\npackage_manager_executable = {:?}\n",
+            executable.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_struo"))
+        .arg("-C")
+        .arg(workspace.path())
+        .args(["--memory-limit", "512MiB", "build", "Dependencies"])
+        .env("HOME", home.path())
+        .env("XDG_CACHE_HOME", home.path().join("cache"))
+        .env("XDG_CONFIG_HOME", home.path().join("config"))
+        .env("XDG_STATE_HOME", home.path().join("state"))
+        .env("STRUO_CACHE_PROVIDER", "local")
+        .env("STRUO_CHANGE_TRACKER", "0")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let node_modules = workspace
+        .path()
+        .join(".struo/out/Dependencies/javascript/node_modules");
+    assert!(node_modules.join("dep/index.js").is_file());
+    let mut entries = std::fs::read_dir(&node_modules)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect::<Vec<_>>();
+    entries.sort();
+    assert_eq!(entries, ["dep"]);
+}

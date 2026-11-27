@@ -47,7 +47,16 @@ Automatic batching uses one batch per test file by default. Set `batching` to
 `case` for individual cases, or `target` for one target batch. A complete run
 must establish a current manifest before smaller batches are planned.
 Struo disables Jest's mutable local cache inside the action because installed
-packages are declared inputs. Struo's action cache reuses successful test
+packages are declared inputs. When `runner` is Jest's own entry point, Struo
+also keeps Jest's module map out of the workspace's `.struo` directory, so
+package copies that other targets stage there do not collide with the
+project's packages. The project's `modulePathIgnorePatterns` still apply. A
+multi-project configuration whose projects set their own patterns, and a
+wrapper runner, keep their configuration unchanged.
+
+Files listed in `srcs`, `config`, `data`, and `dependencies` select the target
+in `struo query affected-tests`, in addition to the targets that own a changed
+path. Struo's action cache reuses successful test
 results when those inputs have not changed.
 
 When an unfiltered run contains duplicate file/full-name identities, Struo

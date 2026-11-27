@@ -25,6 +25,12 @@ Modern Yarn installs with its `node-modules` linker. pnpm public-hoists only
 conventional path expected by checked-in Android projects. Bun uses its
 hoisted linker.
 
+pnpm records install state, including the absolute store path and timestamps,
+in `node_modules/.modules.yaml` and `node_modules/.pnpm-workspace-state*.json`.
+Struo removes both after a successful install so the installed tree is the same
+in every checkout. pnpm then skips syncing injected workspace dependencies after
+scripts in consumers of this install.
+
 The installed dependency tree is the shared input for Metro, Codegen,
 autolinking, and native application targets.
 

@@ -26,17 +26,23 @@ alone does not build the package.
 
 ## Attributes
 
-- `script` (required string): package script passed to the package manager's
-  `run` command. Managers that support running installed binaries can also use
-  a binary name.
+- `script` (string): package script passed to the package manager's `run`
+  command.
+- `command` (string): installed package binary, such as `expo`, run through the
+  package manager: `npm exec --no --`, `pnpm exec`, or `run` for Yarn and Bun.
+  npm never downloads a binary the lockfile did not install. Set exactly one of
+  `script` and `command`.
 - `package_dir` (string, default `.`): working directory relative to the
   dependency installation root, even when this target is in a member manifest.
 - `outputs` (required list of strings): product paths relative to the
   installation root, not `package_dir`. Paths must stay inside the staged
   workspace and cannot name its root.
-- `args` (list of strings, default empty): additional script arguments. npm
-  arguments are forwarded after `--`.
+- `args` (list of strings, default empty): additional script or command
+  arguments. npm arguments are forwarded after `--`.
 - `env` (map of strings, default empty): explicit non-secret environment values.
+  With pnpm, Struo sets `pnpm_config_verify_deps_before_run` and
+  `npm_config_verify_deps_before_run` to `false`, because the dependency target
+  already installed the tree; set them in `env` to override.
 - `node` (string, default `node`): Node.js executable.
 
 Exactly one dependency must provide `javascript_dependency_set`. The provider

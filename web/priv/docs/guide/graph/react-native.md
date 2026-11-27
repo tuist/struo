@@ -209,10 +209,11 @@ stay relative to the workspace root. Declare every source and configuration
 file the script reads; only the declared products are cached.
 
 An Expo workspace can export JavaScript and assets the same way, with
-`script = "expo"`, `package_dir = "example"`,
+`command = "expo"`, `package_dir = "example"`,
 `args = ["export", "--platform", "all", "--no-bytecode", "--output-dir", "dist"]`,
-and `outputs = ["example/dist"]`, when its package manager supports `run` for
-binaries. Some Expo versions embed random temporary filenames in Hermes
+and `outputs = ["example/dist"]`. `command` runs an installed package binary
+through the package manager, so it works with npm, pnpm, Yarn, and Bun. Some
+Expo versions embed random temporary filenames in Hermes
 bytecode, so verify reproducibility before enabling bytecode. An export does
 not produce an APK or an Apple application.
 

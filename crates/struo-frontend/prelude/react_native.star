@@ -139,6 +139,12 @@ def _react_native_exact_version(value):
     parts = core.split(".")
     return len(parts) == 3 and all([_react_native_ascii_digits(part) for part in parts])
 
+def _react_native_bundles_hermesc(version):
+    parts = version.split("+")[0].split("-")[0].split(".")
+    if len(parts) < 2 or not _react_native_ascii_digits(parts[0]) or not _react_native_ascii_digits(parts[1]):
+        return False
+    return int(parts[0]) == 0 and int(parts[1]) < 83
+
 def _react_native_configuration_contains_credentials(value):
     lowered = value.lower()
     markers = [
@@ -199,8 +205,12 @@ def _react_native_dependencies_resolver(ctx):
     if not react_native_version:
         fail(ctx["label"]["id"] + ": " + lockfile_path + " has no locked `react-native` package")
     hermes_version = _react_native_locked_version(lock, lockfile, manager, "hermes-compiler")
-    if not hermes_version:
-        fail(ctx["label"]["id"] + ": " + lockfile_path + " has no Hermes compiler paired with the locked React Native package")
+    if hermes_version in ["", "0.0.0"]:
+        # Through React Native 0.82, `hermesc` ships in `react-native/sdks/hermesc`;
+        # 0.82 also locks an empty `hermes-compiler@0.0.0` placeholder.
+        if not _react_native_bundles_hermesc(react_native_version):
+            fail(ctx["label"]["id"] + ": " + lockfile_path + " has no Hermes compiler paired with the locked React Native package")
+        hermes_version = "react-native@" + react_native_version
     requested = (package_json.get("dependencies") or {}).get("react-native") or ""
     if requested and _react_native_exact_version(requested) and requested != react_native_version:
         fail(ctx["label"]["id"] + ": package.json requests React Native `" + requested + "`, but " + lockfile_path + " selects `" + react_native_version + "`")
@@ -327,6 +337,23 @@ def _react_native_install_plan(tools, allow_network, action_cache):
         fail("unsupported React Native package manager `" + manager + "`")
     return {"argv": argv, "env": env, "create_dirs": create_dirs}
 
+def _react_native_pnpm_install_runner_source():
+    return """const {spawnSync} = require("node:child_process");
+const fs = require("node:fs");
+const path = require("node:path");
+const result = spawnSync(process.argv[2], process.argv.slice(3), {stdio: "inherit"});
+if (result.error) throw result.error;
+if (result.status === 0) {
+  const nodeModules = path.join(process.cwd(), "node_modules");
+  for (const name of fs.existsSync(nodeModules) ? fs.readdirSync(nodeModules) : []) {
+    if (name === ".modules.yaml" || /^\\.pnpm-workspace-state.*\\.json$/.test(name)) {
+      fs.rmSync(path.join(nodeModules, name), {force: true});
+    }
+  }
+}
+process.exitCode = result.status ?? 1;
+"""
+
 def _react_native_dependencies_impl(ctx):
     if not _react_native_attr(ctx, "_react_native_resolved", False):
         fail(ctx["label"]["id"] + ": react_native_dependencies must be expanded through its locked resolver")
@@ -379,6 +406,15 @@ def _react_native_dependencies_impl(ctx):
     install = _react_native_install_plan(tools, _react_native_attr(ctx, "allow_network", False), action_cache)
     argv = install["argv"]
     argv.extend(_react_native_attr(ctx, "install_args", []))
+    if tools["package_manager_name"] == "pnpm":
+        # pnpm records its install state, with the absolute store path and a
+        # timestamp, in `node_modules`. Nothing that consumes the installed
+        # tree reads it, and it would split this action's output, and every
+        # bundle and build staged from it, between checkouts and runs.
+        install_runner = ctx["scratch_dir"] + "/run-pnpm-install.js"
+        write_path(install_runner, _react_native_pnpm_install_runner_source())
+        argv = [tools["node"], execution_path(install_runner)] + argv
+        install_inputs.append(install_runner)
     env = {
         "CI": "1",
         "HOME": execution_path(action_home),
@@ -407,7 +443,7 @@ def _react_native_dependencies_impl(ctx):
         "package_json": package_json,
         "lockfile": lockfile,
         "package_manager": _react_native_attr(ctx, "_package_manager", "npm"),
-        "javascript_tools": {"name": tools["package_manager_name"], "executable": tools["package_manager"], "identity": tools["identity"]},
+        "javascript_tools": {"name": tools["package_manager_name"], "executable": tools["package_manager"], "version": tools["package_manager_version"], "identity": tools["identity"]},
         "react_native_version": _react_native_attr(ctx, "_react_native_version", ""),
         "hermes_version": _react_native_attr(ctx, "_hermes_version", ""),
         "module_targets": _react_native_attr(ctx, "_react_native_module_targets", []),
@@ -478,7 +514,7 @@ const {spawnSync} = require("node:child_process");
 const {createRequire} = require("node:module");
 const reactNativeManifest = require.resolve("react-native/package.json", {paths: [process.cwd()]});
 const requireFromReactNative = createRequire(reactNativeManifest);
-const hermesManifest = requireFromReactNative.resolve("hermes-compiler/package.json");
+const fs = require("node:fs");
 let relative;
 if (process.platform === "darwin") {
   relative = "hermesc/osx-bin/hermesc";
@@ -489,7 +525,15 @@ if (process.platform === "darwin") {
 } else {
   throw new Error(`Hermes compilation is not supported on ${process.platform}/${process.arch}`);
 }
-const executable = path.join(path.dirname(hermesManifest), relative);
+// React Native 0.83 and later depend on `hermes-compiler`; earlier releases
+// ship hermesc in `react-native/sdks`, where their Gradle plugin finds it.
+const candidates = [];
+try {
+  candidates.push(path.join(path.dirname(requireFromReactNative.resolve("hermes-compiler/package.json")), relative));
+} catch {}
+candidates.push(path.join(path.dirname(reactNativeManifest), "sdks", relative));
+const executable = candidates.find(candidate => fs.existsSync(candidate));
+if (!executable) throw new Error(`hermesc was not found; looked in ${candidates.join(", ")}`);
 const result = spawnSync(executable, process.argv.slice(2), {stdio: "inherit"});
 if (result.error) throw result.error;
 process.exit(result.status === null ? 1 : result.status);
@@ -575,6 +619,12 @@ def _react_native_bundle_impl(ctx):
     dev = _react_native_attr(ctx, "dev", False)
     minify = _react_native_attr(ctx, "minify", not dev)
     hermes = _react_native_attr(ctx, "hermes", True)
+    max_workers = _react_native_attr(ctx, "max_workers", 4)
+    if max_workers < 1:
+        fail(ctx["label"]["id"] + ": max_workers must be positive")
+    for arg in _react_native_attr(ctx, "bundle_args", []):
+        if arg == "--max-workers" or arg.startswith("--max-workers="):
+            fail(ctx["label"]["id"] + ": set `max_workers` instead of passing --max-workers in bundle_args, so the bundle reserves memory for each worker")
     prepare_path(bundle_dir, kind = "remove", identifier = ctx["label"]["id"] + ":bundle-clean")
     prepare_path(bundle_dir, kind = "directory", identifier = ctx["label"]["id"] + ":bundle-prepare")
     prepare_path(assets, kind = "remove", identifier = ctx["label"]["id"] + ":assets-clean")
@@ -591,6 +641,7 @@ def _react_native_bundle_impl(ctx):
         "--sourcemap-output", execution_path(packager_map if hermes else source_map),
         "--assets-dest", execution_path(assets),
         "--reset-cache",
+        "--max-workers", str(max_workers),
         "--config", execution_path(metro_wrapper),
     ]
     metro_config = stage + "/" + _react_native_relative_path(ctx, metro_config_source) if metro_config_source else ""
@@ -602,21 +653,24 @@ def _react_native_bundle_impl(ctx):
         metro_outputs.extend([final_bundle, source_map])
     run_action(
         display_name = "Bundle " + _basename(entry) + " with Metro · " + platform,
+        # Metro otherwise sizes its worker pool from the core count, not from
+        # memory, and each worker can hold several hundred megabytes.
+        resources = {"cpu_slots": max_workers, "memory_bytes": (1024 + 768 * max_workers) * 1024 * 1024},
         presentation = _action_metadata(context = [_action_context("react-native.platform", platform)]),
         source_files = _action_source_files(files),
         argv = argv,
         inputs = _unique([stage, dependency["node_modules"], metro_wrapper, command_runner]),
         outputs = metro_outputs,
-        create_dirs = [ctx["scratch_dir"] + "/home"],
+        create_dirs = [ctx["scratch_dir"] + "/home", _react_native_tmp_dir(ctx)],
         cwd = stage,
-        env = {
+        env = dict({
             "HOME": execution_path(ctx["scratch_dir"] + "/home"),
             "NODE_PATH": execution_path(dependency["node_modules"]),
             "STRUO_REACT_NATIVE_PROJECT_ROOT": execution_path(stage),
             "STRUO_REACT_NATIVE_NODE_MODULES": execution_path(dependency["node_modules"]),
             "STRUO_REACT_NATIVE_METRO_CONFIG": execution_path(metro_config) if metro_config else "",
             "PATH": _react_native_path_env(tools),
-        },
+        }, **_react_native_tmp_env(ctx)),
         toolchain_identity = tools["identity"] + "\x00metro\x00" + dependency["react_native_version"] + "\x00platform\x00" + platform,
         identifier = ctx["label"]["id"] + ":metro-bundle",
     )
@@ -1003,14 +1057,15 @@ def _react_native_apple_application_impl(ctx):
         inputs = native_inputs,
         outputs = [built_app, log],
         clean_paths = [derived_data],
-        env = {
+        create_dirs = [_react_native_tmp_dir(ctx)],
+        env = dict({
             "CI": "1",
             "HOME": execution_path(action_home),
             "LANG": "en_US.UTF-8",
             "LC_ALL": "en_US.UTF-8",
             "NODE_BINARY": tools["node"],
             "PATH": _react_native_path_env(tools, [bundle, xcodebuild]),
-        },
+        }, **_react_native_tmp_env(ctx)),
         stdout = log,
         stderr = log,
         toolchain_identity = tools["identity"] + "\x00xcodebuild\x00" + xcode_version + "\x00react-native\x00" + dependency["react_native_version"] + "\x00hermes\x00" + dependency["hermes_version"],
@@ -1157,8 +1212,9 @@ def _react_native_android_application_impl(ctx):
         argv = argv,
         inputs = native_inputs,
         outputs = [built_apk, log],
+        create_dirs = [_react_native_tmp_dir(ctx)],
         cwd = staged_native_root,
-        env = {
+        env = dict({
             "ANDROID_HOME": android_home,
             "ANDROID_NDK_HOME": android_ndk,
             "CI": "1",
@@ -1166,7 +1222,7 @@ def _react_native_android_application_impl(ctx):
             "HOME": host_env("HOME"),
             "NODE_BINARY": tools["node"],
             "PATH": _react_native_path_env(tools, [java]),
-        },
+        }, **_react_native_tmp_env(ctx)),
         stdout = log,
         stderr = log,
         toolchain_identity = tools["identity"] + "\x00java\x00" + java_version + "\x00android-sdk\x00" + android_home + "\x00android-ndk\x00" + android_ndk + "\x00react-native\x00" + dependency["react_native_version"] + "\x00hermes\x00" + dependency["hermes_version"],
@@ -1187,6 +1243,17 @@ def _react_native_android_application_impl(ctx):
         "logs": [log],
         "react_native_android_application": True,
     }
+
+def _react_native_tmp_dir(ctx):
+    return ctx["scratch_dir"] + "/tmp"
+
+# Metro keeps its cache under `os.tmpdir()`, and React Native's bundle command,
+# Xcode script phase, and Gradle task all pass `--reset-cache`, so a shared host
+# temporary directory lets concurrent bundles wipe each other's cache. Node reads
+# `TMPDIR` on Unix and `TEMP` or `TMP` on Windows.
+def _react_native_tmp_env(ctx):
+    path = execution_path(_react_native_tmp_dir(ctx))
+    return {"TMPDIR": path, "TEMP": path, "TMP": path}
 
 def _react_native_metro_config_source():
     return """const path = require("node:path");
@@ -1403,6 +1470,7 @@ react_native_bundle = target_kind(
         attr("minify", "bool", default = "true", docs = "Minify the Metro bundle.", configurable = True),
         attr("hermes", "bool", default = "true", docs = "Compile the Metro output to Hermes bytecode.", configurable = False),
         attr("bundle_args", "list<string>", default = "[]", docs = "Additional Metro bundle arguments.", configurable = True),
+        attr("max_workers", "int", default = "4", docs = "Metro transform workers. The bundle reserves CPU and memory for each.", configurable = False),
         attr("node", "string", default = "\"node\"", docs = "Node.js executable.", configurable = False),
     ],
     deps = [dep("deps", ["react_native_dependency_set"], "Locked JavaScript dependencies used by Metro and Hermes.")],

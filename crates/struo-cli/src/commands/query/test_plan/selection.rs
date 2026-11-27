@@ -5,10 +5,13 @@ use anyhow::Result;
 use struo_core::{TestSelectionPolicy, TestSelectionReport, WorkspacePath, TEST_SELECTION_SCHEMA};
 use struo_frontend::{AttrValue, GraphTarget};
 
-use super::inputs::{is_graph_input, target_input_patterns, workspace_graph_input_patterns};
+use super::inputs::{
+    is_graph_input, target_input_patterns, workspace_graph_input_patterns, TargetInputs,
+};
 use super::mentions::mention_owners;
 use super::AffectedTestRecord;
 
+#[allow(clippy::too_many_lines)]
 pub(super) fn selection_report(
     workspace: &Path,
     graph: &[GraphTarget],
@@ -69,6 +72,13 @@ pub(super) fn selection_report(
             continue;
         }
 
+        add_provider_selections(
+            path,
+            &target_patterns,
+            &targets,
+            &reverse_dependencies,
+            &mut reasons,
+        );
         let mut owners = owners_of(path);
         if unread.contains(path) {
             // A target took this path out of its inputs, such as a build
@@ -348,6 +358,22 @@ fn add_owner_tests(
     }
     for owner in owners {
         add_affected_tests(path, owner, targets, reverse_dependencies, reasons);
+    }
+}
+
+/// Selects the targets whose metadata provider reports `path` among the files
+/// their runs read, in addition to the owners `selection_report` finds.
+fn add_provider_selections(
+    path: &str,
+    target_patterns: &BTreeMap<String, TargetInputs>,
+    targets: &BTreeMap<&str, &GraphTarget>,
+    reverse_dependencies: &BTreeMap<String, Vec<&str>>,
+    reasons: &mut BTreeMap<String, BTreeSet<String>>,
+) {
+    for (target_id, inputs) in target_patterns {
+        if inputs.provider_matches(path) {
+            add_affected_tests(path, target_id, targets, reverse_dependencies, reasons);
+        }
     }
 }
 

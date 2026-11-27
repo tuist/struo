@@ -21,7 +21,15 @@ Metro source maps into one final map.
 | `minify` | bool | no | `true` | Minify Metro output |
 | `hermes` | bool | no | `true` | Compile to Hermes bytecode |
 | `bundle_args` | list&lt;string&gt; | no | `[]` | Additional Metro arguments |
+| `max_workers` | int | no | `4` | Metro transform workers; the bundle reserves CPU and memory for each |
 | `node` | string | no | `node` | Node.js executable |
+
+Metro would otherwise size its worker pool from the host's core count, not its
+memory, and each worker can hold several hundred megabytes on a large app. The
+bundle passes `max_workers` to Metro and reserves 1 GiB plus 768 MiB per worker
+from the memory budget. Set worker counts through `max_workers`; passing
+`--max-workers` in `bundle_args` is rejected because it would bypass that
+reservation.
 
 The `deps` edge accepts exactly one `react_native_dependency_set`.
 Apple and Android application targets can consume the provider to stage this
@@ -29,8 +37,11 @@ target's declared JavaScript sources for native non-debug bundling.
 
 On macOS, x86-64 Linux, and x86-64 Windows, Struo resolves the Hermes compiler
 through the locked React Native package. This supports both hoisted and
-isolated dependency layouts. Other hosts fail during analysis with a clear
-unsupported-host message.
+isolated dependency layouts. React Native 0.83 and later pair with a locked
+`hermes-compiler` package. Earlier releases ship the compiler inside
+`react-native` itself, so their lockfiles need no `hermes-compiler` entry and
+the bundle uses that compiler, as React Native's Gradle plugin does. Other
+hosts fail during analysis with a clear unsupported-host message.
 
 ## Capabilities
 

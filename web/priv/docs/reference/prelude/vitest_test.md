@@ -108,3 +108,6 @@ srcs = ["tests/**/*.test.js"]
 ```
 
 Include setup files, transforms, snapshots, and other runtime files in `data`.
+Files listed in `srcs`, `config`, `data`, and `dependencies` select the target
+in `struo query affected-tests`, in addition to the targets that own a changed
+path.

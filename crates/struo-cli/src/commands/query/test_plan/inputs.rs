@@ -105,8 +105,16 @@ impl TargetInputs {
             || self
                 .build_script_data
                 .iter()
-                .chain(&self.provider_inputs)
                 .any(|pattern| pattern.matches(path))
+    }
+
+    /// Whether the target's metadata provider reports `path` among the
+    /// files its runs read. Such a path selects the target in addition to,
+    /// never instead of, the owners `matches` and its fallbacks find.
+    pub(super) fn provider_matches(&self, path: &str) -> bool {
+        self.provider_inputs
+            .iter()
+            .any(|pattern| pattern.matches(path))
     }
 
     /// Whether `path` is one of this target's `srcs` that it does not read:
@@ -320,10 +328,17 @@ fn metadata_provider(
     workspace: &Path,
     target: &GraphTarget,
 ) -> Option<serde_json::Value> {
+    // Test kinds report the files their runs read, such as data and
+    // configuration outside `srcs`, through the provider they emit for test
+    // scheduling.
     if !target
         .capabilities
         .iter()
         .any(|capability| capability.name == "metadata")
+        && !target
+            .providers
+            .iter()
+            .any(|provider| provider == "struo_test_info")
     {
         return None;
     }
