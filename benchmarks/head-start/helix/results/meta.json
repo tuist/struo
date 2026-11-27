@@ -6,13 +6,16 @@
   "revision_date": "2026-11-20T20:15:14+09:00",
   "root_target": "cargo_helix_term_bin_hx",
   "edits": "helix-term/src/commands.rs helix-core/src/lib.rs",
-  "date": "2026-11-27T13:27:28Z",
-  "struo": "struo 2.24.4",
+  "date": "2026-11-27T14:40:33Z",
+  "struo": "struo 0.0.0",
+  "struo_source_base": "6af79d48bf637c491fc1bae890937123200424cc",
+  "struo_binary_sha256": "256725caf1784956d7288d54b78fdf444475f5aba31c393f87071832a7fde165",
+  "historical_notes": "Development build with the local Rust admission patch, before the proxy handshake fix and HTTP cache connection/restore changes. The measured proxy did not enforce its extra new-connection delay. Network results do not describe the current implementation; cold builds use no shared cache and are unaffected by that proxy issue.",
   "native": "cargo 1.99.0 (5f94df478 2026-08-27)",
   "native_build": "cargo build --locked --quiet -p helix-term --bin hx",
   "setup": "Disables Helix's tree-sitter grammar download (HELIX_DISABLE_AUTO_GRAMMAR_BUILD) and sets debug = 0 in the dev profile, which Struo applies only when a profile names it. Both tools use the Rust toolchain mise selects for this repository.",
   "machine": "Linux x86_64, 16 CPUs, 8 GiB",
-  "runs": 1,
-  "profiles": "loopback:0:0 rtt-50ms:50:0",
-  "history_commits": 20
+  "runs": 3,
+  "profiles": "loopback:0:0 rtt-10ms:10:0 rtt-50ms:50:0 rtt-150ms:150:0 same-region:2:5000 office:20:1000 home:40:200",
+  "history_commits": 500
 }
