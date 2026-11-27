@@ -79,39 +79,32 @@ pub(super) fn selection_report(
             &reverse_dependencies,
             &mut reasons,
         );
-        let mut owners = owners_of(path);
-        if unread.contains(path) {
-            // A target took this path out of its inputs, such as a build
-            // tool's output directory or a file outside the code its resolver
-            // narrowed it to, so of those targets only one whose sources name
-            // the path reads it.
-            for owner in mentioned.remove(path).unwrap_or_default() {
-                if !owners.contains(&owner) {
-                    owners.push(owner);
-                }
-            }
-            if owners.is_empty() {
-                continue;
-            }
-        }
-        if owners.is_empty() {
-            owners = nearest_package_owners(path, graph);
-        }
-        if owners.is_empty() {
-            // Deliberately conservative: a path no target claims may still affect
-            // any test (for example documentation compiled into doc-tests), so we
-            // select the whole test scope rather than risk skipping a regression.
-            // The path is also recorded in `unmatched_paths` so callers can see why.
-            unmatched_paths.push(path.clone());
-            add_full_test_scope(
-                graph,
-                &format!("changed path `{path}` has no declared owner; include test target"),
-                &mut reasons,
-            );
+        let Some((owners, set_aside)) = settle_owners(
+            path,
+            owners_of(path),
+            unread
+                .contains(path)
+                .then(|| mentioned.remove(path).unwrap_or_default()),
+            graph,
+            &targets,
+            &target_patterns,
+        ) else {
             continue;
+        };
+        let selected = settled_tests(
+            path,
+            &owners,
+            &set_aside,
+            graph,
+            &targets,
+            &reverse_dependencies,
+        );
+        if owners.is_empty() && !selected.is_empty() {
+            unmatched_paths.push(path.clone());
         }
-
-        add_owner_tests(path, &owners, &targets, &reverse_dependencies, &mut reasons);
+        for (test, test_reasons) in selected {
+            reasons.entry(test).or_default().extend(test_reasons);
+        }
     }
 
     let tests = graph
@@ -375,6 +368,99 @@ fn add_provider_selections(
             add_affected_tests(path, target_id, targets, reverse_dependencies, reasons);
         }
     }
+}
+
+/// The targets whose tests a change to `path` selects, before the whole-scope
+/// fallback, and the tests it must not select; `None` when it selects nothing.
+///
+/// When a target took `path` out of its inputs (`unread_mentions` is set),
+/// such as a build tool's output directory or a file outside the code its
+/// resolver narrowed it to, only the targets whose sources name it read it.
+/// A resolver seed that claims every file of its workspace, as Turborepo's
+/// root package does, says none of its own tests read `path`, so it neither
+/// stands in for other owners nor selects its tests through the
+/// nearest-package or whole-scope fallbacks; other tests keep both.
+fn settle_owners<'a>(
+    path: &str,
+    mut owners: Vec<&'a str>,
+    unread_mentions: Option<BTreeSet<&'a str>>,
+    graph: &'a [GraphTarget],
+    targets: &BTreeMap<&str, &GraphTarget>,
+    target_patterns: &'a BTreeMap<String, TargetInputs>,
+) -> Option<(Vec<&'a str>, BTreeSet<String>)> {
+    let unread = unread_mentions.is_some();
+    for owner in unread_mentions.unwrap_or_default() {
+        if !owners.contains(&owner) {
+            owners.push(owner);
+        }
+    }
+    if unread && owners.is_empty() {
+        return None;
+    }
+    let claims = |owner: &&str| claims_without_reading(path, owner, targets, target_patterns);
+    let set_aside = owners
+        .iter()
+        .filter(|owner| claims(owner))
+        .filter_map(|owner| {
+            targets
+                .get(*owner)
+                .and_then(|seed| default_test_roots(seed))
+        })
+        .flatten()
+        .collect::<BTreeSet<_>>();
+    let catch_all = owners.iter().any(claims);
+    owners.retain(|owner| !claims(owner));
+    if !owners.is_empty() {
+        return Some((owners, BTreeSet::new()));
+    }
+    if catch_all && unread {
+        return None;
+    }
+    Some((nearest_package_owners(path, graph), set_aside))
+}
+
+/// The tests a change to `path` selects through its settled owners, or through
+/// the whole test scope when it has none, without the tests set aside.
+fn settled_tests(
+    path: &str,
+    owners: &[&str],
+    set_aside: &BTreeSet<String>,
+    graph: &[GraphTarget],
+    targets: &BTreeMap<&str, &GraphTarget>,
+    reverse_dependencies: &BTreeMap<String, Vec<&str>>,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let mut selected = BTreeMap::new();
+    if owners.is_empty() {
+        // Deliberately conservative: a path no target claims may still affect
+        // any test (for example documentation compiled into doc-tests), so we
+        // select the whole test scope rather than risk skipping a regression.
+        // The caller records the path in `unmatched_paths` so callers can see why.
+        add_full_test_scope(
+            graph,
+            &format!("changed path `{path}` has no declared owner; include test target"),
+            &mut selected,
+        );
+    } else {
+        add_owner_tests(path, owners, targets, reverse_dependencies, &mut selected);
+    }
+    selected.retain(|test, _| !set_aside.contains(test));
+    selected
+}
+
+/// Whether `owner` is a resolver seed that claims `path` only through its
+/// `_affected_srcs`, not as one of its own sources such as its manifest.
+fn claims_without_reading(
+    path: &str,
+    owner: &str,
+    targets: &BTreeMap<&str, &GraphTarget>,
+    target_patterns: &BTreeMap<String, TargetInputs>,
+) -> bool {
+    targets.get(owner).is_some_and(|target| {
+        target.attrs.contains_key("_default_test_roots")
+            && target.attrs.contains_key("_affected_srcs")
+    }) && target_patterns
+        .get(owner)
+        .is_some_and(|inputs| !inputs.in_srcs(path))
 }
 
 fn add_affected_tests(

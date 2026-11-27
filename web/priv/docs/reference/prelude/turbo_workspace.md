@@ -37,6 +37,7 @@ environment, so a changed environment reloads the graph.
 | `coverage_per_test` | bool | no | `false` | Forward isolated coverage opt-in to generated test targets running one native Jest or Vitest command |
 | `coverage_sources` | list&lt;string&gt; | no | `[]` | Product source globs forwarded to coverage-enabled test targets |
 | `_default_test_roots` | list&lt;string&gt; | no | `[]` | Resolver-owned test target names selected by targetless `struo test` |
+| `_affected_srcs` | list&lt;string&gt; | no | `[]` | Resolver-owned: every file, so a file no task reads, such as `README.md`, selects no tests in `affected-tests`, as turbo maps it to the root package |
 
 ## Providers
 

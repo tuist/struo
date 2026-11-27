@@ -3,16 +3,24 @@ _VITEST_TOOL = tool("vitest", executables = ["vitest"])
 _JEST_TOOL = tool("jest", executables = ["jest"])
 _JAVASCRIPT_TEST_CONFIG = ["package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"]
 _JAVASCRIPT_TEST_DEPENDENCIES = ["node_modules/**/*"]
+# Entries inside a `node_modules` directory that are not installed packages:
+# caches tools keep there by default, such as Vite's and Vitest's, which a
+# run rewrites, and pnpm's install bookkeeping, which records install times
+# and absolute checkout paths. Package names cannot start with a dot, so these
+# never hide a package.
+_JAVASCRIPT_NODE_MODULES_STATE = [".cache", ".vite", ".vite-temp", ".vitest-cache", ".modules.yaml", ".pnpm-workspace-state*.json"]
+
+def _javascript_node_modules_state_excludes():
+    out = []
+    for prefix in ["node_modules/", "**/node_modules/"]:
+        for name in _JAVASCRIPT_NODE_MODULES_STATE:
+            out.extend([prefix + name, prefix + name + "/**/*"])
+    return out
+
 # Test runners never read these, and they differ between installs or
-# checkouts: pnpm's install state carries a timestamp and the absolute store
-# path, pnpm's `.bin` shims embed absolute paths, and tools write their own
-# caches under `.cache`. The runner is resolved through its package, not `.bin`.
-_JAVASCRIPT_PACKAGE_MANAGER_STATE = [
-    "**/node_modules/.modules.yaml",
-    "**/node_modules/.pnpm-workspace-state*.json",
-    "**/node_modules/.bin/**",
-    "**/node_modules/.cache/**",
-]
+# checkouts: besides the state above, pnpm's `.bin` shims embed absolute
+# paths. The runner is resolved through its package, not `.bin`.
+_JAVASCRIPT_PACKAGE_MANAGER_STATE = _javascript_node_modules_state_excludes() + ["**/node_modules/.bin/**"]
 
 def _javascript_attr(ctx, name, default):
     return _configured_attr(ctx, name, default)

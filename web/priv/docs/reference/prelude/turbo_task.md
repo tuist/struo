@@ -15,7 +15,9 @@ lockfile), and the system directories. It does not include your
 shell's `PATH`, so changing it does not invalidate cached tasks. List `PATH`
 in turbo.json `passThroughEnv` to pass it through; it then becomes part of the
 cache key. `HOME` is likewise only passed when turbo.json lists it.
-Package manager lifecycle hooks such as `prebuild` are not run.
+When the workspace's package manager runs `pre` and `post` scripts, the
+resolver sets `pre_command` and `post_command`, and the task runs them around
+`command`, each in its own shell, stopping at the first failure.
 
 Most attributes are filled in by the
 [`turbo_workspace`](/docs/reference/prelude/turbo_workspace) resolver.
@@ -23,9 +25,13 @@ Declaring a `turbo_task` by hand is only necessary when the workspace is
 not covered by the `turbo` native project.
 
 Inputs are the files of every directory in `source_dirs`, excluding every
-task's declared outputs, `node_modules`, and `.turbo`; the workspace
-configuration files in `config` and `global_inputs`; the installed
-packages in `dependencies` and in each source directory's `node_modules`;
+task's declared outputs, `node_modules`, `.turbo`, and untracked files git
+ignores; committed files an ignore rule matches and the matches of
+`task_inputs`; the workspace configuration files in `config` and
+`global_inputs`; the installed
+packages in `dependencies` and in each source directory's `node_modules`,
+without tool caches (`.cache`, `.vite`, `.vite-temp`, `.vitest-cache`) and
+pnpm's install bookkeeping;
 and the output snapshots of upstream tasks, transitively. An empty
 `source_dirs` entry selects the whole workspace.
 
@@ -46,12 +52,17 @@ any execution provider can run it with `struo build --remote`.
 | `package` | string | yes |  | Workspace package name, or `//` for a root task |
 | `task` | string | yes |  | Turborepo task name, such as `build`, `test`, or `lint` |
 | `command` | string | yes |  | The package script the task runs, executed through the platform shell from `package_dir` |
+| `pre_command` | string | no | `""` | Resolver-owned `pre<task>` script, run first in its own shell |
+| `post_command` | string | no | `""` | Resolver-owned `post<task>` script, run after `command` succeeds |
 | `package_dir` | string | no |  | Workspace-relative package directory; empty for the workspace root |
 | `outputs` | list&lt;string&gt; | no | `[]` | Workspace-relative output globs, with `!` negations. Existing matches are cached and restored; absent outputs are valid |
 | `cache` | bool | no | `true` | False when turbo.json disables caching; the action always runs and its outputs are not restored |
 | `source_dirs` | list&lt;string&gt; | no | `[]` | Workspace-relative directories whose files are inputs: the package and its internal workspace dependencies. An empty string selects the whole workspace |
 | `other_packages` | list&lt;string&gt; | no | `[]` | Workspace packages outside `source_dirs`; their `node_modules` links are left out of the inputs |
-| `workspace_outputs` | list&lt;string&gt; | no | `[]` | Resolver-owned output globs of every task, excluded from source inputs |
+| `workspace_outputs` | list&lt;string&gt; | no | `[]` | Resolver-owned output globs of every task, excluded from source inputs; a pattern rooted at its package that a negated output carves into, such as `*/**` beside `!src/**`, is left out |
+| `srcs_exclude` | list&lt;string&gt; | no | `[]` | Resolver-owned globs removed from `srcs`: the package's `node_modules` and `.turbo` and task outputs inside it. Test discovery, `graph-fingerprint`, and `affected-tests` skip them |
+| `_affected_srcs` | list&lt;string&gt; | no | `[]` | Resolver-owned globs that select this task's tests in `affected-tests`: its package, the workspace packages it depends on, configuration files, and `globalDependencies` |
+| `task_inputs` | list&lt;string&gt; | no | `[]` | Resolver-owned workspace-relative globs from turbo.json `inputs`, without negations, `$TURBO_DEFAULT$`, and globs outside the workspace; a literal directory also contributes every file in it, and matches are inputs even when git ignores them |
 | `global_inputs` | list&lt;string&gt; | no | `[]` | Workspace-relative files from `globalDependencies` |
 | `node` | string | no | `node` | Node.js executable that runs the task wrapper |
 | `dependencies` | list&lt;string&gt; | no | `["node_modules/**/*"]` | Installed package files required at execution time; each source directory's `node_modules` is added |

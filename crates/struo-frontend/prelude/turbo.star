@@ -21,6 +21,8 @@ _TURBO_CONFIG = [
     "tsconfig*.json",
 ]
 
+_TURBO_PNPM_HOISTED = "node_modules/.pnpm/node_modules"
+
 _TURBO_IGNORED_DIRS = ["node_modules", ".git", ".struo", ".turbo"]
 
 def _turbo_attr(ctx, name, default):
@@ -55,11 +57,14 @@ def _turbo_env(node, cwd, host_path = False):
 _TURBO_GRAPH = """
 const { spawnSync } = require('node:child_process');
 const [turbo, requested] = JSON.parse(process.argv[1]);
-function run(args) {
+function spawn(args) {
   const result = spawnSync(turbo[0], [...turbo.slice(1), ...args], {
     encoding: 'utf8', maxBuffer: 1 << 30, stdio: ['ignore', 'pipe', 'pipe'],
   });
   if (result.error) throw result.error;
+  return result;
+}
+function run(args, result = spawn(args)) {
   if (result.status !== 0) {
     process.stderr.write(result.stderr);
     throw new Error('`turbo ' + args[0] + '` exited with status ' + result.status);
@@ -76,8 +81,20 @@ const packages = query.data.packages.items;
 const defined = new Set(packages.flatMap(item => item.tasks.items.map(task => task.name)));
 const tasks = requested.length ? requested.filter(task => defined.has(task)) : [...defined].sort();
 let dry = { tasks: [], globalCacheInputs: {} };
-if (tasks.length) {
-  dry = run(['run', ...tasks, '--dry=json', '--cache=local:,remote:', '--output-logs=none']);
+// `turbo query` lists every package script, but `turbo run` accepts only the
+// tasks turbo.json configures, so drop each one it reports missing.
+let pending = tasks;
+while (pending.length) {
+  const args = ['run', ...pending, '--dry=json', '--cache=local:,remote:', '--output-logs=none'];
+  const result = spawn(args);
+  const missing = result.status === 0 ? [] : [...result.stderr.matchAll(/Could not find task\s+`([^`]+)`/g)]
+    .map(match => match[1]).filter(task => pending.includes(task));
+  if (missing.length) {
+    pending = pending.filter(task => !missing.includes(task));
+    continue;
+  }
+  dry = run(args, result);
+  break;
 }
 process.stdout.write(JSON.stringify({
   packages,
@@ -135,16 +152,65 @@ def _turbo_target_name(package, task):
 def _turbo_package_dir(directory):
     return "" if directory in ["", "."] else directory.removesuffix("/")
 
+# Turbo reports globs relative to the package with `$TURBO_ROOT$` already
+# resolved, as in `../../.env`. Globs only match normalized paths, so `.` and
+# `..` segments are folded; a glob that leaves the workspace names nothing
+# Struo can track and is dropped. The workspace root itself is `""`.
 def _turbo_workspace_path(package_dir, path):
     if path.startswith("$TURBO_ROOT$/"):
-        return path.removeprefix("$TURBO_ROOT$/")
-    path = path.removeprefix("./")
-    return package_dir + "/" + path if package_dir else path
+        path = path.removeprefix("$TURBO_ROOT$/")
+    elif package_dir:
+        path = package_dir + "/" + path
+    parts = []
+    for part in path.split("/"):
+        if part == "..":
+            if not parts:
+                return None
+            parts.pop()
+        elif part not in ["", "."]:
+            parts.append(part)
+    return "/".join(parts)
 
 def _turbo_output(package_dir, pattern):
-    if pattern.startswith("!"):
-        return "!" + _turbo_workspace_path(package_dir, pattern[1:])
-    return _turbo_workspace_path(package_dir, pattern)
+    negated = pattern.startswith("!")
+    path = _turbo_workspace_path(package_dir, pattern[1:] if negated else pattern)
+    return ("!" + path if negated else path) if path else None
+
+# Turbo's globs accept `{a,b}` alternatives, which `glob` does not, so each is
+# expanded into one pattern per alternative, innermost first.
+def _turbo_expand_braces(pattern):
+    done = []
+    pending = [pattern]
+    for _ in range(64):
+        if not pending:
+            break
+        current = pending.pop()
+        close = current.find("}")
+        start = current.rfind("{", 0, close) if close >= 0 else -1
+        if start < 0:
+            done.append(current)
+            continue
+        for alternative in reversed(current[start + 1:close].split(",")):
+            pending.append(current[:start] + alternative + current[close + 1:])
+    return done + pending
+
+# Like turbo, a literal input that names a directory stands for every file in it.
+def _turbo_task_inputs(package_dir, patterns):
+    out = []
+    for pattern in patterns:
+        if pattern.startswith("!") or pattern == "$TURBO_DEFAULT$":
+            continue
+        for expanded in _turbo_expand_braces(pattern):
+            path = _turbo_workspace_path(package_dir, expanded)
+            if path == None:
+                continue
+            if not path:
+                out.append("**/*")
+                continue
+            out.append(path)
+            if not any([character in path for character in "*?[".elems()]):
+                out.append(path + "/**/*")
+    return _unique(out)
 
 # Turbo reports every variable name it hashes or passes through: exact names
 # from `env` and `passThroughEnv`, plus the set variables matched by wildcard
@@ -190,8 +256,80 @@ def _turbo_runnable_dependencies(task, by_id):
         pending = next_pending
     return _unique(out)
 
+def _turbo_read_package_json(directory):
+    path = workspace_root() + "/" + (directory + "/" if directory else "") + "package.json"
+    return json_decode(host_file_read(path)) if host_file_exists(path) else {}
+
+# A boolean setting in `key = value` config such as `.npmrc` (ini: a bare key
+# is true, values may be quoted, `#` and `;` start comments) or in
+# `pnpm-workspace.yaml` (`key: value`, `#` comments). None when unset.
+def _turbo_config_flag(path, name, separator):
+    if not host_file_exists(path):
+        return None
+    value = None
+    for line in host_file_read(path).split("\n"):
+        line = line.strip()
+        if not line or line[0] in "#;":
+            continue
+        parts = line.split(separator, 1)
+        if parts[0].strip() != name:
+            continue
+        if len(parts) == 1:
+            value = separator == "="
+            continue
+        text = parts[1].split(" #")[0].strip()
+        if separator == "=":
+            text = text.split(" ;")[0].strip()
+        value = text.strip("\"'").strip().lower() == "true"
+    return value
+
+def _turbo_package_manager_major():
+    spec = _turbo_read_package_json("").get("packageManager") or ""
+    return spec.split("@", 1)[1].split(".")[0] if "@" in spec else ""
+
+# Turbo runs a task as `<package manager> run <task>`. npm, Bun, Yarn 1 and
+# pnpm 9 or later then run the `pre` and `post` scripts around it; Yarn 2 or
+# later and older pnpm do not, and each manager's own settings override that.
+def _turbo_runs_lifecycle_scripts():
+    root = workspace_root() + "/"
+    manager = _javascript_package_manager()
+    if manager == "yarn":
+        major = _turbo_package_manager_major()
+        if major:
+            return major == "1"
+        return not host_file_exists(root + ".yarnrc.yml")
+    if manager == "pnpm":
+        configured = _turbo_config_flag(root + ".npmrc", "enable-pre-post-scripts", "=")
+        from_workspace = _turbo_config_flag(root + "pnpm-workspace.yaml", "enablePrePostScripts", ":")
+        if from_workspace != None:
+            configured = from_workspace
+        if configured != None:
+            return configured
+        major = _turbo_package_manager_major()
+        return not major.isdigit() or int(major) >= 9
+    # Only npm skips `pre` and `post` scripts under `ignore-scripts`; pnpm and
+    # Yarn 1 run them regardless, and Bun reads it for installs only.
+    if manager == "npm":
+        return not _turbo_config_flag(root + ".npmrc", "ignore-scripts", "=")
+    return True
+
+def _turbo_lifecycle_scripts(task, lifecycle):
+    if not lifecycle:
+        return {}
+    scripts = _turbo_read_package_json(_turbo_package_dir(task.get("directory") or "")).get("scripts") or {}
+    out = {}
+    command = scripts.get(task["task"]) or ""
+    pnpm = _javascript_package_manager() == "pnpm"
+    for phase in ["pre", "post"]:
+        script = scripts.get(phase + task["task"])
+        # pnpm leaves out a hook the script already runs itself.
+        if script and not (pnpm and (phase + task["task"]) in command):
+            out[phase + "_command"] = script
+    return out
+
 def _turbo_workspace_resolver(ctx):
     graph = _turbo_load_graph(ctx)
+    lifecycle = _turbo_runs_lifecycle_scripts()
     package_dirs = {}
     package_dependencies = {}
     for package in graph.get("packages") or []:
@@ -217,8 +355,8 @@ def _turbo_workspace_resolver(ctx):
         package = task["package"]
         definition = task.get("resolvedTaskDefinition") or {}
         package_dir = _turbo_package_dir(task.get("directory") or "")
-        outputs = [_turbo_output(package_dir, pattern) for pattern in definition.get("outputs") or []]
-        workspace_outputs.extend([output for output in outputs if not output.startswith("!")])
+        outputs = [output for output in [_turbo_output(package_dir, pattern) for pattern in definition.get("outputs") or []] if output]
+        workspace_outputs.extend(_turbo_excludable_outputs(outputs, package_dir))
         if package == _TURBO_ROOT_PACKAGE:
             source_dirs = [""]
             other_packages = []
@@ -241,20 +379,39 @@ def _turbo_workspace_resolver(ctx):
                 "source_dirs": source_dirs,
                 "other_packages": other_packages,
                 "global_inputs": global_files,
+                "task_inputs": _turbo_task_inputs(package_dir, definition.get("inputs") or []),
                 "env_inherit": _unique(global_env + _turbo_env_names(task.get("environmentVariables"))),
+                # Turbo's own notion of what affects a task: its package, the
+                # workspace packages it depends on, and shared configuration.
+                "_affected_srcs": [(directory + "/**") if directory else "**" for directory in source_dirs] + _TURBO_CONFIG + global_files,
             },
         })
+        targets[-1]["attrs"].update(_turbo_lifecycle_scripts(task, lifecycle))
 
     workspace_outputs = sorted(_unique(workspace_outputs))
     for target in targets:
         target["attrs"]["workspace_outputs"] = workspace_outputs
+        package_dir = target["attrs"]["package_dir"]
+        if package_dir:
+            # `srcs` names the package's whole tree; what tasks write and what
+            # the package manager installs there are not its sources.
+            target["attrs"]["srcs_exclude"] = [package_dir + "/" + name + "/**" for name in ["node_modules", "**/node_modules", ".turbo"]] + [
+                output
+                for output in _turbo_glob_exclusions(workspace_outputs)
+                if output.startswith(package_dir + "/")
+            ]
         if target["kind"] == "turbo_test" and _turbo_attr(ctx, "coverage_per_test", False):
             target["attrs"]["coverage_per_test"] = True
             target["attrs"]["coverage_sources"] = _turbo_attr(ctx, "coverage_sources", [])
     return {
         "targets": targets,
         "roots": [target["name"] for target in targets if target["attrs"]["task"] == "build"],
-        "attrs": {"_default_test_roots": [target["name"] for target in targets if target["attrs"]["task"] == "test"]},
+        # Like turbo's root package `//`, the seed owns every file no task
+        # reads, so a change to one selects no package's tests.
+        "attrs": {
+            "_default_test_roots": [target["name"] for target in targets if target["attrs"]["task"] == "test"],
+            "_affected_srcs": ["**/*"],
+        },
     }
 
 def _turbo_workspace_impl(ctx):
@@ -372,17 +529,29 @@ if (spec.log) {
   log = fs.openSync(spec.log, 'w');
 }
 const started = performance.now();
-const child = spawn(spec.command, {
-  cwd: path.join(root, spec.cwd), shell: true,
-  stdio: ['ignore', log === null ? 'inherit' : 'pipe', log === null ? 'inherit' : 'pipe'],
-});
-if (log !== null) {
-  for (const [stream, target] of [[child.stdout, process.stdout], [child.stderr, process.stderr]]) {
-    stream.on('data', chunk => { fs.writeSync(log, chunk); target.write(chunk); });
+// Like `npm run`, each lifecycle script runs in its own shell, and the first
+// that fails stops the rest.
+const steps = spec.steps;
+function runStep(index) {
+  const step = steps[index];
+  const child = spawn(step.command, {
+    cwd: path.join(root, spec.cwd), shell: true,
+    env: { ...process.env, npm_lifecycle_event: step.event },
+    stdio: ['ignore', log === null ? 'inherit' : 'pipe', log === null ? 'inherit' : 'pipe'],
+  });
+  if (log !== null) {
+    for (const [stream, target] of [[child.stdout, process.stdout], [child.stderr, process.stderr]]) {
+      stream.on('data', chunk => { fs.writeSync(log, chunk); target.write(chunk); });
+    }
   }
+  child.on('error', error => { console.error(error); process.exitCode = 1; });
+  child.on('close', (code, signal) => {
+    if (!signal && code === 0 && index + 1 < steps.length) return runStep(index + 1);
+    finish(code, signal);
+  });
 }
-child.on('error', error => { console.error(error); process.exitCode = 1; });
-child.on('close', (code, signal) => {
+runStep(0);
+function finish(code, signal) {
   if (log !== null) fs.closeSync(log);
   const status = signal ? 1 : (code ?? 1);
   if (spec.results) {
@@ -400,7 +569,7 @@ child.on('close', (code, signal) => {
   if (status === 0 && spec.snapshot) snapshotOutputs();
   if (signal) process.kill(process.pid, signal);
   process.exitCode = status;
-});
+}
 """
 
 def turbo_restore_outputs(ctx):
@@ -417,6 +586,34 @@ def turbo_restore_outputs(ctx):
             identifier = "turbo-restore-" + str(index),
         )
 
+def _turbo_static_base(pattern):
+    parts = []
+    for part in pattern.split("/"):
+        if any([character in part for character in "*?[{".elems()]):
+            break
+        parts.append(part)
+    return "/".join(parts)
+
+# Turbo outputs may carve sources back out, as in `["*/**", "!src/**"]`.
+# Glob exclusions cannot express that, so an output whose fixed part is the
+# package directory itself is not excluded when a negation lies inside it;
+# what it matches stays an input unless git ignores it. An output under its
+# own directory, such as `.next/**` beside `!.next/cache/**`, is still
+# excluded whole.
+def _turbo_excludable_outputs(outputs, package_dir):
+    negated = [_turbo_static_base(output[1:]) for output in outputs if output.startswith("!")]
+    out = []
+    for output in outputs:
+        if output.startswith("!"):
+            continue
+        base = _turbo_static_base(output)
+        if not _turbo_path_within(package_dir, base) or not any([_turbo_path_within(other, base) for other in negated]):
+            out.append(output)
+    return out
+
+def _turbo_path_within(path, directory):
+    return not directory or path == directory or path.startswith(directory + "/")
+
 def _turbo_glob_exclusions(patterns):
     out = []
     for pattern in patterns:
@@ -427,8 +624,37 @@ def _turbo_glob_exclusions(patterns):
             out.append(pattern + "/**/*")
     return out
 
+def _turbo_glob_literal(path):
+    return "".join([("[" + character + "]") if character in "[]*?" else character for character in path.elems()])
+
+# Turbo hashes every tracked file, even one an ignore rule matches, while
+# `glob`'s `ignore_files` drops it. The tracked set does not change during a
+# run, so one listing serves every target, including a workspace nested in a
+# larger repository. Returns `None` when the workspace has a `.git` that git
+# cannot read, such as one with dubious ownership, so the caller keeps ignored
+# files rather than miss tracked ones.
+def _turbo_tracked_but_ignored(source_dirs, excluded):
+    unreadable = None if host_path_exists(workspace_root() + "/.git") else []
+    if not host_which_optional("git"):
+        return unreadable
+    probe = host_command(["git", "rev-parse", "--is-inside-work-tree"], cwd = workspace_root(), check = False)
+    if probe.strip() != "true":
+        return unreadable
+    listing = host_command(
+        ["git", "ls-files", "-z", "--cached", "--ignored", "--exclude-standard", "--", "."],
+        cwd = workspace_root(),
+        max_output_bytes = 1 << 26,
+    )
+    paths = [path for path in listing.split("\0") if path]
+    out = []
+    for directory in source_dirs:
+        inside = [_turbo_glob_literal(path) for path in paths if _turbo_path_within(path, directory)]
+        if inside:
+            out.extend(glob(inside, exclude = excluded))
+    return out
+
 def _turbo_inputs(ctx):
-    outputs = [output for output in _turbo_attr(ctx, "workspace_outputs", []) or _turbo_attr(ctx, "outputs", []) if not output.startswith("!")]
+    outputs = _turbo_attr(ctx, "workspace_outputs", []) or _turbo_excludable_outputs(_turbo_attr(ctx, "outputs", []), _turbo_attr(ctx, "package_dir", ""))
     excluded = _turbo_glob_exclusions(outputs) + ["**/" + name + "/**/*" for name in _TURBO_IGNORED_DIRS] + [name + "/**/*" for name in _TURBO_IGNORED_DIRS]
     source_dirs = _turbo_attr(ctx, "source_dirs", [])
     sources = []
@@ -446,11 +672,18 @@ def _turbo_inputs(ctx):
     unlinked = []
     for name in _turbo_attr(ctx, "other_packages", []):
         unlinked.extend(["node_modules/" + name, "**/node_modules/" + name])
+    tracked_but_ignored = _turbo_tracked_but_ignored(source_dirs, excluded)
     return _unique(
-        glob(sources, exclude = excluded) +
+        # Turbo hashes a package's tracked files plus its untracked files git
+        # does not ignore, so build leftovers such as `tsconfig.tsbuildinfo`
+        # are not inputs. Files a task's turbo.json `inputs` name, such as
+        # `.env*`, are hashed whether git ignores them or not.
+        glob(sources, exclude = excluded, ignore_files = [] if tracked_but_ignored == None else [".gitignore"]) +
+        (tracked_but_ignored or []) +
+        _file_globs(_turbo_attr(ctx, "task_inputs", []), exclude = excluded) +
         _file_globs(_turbo_attr(ctx, "config", _TURBO_CONFIG)) +
         _file_globs(_turbo_attr(ctx, "global_inputs", [])) +
-        glob(dependencies, exclude = unlinked),
+        glob(dependencies, exclude = unlinked + _javascript_node_modules_state_excludes()),
     )
 
 def _turbo_task_impl(ctx, is_test = False):
@@ -480,6 +713,13 @@ def _turbo_task_impl(ctx, is_test = False):
     package_dir = _turbo_attr(ctx, "package_dir", "")
     node = _turbo_node(ctx)
     env = _turbo_env(node, package_dir)
+    # Turbo runs scripts through the package manager, and pnpm's `.bin` shims
+    # point NODE_PATH at its hoisted dependencies, which code outside every
+    # package's `node_modules` chain, such as a bundle a test writes to a
+    # temporary directory, resolves through. Struo sets it for the whole
+    # script, so a plain `node` command also sees them.
+    if host_path_exists(workspace_root() + "/" + _TURBO_PNPM_HOISTED):
+        env["NODE_PATH"] = execution_path(_TURBO_PNPM_HOISTED)
     for name in _turbo_attr(ctx, "env_inherit", []):
         value = host_env(name)
         if value:
@@ -497,8 +737,17 @@ def _turbo_task_impl(ctx, is_test = False):
     snapshot = declare_output("turbo-outputs") if outputs and cacheable else None
     action_outputs = [snapshot] if snapshot else []
     provider["artifact_inputs"] = dependency_artifacts + action_outputs
+    steps = [
+        {"command": script, "event": event}
+        for script, event in [
+            (_turbo_attr(ctx, "pre_command", ""), "pre" + task),
+            (command, task),
+            (_turbo_attr(ctx, "post_command", ""), "post" + task),
+        ]
+        if script
+    ]
     spec = {
-        "command": command,
+        "steps": steps,
         "cwd": package_dir or ".",
         "outputs": outputs,
         "snapshot": snapshot,
@@ -564,6 +813,7 @@ turbo_workspace = target_kind(
         attr("coverage_per_test", "bool", default = "false", docs = "Forward isolated coverage opt-in to generated native Jest or Vitest test command targets.", configurable = False),
         attr("coverage_sources", "list<string>", default = "[]", docs = "Product source globs forwarded to generated coverage-enabled test targets.", configurable = False),
         attr("_default_test_roots", "list<string>", default = "[]", docs = "Resolver-owned first-party test target names for targetless test selection.", configurable = False),
+        attr("_affected_srcs", "list<string>", default = "[]", docs = "Resolver-owned globs of the files the workspace seed owns in `struo query affected-tests`: every file, as turbo maps files outside every package to the root package. A file no task reads therefore selects no tests.", configurable = False),
     ],
     resolver = _turbo_workspace_resolver,
     deps = [dep("deps", ["turbo_task"], "Turborepo tasks emitted by native integration discovery.")],
@@ -585,12 +835,17 @@ def _turbo_task_attrs():
         attr("package", "string", required = True, docs = "Workspace package name, or `//` for a root task.", configurable = False),
         attr("task", "string", required = True, docs = "Turborepo task name, such as `build`, `test`, or `lint`.", configurable = False),
         attr("command", "string", required = True, docs = "The package script the task runs, executed through the platform shell from `package_dir`.", configurable = False),
+        attr("pre_command", "string", default = "\"\"", docs = "Resolver-owned `pre<task>` package script, run first in its own shell when the package manager runs lifecycle scripts: npm unless `.npmrc` sets `ignore-scripts`, Bun, Yarn 1, and pnpm 9 or later unless `enable-pre-post-scripts` says otherwise; pnpm skips a hook the script already runs. A failure stops the task.", configurable = False),
+        attr("post_command", "string", default = "\"\"", docs = "Resolver-owned `post<task>` package script, run in its own shell after `command` succeeds, under the same rules as `pre_command`.", configurable = False),
         attr("package_dir", "string", default = "\"\"", docs = "Workspace-relative package directory. Empty for the workspace root.", configurable = False),
         attr("outputs", "list<string>", default = "[]", docs = "Workspace-relative output globs, with `!` negations. Existing matches are cached and restored; absent outputs are valid.", configurable = False),
         attr("cache", "bool", default = "true", docs = "False when turbo.json disables caching for the task. The action then always runs and its outputs are not restored.", configurable = False),
         attr("source_dirs", "list<string>", default = "[]", docs = "Workspace-relative directories whose files are action inputs: the package and its internal workspace dependencies. An empty string means the whole workspace.", configurable = False),
         attr("other_packages", "list<string>", default = "[]", docs = "Workspace packages outside `source_dirs`. Their `node_modules` links are left out of the inputs so no input links to undeclared files.", configurable = False),
-        attr("workspace_outputs", "list<string>", default = "[]", docs = "Resolver-owned output globs of every task, excluded from source inputs.", configurable = False),
+        attr("workspace_outputs", "list<string>", default = "[]", docs = "Resolver-owned output globs of every task, excluded from source inputs. A pattern rooted at its package directory that a negated output of the same task carves into, such as `*/**` beside `!src/**`, is left out, so the files it matches stay inputs.", configurable = False),
+        attr("srcs_exclude", "list<string>", default = "[]", docs = "Resolver-owned globs removed from `srcs`: the package's `node_modules` and `.turbo` directories and task outputs inside it. Test discovery and `struo query affected-tests` skip them.", configurable = False),
+        attr("_affected_srcs", "list<string>", default = "[]", docs = "Resolver-owned globs of the files that select this task's tests in `struo query affected-tests`: the files of its package and of the workspace packages it depends on, the workspace configuration files, and turbo.json `globalDependencies`.", configurable = False),
+        attr("task_inputs", "list<string>", default = "[]", docs = "Resolver-owned workspace-relative globs from the task's turbo.json `inputs`, without negations, `$TURBO_DEFAULT$`, and globs outside the workspace; a literal directory also contributes every file in it. Their matches are inputs even when git ignores them, as turbo hashes them; they do not narrow the other inputs.", configurable = False),
         attr("global_inputs", "list<string>", default = "[]", docs = "Workspace-relative files from turbo.json `globalDependencies`.", configurable = False),
         attr("node", "string", default = "\"node\"", docs = "Node.js executable that runs the task wrapper.", configurable = False),
         attr("dependencies", "list<string>", default = "[\"node_modules/**/*\"]", docs = "Installed package files required at execution time. The `node_modules` of each source directory are added.", configurable = False),
@@ -636,7 +891,9 @@ def _turbo_native_project(marker):
         docs = "Recognizes a native Turborepo workspace from " + marker + " and emits `turbo_task` targets for each package's build, test, and lint tasks.",
         markers = [marker],
         target_name = "turbo",
-        inputs = ["package.json", "pnpm-lock.yaml", "yarn.lock", "package-lock.json", "bun.lock", "**/package.json", "**/turbo.json", "**/turbo.jsonc"],
+        inputs = ["package.json", ".npmrc", ".yarnrc.yml", "pnpm-workspace.yaml", "pnpm-lock.yaml", "yarn.lock", "package-lock.json", "bun.lock", "**/package.json", "**/turbo.json", "**/turbo.jsonc"],
+        # `.npmrc` and `.yarnrc.yml` often hold registry tokens, so graph
+        # exports leave them out and lose their lifecycle-script settings.
         manifests = ["turbo.json", "turbo.jsonc", "pnpm-lock.yaml", "pnpm-workspace.yaml", "yarn.lock", "package-lock.json", "bun.lock", "**/package.json", "**/turbo.json", "**/turbo.jsonc"],
         exclude = _native_project_generated_dirs() + ["node_modules", "dist", ".turbo", ".next", "tmp"],
         input_exclude = ["node_modules", ".turbo", ".git", "dist", ".next", "tmp"],

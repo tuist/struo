@@ -161,7 +161,7 @@ impl TargetInputs {
         )
     }
 
-    fn in_srcs(&self, path: &str) -> bool {
+    pub(super) fn in_srcs(&self, path: &str) -> bool {
         self.srcs.iter().any(|pattern| pattern.matches(path))
     }
 

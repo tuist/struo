@@ -30,7 +30,8 @@ the package working directory and declared environment. Python 3 resolves argv
 without evaluating shell expansion.
 
 Shell pipelines, package-manager wrappers, multiple commands and declared task
-outputs are not supported in this mode. They retain ordinary graph selection
+outputs are not supported in this mode, and `pre_command` and `post_command`
+do not run. They retain ordinary graph selection
 with coverage disabled. A successful task alone is not complete case evidence.
 
 ## Providers

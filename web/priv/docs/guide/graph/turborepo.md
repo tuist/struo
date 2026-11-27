@@ -103,14 +103,38 @@ is on disk. Struo instead declares exactly what each task receives, so the
 task can also run on a fresh remote machine. A package task receives:
 
 - every file in its package and in the workspace packages it depends on,
-  except declared outputs, `node_modules`, and `.turbo`
+  except declared outputs, `node_modules`, `.turbo`, and untracked files git
+  ignores, as turbo hashes them. Committed files stay inputs even when an
+  ignore rule matches them, and so do files the task's turbo.json `inputs`
+  name, such as `.env*`, `$TURBO_ROOT$/.env`, or every file in a named
+  directory such as `generated`. `{a,b}` alternatives expand as in turbo.
+  An `inputs` glob outside the workspace is dropped, so a change there does
+  not rerun the task. When git cannot read the checkout, ignored files stay
+  inputs too
 - the root `package.json`, lockfiles, `turbo.json`, `.npmrc`, root
   `tsconfig*.json` files, and the files from `globalDependencies`
-- the installed `node_modules` of the workspace root and of those packages
+- the installed `node_modules` of the workspace root and of those packages,
+  without the caches tools keep there (`.cache`, `.vite`, `.vite-temp`,
+  `.vitest-cache`) or pnpm's install bookkeeping
 - the outputs of the tasks it depends on, transitively
 
 A root task receives the whole workspace. Turbo's task `inputs` setting does
-not narrow these sets.
+not narrow these sets. A task that reads an untracked, git-ignored file its
+`inputs` do not name does not receive it on a remote worker.
+
+An output pattern rooted at the package directory that a negated output of
+the same task carves into, such as `*/**` beside `!src/**`, is not excluded
+from inputs, so the package's sources stay inputs. An output under its own
+directory, such as `.next/**` beside `!.next/cache/**`, is excluded whole.
+
+Like `<package manager> run`, a task runs its `pre<task>` script before it
+and its `post<task>` script after it, each in its own shell, when the
+workspace's package manager does: npm unless `.npmrc` sets `ignore-scripts`,
+Bun, Yarn 1, and pnpm 9 or later unless `enable-pre-post-scripts` (or
+`enablePrePostScripts`) says otherwise. pnpm skips a hook the script already
+runs itself. Yarn 2 or later does not run them. When
+`node_modules/.pnpm/node_modules` exists, tasks get it as `NODE_PATH`, as
+pnpm's `.bin` shims do.
 
 Environment variables follow turbo's strict mode: a task receives the
 variables in its `env` and `passThroughEnv`, the global forms of both, and the
@@ -150,8 +174,6 @@ still installs dependencies and updates lock files.
 
 - Test suites do not support case listing, case filtering, or sharding.
   Individual assertions are not imported; native output stays in the log.
-- Package manager lifecycle hooks such as `prebuild` are not run, because
-  Struo runs the script directly.
 - Turbo's task `inputs` do not narrow what Struo hashes, so a change can rerun
   more tasks than turbo would.
 

@@ -516,7 +516,12 @@ relative to the workspace, to the directory those globs start from, or to a
 directory above that one. A search does not enter a directory that
 `srcs_exclude` or `_affected_mentions_exclude` removes with a `/**` pattern. Struo searches those files only while
 answering the query, so graph loading reads none of them. A path no target
-claims this way selects no tests. Use these when `srcs` must cover a whole
+claims this way selects no tests. A seed may set `_affected_srcs = ["**/*"]`
+to say that a file none of its generated targets claims, such as a README,
+changes none of its tests, as Turborepo's root package does. Such a seed
+selects nothing for a file outside its own `srcs` and leaves those files to
+other owners, and the nearest-package fallback then skips targets that set
+`_affected_srcs`. Use these when `srcs` must cover a whole
 directory for staging or input discovery but only some of its files can change
 the target's tests. The Cargo resolver sets them for workspace packages.
 

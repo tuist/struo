@@ -474,6 +474,106 @@ fn a_path_another_target_owns_still_selects_the_targets_that_name_it() {
     assert_eq!(selected("docs/guide.md"), ["docs_lint"]);
 }
 
+// Turborepo's seed claims every file through `_affected_srcs`, as turbo's
+// root package does. Beside a Cargo workspace at the same root, that claim
+// must not take a changed `Cargo.toml` from the Cargo seed, nor a file only
+// the Cargo side would fall back to, while a file no task reads still selects
+// none of the Turborepo tests.
+#[test]
+fn a_catch_all_seed_leaves_other_owners_their_tests() {
+    let workspace = TempDir::new().unwrap();
+    let strings = |values: &[&str]| {
+        AttrValue::List(
+            values
+                .iter()
+                .map(|value| AttrValue::String((*value).to_string()))
+                .collect(),
+        )
+    };
+    let mut cargo = target("cargo", "cargo_workspace", &["Cargo.toml"], &[], false);
+    cargo
+        .attrs
+        .insert("_default_test_roots".to_string(), strings(&["rust_tests"]));
+    let mut turbo = target("turbo", "turbo_workspace", &["turbo.json"], &[], false);
+    turbo
+        .attrs
+        .insert("_default_test_roots".to_string(), strings(&["web__test"]));
+    turbo
+        .attrs
+        .insert("_affected_srcs".to_string(), strings(&["**/*"]));
+    let mut web = target(
+        "web__test",
+        "turbo_test",
+        &["apps/web/**/*"],
+        &["web__build"],
+        true,
+    );
+    web.attrs
+        .insert("_affected_srcs".to_string(), strings(&["apps/web/**"]));
+    let mut build = target("web__build", "turbo_task", &["apps/web/**/*"], &[], false);
+    build
+        .attrs
+        .insert("_affected_srcs".to_string(), strings(&["apps/web/**"]));
+    let mut rust_tests = target(
+        "rust_tests",
+        "rust_test",
+        &["crates/core/**/*.rs"],
+        &[],
+        true,
+    );
+    rust_tests
+        .attrs
+        .insert("_affected_srcs".to_string(), strings(&["crates/core/**"]));
+    let graph = vec![
+        cargo,
+        turbo,
+        web,
+        build,
+        rust_tests,
+        target(
+            "swift_tests",
+            "apple_test_bundle",
+            &["Sources/**/*.swift"],
+            &[],
+            true,
+        ),
+    ];
+    let selected = |path: &str| {
+        selection_report(workspace.path(), &graph, &[path.to_string()])
+            .unwrap()
+            .tests
+            .into_iter()
+            .map(|test| test.id)
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(selected("Cargo.toml"), ["rust_tests"]);
+    assert_eq!(selected("turbo.json"), ["web__test"]);
+    assert_eq!(selected("apps/web/page.tsx"), ["web__test"]);
+    // Root-package targets without `_affected_srcs` keep the nearest-package
+    // fallback; the Turborepo test, which declares what it reads, does not.
+    assert_eq!(selected("README.md"), ["rust_tests", "swift_tests"]);
+    // A path outside every package, such as documentation a doc-test
+    // includes, keeps the conservative whole-scope fallback for every test
+    // but the catch-all seed's own.
+    let report =
+        selection_report(workspace.path(), &graph, &["docs/guide.md".to_string()]).unwrap();
+    assert_eq!(report.unmatched_paths, ["docs/guide.md"]);
+    assert_eq!(
+        report
+            .tests
+            .into_iter()
+            .map(|test| test.id)
+            .collect::<Vec<_>>(),
+        ["rust_tests", "swift_tests"]
+    );
+    let mut turbo_only = graph.clone();
+    turbo_only.retain(|target| target.kind.starts_with("turbo"));
+    let report =
+        selection_report(workspace.path(), &turbo_only, &["README.md".to_string()]).unwrap();
+    assert!(report.tests.is_empty(), "{:?}", report.tests);
+}
+
 fn target(id: &str, kind: &str, srcs: &[&str], deps: &[&str], test: bool) -> GraphTarget {
     let (package, name) = id.rsplit_once('/').unwrap_or(("", id));
     GraphTarget {

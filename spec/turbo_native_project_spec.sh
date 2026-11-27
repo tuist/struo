@@ -11,15 +11,32 @@ Describe 'turborepo native project'
     cp -R "$REPO_ROOT/crates/struo-frontend/prelude/examples/turbo-workspace-native-project/." "$WORKSPACE/"
   }
 
+  # ShellSpec reads `Skip` only at the start of a line, so a guard such as
+  # `cmd || Skip` runs `Skip` as a missing command. `Skip if` takes these
+  # conditions instead.
+  node_unavailable() {
+    ! command -v node >/dev/null 2>&1
+  }
+
+  npm_unavailable() {
+    ! command -v npm >/dev/null 2>&1
+  }
+
+  # Runs in a subshell, as `Skip if` conditions do; the installed packages
+  # stay in the workspace.
+  npm_install_fails() {
+    ! (cd "$WORKSPACE" && npm install --no-audit --no-fund --loglevel=error >/dev/null 2>&1)
+  }
+
   target_ids() {
     struo --format json query targets | jq -r '.[] | "\(.kind) \(.id)"' | sort
   }
 
   It 'derives Turborepo tasks with no struo.toml present'
-    command -v npm >/dev/null 2>&1 || Skip 'node and npm are required'
+    Skip if 'node and npm are required' npm_unavailable
     copy_starter
     rm "$WORKSPACE/struo.toml" "$WORKSPACE/graph.json"
-    (cd "$WORKSPACE" && npm install --no-audit --no-fund --loglevel=error >/dev/null 2>&1) || Skip 'npm install failed; skipping (offline?)'
+    Skip if 'npm install failed; skipping (offline?)' npm_install_fails
 
     When call target_ids
     The status should be success
@@ -41,7 +58,7 @@ turbo_workspace turbo"
   }
 
   It 'restores outputs from cache and rebuilds consumers when an upstream package changes'
-    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    Skip if 'node is required' node_unavailable
     copy_starter
 
     When call cache_and_invalidation
@@ -50,7 +67,7 @@ turbo_workspace turbo"
   End
 
   It 'fails the suite when its upstream build output changes the result'
-    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    Skip if 'node is required' node_unavailable
     copy_starter
     sed -i.bak "s/Hello, /Hi, /" "$WORKSPACE/packages/greeting/build.js"
 
@@ -81,6 +98,12 @@ Describe 'turborepo pnpm monorepo'
     (cd "$WORKSPACE" && "$@" install --frozen-lockfile --store-dir "${SPEC_ORIGINAL_HOME:-$HOME}/.local/share/pnpm/store" >/dev/null 2>&1)
   }
 
+  # Runs in a subshell, as `Skip if` conditions do; the copied fixture and
+  # its installed packages stay in the workspace.
+  monorepo_unavailable() {
+    ! install_monorepo
+  }
+
   # The Turborepo tasks that ran instead of coming from cache while building
   # each given target, sorted and space-separated.
   executed_tasks() {
@@ -94,7 +117,7 @@ Describe 'turborepo pnpm monorepo'
   }
 
   It 'derives the task graph turbo resolves, bridging tasks that have no script'
-    install_monorepo || Skip 'node and pnpm are required (offline?)'
+    Skip if 'node and pnpm are required (offline?)' monorepo_unavailable
 
     When call target_graph
     The status should be success
@@ -118,7 +141,7 @@ turbo_workspace turbo _acme_core__build _acme_web__build"
   }
 
   It 'builds through workspace bins and source-only packages and restores outputs except negated ones'
-    install_monorepo || Skip 'node and pnpm are required (offline?)'
+    Skip if 'node and pnpm are required (offline?)' monorepo_unavailable
 
     When call restore_outputs
     The status should be success
@@ -140,7 +163,7 @@ cache directory not restored'
   # Root tasks receive the whole workspace, so `//#lint` reruns too; the
   # unrelated package lint tasks stay cached.
   It 'reruns only the tasks downstream of a changed configuration package'
-    install_monorepo || Skip 'node and pnpm are required (offline?)'
+    Skip if 'node and pnpm are required (offline?)' monorepo_unavailable
 
     When call shared_configuration_change
     The status should be success
@@ -157,7 +180,7 @@ cache directory not restored'
   }
 
   It 'passes declared task and global environment variables and keys the cache on them'
-    install_monorepo || Skip 'node and pnpm are required (offline?)'
+    Skip if 'node and pnpm are required (offline?)' monorepo_unavailable
 
     When call environment_changes
     The status should be success
@@ -173,7 +196,7 @@ cache directory not restored'
   }
 
   It "keeps the caller's PATH and HOME out of task cache keys"
-    install_monorepo || Skip 'node and pnpm are required (offline?)'
+    Skip if 'node and pnpm are required (offline?)' monorepo_unavailable
 
     When call path_changes
     The status should be success
@@ -181,7 +204,7 @@ cache directory not restored'
   End
 
   It 'runs every package test suite'
-    install_monorepo || Skip 'node and pnpm are required (offline?)'
+    Skip if 'node and pnpm are required (offline?)' monorepo_unavailable
 
     When call struo test
     The status should be success
@@ -189,11 +212,15 @@ cache directory not restored'
     The stdout should include '_acme_web__test: 1 passed, 0 failed'
   End
 
-  It 'fails lint tasks, including root tasks, on findings'
-    install_monorepo || Skip 'node and pnpm are required (offline?)'
+  lint_with_finding() {
     printf '\n// FIXME\n' >> "$WORKSPACE/apps/web/src/page.js"
+    struo build _acme_web__lint
+  }
 
-    When call struo build _acme_web__lint
+  It 'fails lint tasks, including root tasks, on findings'
+    Skip if 'node and pnpm are required (offline?)' monorepo_unavailable
+
+    When call lint_with_finding
     The status should be failure
     The stderr should include 'src/page.js: FIXME'
   End

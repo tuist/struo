@@ -22,6 +22,49 @@ fn task(id: &str, directory: &str, command: &str, dependencies: &[&str]) -> serd
     })
 }
 
+// `turbo query` lists every package script as a task, but `turbo run` accepts
+// only tasks turbo.json configures and fails on any other. The stub answers
+// both the way turbo 2 does for a package with an unconfigured `test` script.
+#[cfg(unix)]
+#[test]
+fn package_scripts_turbo_json_does_not_configure_are_not_targets() {
+    let workspace = TempDir::new().unwrap();
+    let root = workspace.path();
+    fs::create_dir_all(root.join("node_modules/turbo/bin")).unwrap();
+    fs::create_dir_all(root.join("app")).unwrap();
+    fs::write(root.join("package.json"), "{\"name\": \"root\"}").unwrap();
+    fs::write(root.join("app/package.json"), "{\"name\": \"app\"}").unwrap();
+    fs::write(root.join("turbo.json"), "{\"tasks\": {\"build\": {}}}").unwrap();
+    let dry = json!({"turboVersion": "2.10.5", "globalCacheInputs": {}, "tasks": [task("app#build", "app", "node build.js", &[])]});
+    fs::write(
+        root.join("node_modules/turbo/bin/turbo"),
+        format!(
+            r"const args = process.argv.slice(2);
+if (args[0] === 'query') {{
+  console.log(JSON.stringify({{data: {{packages: {{items: [{{name: 'app', path: 'app',
+    tasks: {{items: [{{name: 'build'}}, {{name: 'test'}}]}}, allDependencies: {{items: []}}}}]}}}}}}));
+}} else {{
+  const unknown = args.slice(1).find(arg => !arg.startsWith('-') && arg !== 'build');
+  if (unknown) {{
+    process.stderr.write('  x Missing tasks in project\n  `->   x Could not find task `' + unknown + '` in project\n');
+    process.exit(1);
+  }}
+  console.log(JSON.stringify({dry}));
+}}
+"
+        ),
+    )
+    .unwrap();
+
+    let targets = struo_frontend::load_graph_workspace(root).unwrap();
+    let mut names = targets
+        .iter()
+        .map(|target| target.label.id.as_str())
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    assert_eq!(names, ["app__build", "turbo"]);
+}
+
 #[test]
 fn coverage_opt_in_reaches_only_generated_test_targets() {
     let workspace = TempDir::new().unwrap();
@@ -79,7 +122,15 @@ fn resolver_bridges_scriptless_tasks_and_maps_package_paths() {
     web_build["resolvedTaskDefinition"]["outputs"] = json!([
         ".next/**",
         "!.next/cache/**",
-        "$TURBO_ROOT$/reports/web.json"
+        "../../reports/web.json",
+        "../../../outside/**"
+    ]);
+    web_build["resolvedTaskDefinition"]["inputs"] = json!([
+        "!README.md",
+        "../../.env",
+        "gen/",
+        "src/**/*.{ts,tsx}",
+        ".env.{local,test}"
     ]);
     web_build["environmentVariables"] = json!({
         "specified": {"env": ["API_URL", "NEXT_PUBLIC_*"], "passThroughEnv": ["AWS_TOKEN"]},
@@ -87,6 +138,8 @@ fn resolver_bridges_scriptless_tasks_and_maps_package_paths() {
     });
     let mut deploy = task("web#deploy", "apps/web", "vercel deploy", &["web#build"]);
     deploy["resolvedTaskDefinition"]["cache"] = json!(false);
+    let mut format = task("//#format", "", "prettier --check .", &[]);
+    format["resolvedTaskDefinition"]["inputs"] = json!(["."]);
     let mut dev = task("web#dev", "apps/web", "next dev", &[]);
     dev["resolvedTaskDefinition"]["persistent"] = json!(true);
     let graph = json!({
@@ -110,7 +163,7 @@ fn resolver_bridges_scriptless_tasks_and_maps_package_paths() {
                 task("config#build", "packages/config", "<NONEXISTENT>", &["config#generate"]),
                 task("config#generate", "packages/config", "node generate.js", &[]),
                 task("ui#build", "packages/ui", "tsc", &["config#build"]),
-                task("//#format", "", "prettier --check .", &[]),
+                format,
             ],
         },
     });
@@ -147,6 +200,22 @@ fn resolver_bridges_scriptless_tasks_and_maps_package_paths() {
             "reports/web.json"
         ])
     );
+    assert_eq!(
+        attr("web__build", "task_inputs"),
+        json!([
+            ".env",
+            ".env/**/*",
+            "apps/web/gen",
+            "apps/web/gen/**/*",
+            "apps/web/src/**/*.ts",
+            "apps/web/src/**/*.tsx",
+            "apps/web/.env.local",
+            "apps/web/.env.local/**/*",
+            "apps/web/.env.test",
+            "apps/web/.env.test/**/*"
+        ])
+    );
+    assert_eq!(attr("root__format", "task_inputs"), json!(["**/*"]));
     assert_eq!(
         attr("web__build", "source_dirs"),
         json!(["apps/web", "packages/ui", "packages/config"])
