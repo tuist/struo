@@ -40,6 +40,7 @@ impl TriggerBatch {
                     digest,
                     path_suffix: format!("/cfg-{}", &digest.to_hex()[..16]),
                     native_targets: None,
+                    native_deferred_targets: Vec::new(),
                     execution: None,
                 };
                 let session = BuildSession::load_workspace_with_configuration(

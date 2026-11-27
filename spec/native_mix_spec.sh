@@ -539,6 +539,104 @@ EX
     native_struo test > "$SPEC_ROOT/test.json" 2> "$SPEC_ROOT/test.err" || { cat "$WORKSPACE/.struo/out/app/mix_tests/test/elixir-test.log" >&2; return 1; }
   }
 
+  # The layout `mix new --umbrella` generates: children share the root's
+  # lockfile, dependency sources, build directory, and configuration.
+  prepare_umbrella() {
+    umbrella="$WORKSPACE/app"
+    example="$REPO_ROOT/crates/struo-frontend/prelude/examples/elixir-library-with-mix-dependency"
+    mkdir -p "$WORKSPACE/.git" "$umbrella/config" "$umbrella/deps" "$umbrella/apps/greeter/lib" "$umbrella/apps/greeter/test" "$umbrella/apps/helper/lib"
+    cp "$example/mix.lock" "$umbrella/"
+    cp -R "$example/deps/locked_greeting" "$umbrella/deps/"
+    printf 'import Config\n' > "$umbrella/config/config.exs"
+    cat > "$umbrella/mix.exs" <<'EX'
+defmodule Umbrella.MixProject do
+  use Mix.Project
+  def project, do: [apps_path: "apps", version: "0.1.0", deps: []]
+end
+EX
+    for child in greeter helper; do
+      deps='[]'
+      [ "$child" = greeter ] && deps='[{:locked_greeting, "0.1.0"}, {:helper, in_umbrella: true}]'
+      # Mix leaves a dependency for another target out of the host build.
+      [ "$child" = helper ] && deps='[{:locked_greeting, "0.1.0", targets: :rpi}]'
+      cat > "$umbrella/apps/$child/mix.exs" <<EX
+defmodule ${child^}.MixProject do
+  use Mix.Project
+  def project do
+    [app: :$child, version: "0.1.0", build_path: "../../_build", config_path: "../../config/config.exs",
+     deps_path: "../../deps", lockfile: "../../mix.lock", deps: $deps]
+  end
+end
+EX
+    done
+    printf 'defmodule Helper do\n  def name, do: "Umbrella"\nend\n' > "$umbrella/apps/helper/lib/helper.ex"
+    printf 'defmodule Helper.Late do\n  def value, do: :loaded\nend\n' > "$umbrella/apps/helper/lib/late.ex"
+    printf 'defmodule Greeter do\n  def greet, do: LockedGreeting.message(Helper.name())\nend\n' > "$umbrella/apps/greeter/lib/greeter.ex"
+    printf 'ExUnit.start()\n' > "$umbrella/apps/greeter/test/test_helper.exs"
+    cat > "$umbrella/apps/greeter/test/greeter_test.exs" <<'EX'
+defmodule GreeterTest do
+  use ExUnit.Case
+  test "greets through the locked package and the sibling app" do
+    assert Greeter.greet() == "Hello, Umbrella!"
+  end
+
+  # Like Mix, dependency code and the run's own files stay reachable after a
+  # test changes directory for good.
+  test "loads a dependency module after changing directory" do
+    File.cd!(System.tmp_dir!())
+    assert Helper.Late.value() == :loaded
+  end
+end
+EX
+  }
+
+  exercise_umbrella() {
+    prepare_umbrella
+    native_struo build > "$SPEC_ROOT/build.json" 2> "$SPEC_ROOT/build.err" || { cat "$SPEC_ROOT/build.err" >&2; return 1; }
+    native_struo test > "$SPEC_ROOT/test.json" 2> "$SPEC_ROOT/test.err" || { cat "$SPEC_ROOT/test.err" "$WORKSPACE/.struo/out/app/apps/greeter/mix_tests/test/elixir-test.log" >&2; return 1; }
+    "$SPEC_PYTHON3" - "$WORKSPACE/.struo/out/app/apps/greeter/mix_tests/test/test_results.json" <<'PY'
+import json, sys
+result = json.load(open(sys.argv[1]))
+assert result["status"] == "passed" and result["summary"]["passed"] == 2, result
+PY
+    # Mix builds an in-umbrella sibling in the parent's environment.
+    [ -d "$WORKSPACE/.struo/out/app/apps/helper/mix_application_test" ] || { echo "the sibling was not built for the test environment" >&2; return 1; }
+    (cd "$WORKSPACE/app/apps/greeter" && "$STRUO_BIN" --format json test > "$SPEC_ROOT/child-test.json" 2> "$SPEC_ROOT/child-test.err") || { cat "$SPEC_ROOT/child-test.err" >&2; return 1; }
+    (cd "$WORKSPACE/app/apps/helper" && "$STRUO_BIN" --format json query test-plan > /dev/null 2> "$SPEC_ROOT/child-plan.err") || { cat "$SPEC_ROOT/child-plan.err" >&2; return 1; }
+    native_struo query test-plan > /dev/null 2> "$SPEC_ROOT/plan.err" || { cat "$SPEC_ROOT/plan.err" >&2; return 1; }
+    native_struo query 'MATCH (a:Target {id: "apps/helper/mix_application_dev"})-[:DEPENDS_ON]->(d:Target) RETURN d.id' > "$SPEC_ROOT/helper-deps.json" 2>&1
+    ! grep -q locked "$SPEC_ROOT/helper-deps.json" || { echo "a dependency for another target reached the host build" >&2; return 1; }
+    for path in config/config.exs mix.lock; do
+      selected="$(native_struo query affected-tests --changed-path "$path" 2> "$SPEC_ROOT/affected.err" | "$SPEC_PYTHON3" -c 'import json, sys; print(" ".join(test["id"] for test in json.load(sys.stdin)))')"
+      [ "$selected" = apps/greeter/mix_tests ] || { echo "a change to the umbrella's $path selected '$selected'" >&2; return 1; }
+    done
+  }
+
+  exercise_lockless_umbrella() {
+    prepare_umbrella
+    rm -rf "$WORKSPACE/app/mix.lock" "$WORKSPACE/app/deps" "$WORKSPACE/app/apps/helper/lib/late.ex"
+    printf 'defmodule Greeter do\n  def greet, do: "Hello, #{Helper.name()}!"\nend\n' > "$WORKSPACE/app/apps/greeter/lib/greeter.ex"
+    sed -i.bak -e 's/{:locked_greeting, "0.1.0"}, //' -e 's/\[{:locked_greeting, "0.1.0", targets: :rpi}\]/[]/' "$WORKSPACE/app/apps/greeter/mix.exs" "$WORKSPACE/app/apps/helper/mix.exs"
+    "$SPEC_PYTHON3" - "$WORKSPACE/app/apps/greeter/test/greeter_test.exs" <<'PY'
+import pathlib, re, sys
+path = pathlib.Path(sys.argv[1])
+path.write_text(re.sub(r"\n  # Like Mix.*?\n  end\n", "\n", path.read_text(), flags=re.S))
+PY
+    native_struo test > "$SPEC_ROOT/test.json" 2> "$SPEC_ROOT/test.err" || { cat "$SPEC_ROOT/test.err" >&2; return 1; }
+  }
+
+  It 'builds an umbrella whose children depend only on each other without a lockfile'
+    Skip if 'Mix toolchain unavailable on this host' mix_tools_unavailable
+    When call exercise_lockless_umbrella
+    The status should be success
+  End
+
+  It 'builds and tests an umbrella whose children share the root lockfile'
+    Skip if 'Mix toolchain unavailable on this host' mix_tools_unavailable
+    When call exercise_umbrella
+    The status should be success
+  End
+
   It 'keeps the test build off the code path of processes a test spawns'
     Skip if 'Mix toolchain unavailable on this host' mix_tools_unavailable
     When call exercise_child_code_paths

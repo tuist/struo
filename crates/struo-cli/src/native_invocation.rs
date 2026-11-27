@@ -10,6 +10,7 @@ pub(crate) fn query_graph(directory: &Path) -> Result<(PathBuf, Vec<struo_fronte
         let mut resolved =
             crate::commands::graph::resolve_invocation_configuration(&invocation.workspace, &[])?;
         resolved.native_targets = Some(invocation.targets);
+        resolved.native_deferred_targets = invocation.deferred_targets;
         let graph = resolved.load_graph(&invocation.workspace)?;
         Ok((invocation.workspace, graph))
     } else {

@@ -363,6 +363,7 @@ pub(crate) fn load_graph_workspace_with_compiled_schemas_and_targets(
             root,
             compiled_schemas,
             targets,
+            Vec::new(),
             options,
         )?
         .0,
@@ -373,10 +374,11 @@ pub(crate) fn load_graph_workspace_with_compiled_schemas_and_targets_recorded(
     root: &Path,
     compiled_schemas: &[TargetKindSchema],
     targets: Vec<Target>,
+    deferred: Vec<Target>,
     options: &crate::analysis::AnalysisOptions,
 ) -> Result<(Vec<GraphTarget>, crate::resolution::ResolutionRecord)> {
     let schemas = target_kind_schemas_for_workspace_from_compiled(root, compiled_schemas)?;
-    load_graph_workspace_recorded(root, targets, &schemas, options)
+    load_graph_workspace_recorded(root, targets, deferred, &schemas, options)
 }
 
 pub(crate) fn load_graph_workspace_with_targets_and_schemas(
@@ -387,6 +389,7 @@ pub(crate) fn load_graph_workspace_with_targets_and_schemas(
     Ok(load_graph_workspace_recorded(
         root,
         targets,
+        Vec::new(),
         schemas,
         &crate::analysis::AnalysisOptions::default(),
     )?
@@ -398,11 +401,12 @@ pub(crate) fn load_graph_workspace_with_targets_and_schemas(
 pub(crate) fn load_graph_workspace_recorded(
     root: &Path,
     targets: Vec<Target>,
+    deferred: Vec<Target>,
     schemas: &[TargetKindSchema],
     options: &crate::analysis::AnalysisOptions,
 ) -> Result<(Vec<GraphTarget>, crate::resolution::ResolutionRecord)> {
     let mut expanded =
-        crate::resolution::expand_workspace_targets(root, targets, schemas, options)?;
+        crate::resolution::expand_workspace_targets(root, targets, deferred, schemas, options)?;
     let record = std::mem::take(&mut expanded.record);
     let mut graph = graph_from_owned_targets_with_schemas(expanded.targets, schemas);
     for target in &mut graph {

@@ -35,6 +35,9 @@ pub struct ResolvedConfiguration {
     pub path_suffix: String,
     pub digest: Digest,
     pub native_targets: Option<Vec<struo_frontend::Target>>,
+    /// Native seeds loaded only when a loaded target needs one of their
+    /// targets.
+    pub native_deferred_targets: Vec<struo_frontend::Target>,
     pub execution: Option<struo_core::RemoteExecution>,
 }
 
@@ -72,7 +75,12 @@ impl ResolvedConfiguration {
             &kinds,
         )?
         .with_configuration(self.configuration.clone(), self.path_suffix.clone())
-        .load_graph_workspace_from_targets(workspace, targets)
+        .load_graph_workspace_from_seeds_recorded(
+            workspace,
+            targets,
+            self.native_deferred_targets.clone(),
+        )
+        .map(|(graph, _)| graph)
     }
 }
 
@@ -128,6 +136,7 @@ pub fn resolve(
         path_suffix,
         digest: effective_digest,
         native_targets: None,
+        native_deferred_targets: Vec::new(),
         execution: None,
     })
 }

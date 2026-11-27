@@ -304,11 +304,24 @@ impl AnalysisEngine {
         root: &Path,
         targets: Vec<Target>,
     ) -> Result<(Vec<GraphTarget>, crate::ResolutionRecord)> {
+        self.load_graph_workspace_from_seeds_recorded(root, targets, Vec::new())
+    }
+
+    /// Load the graph from `targets`, adding a `deferred` seed only once a
+    /// loaded target depends on a target in its package other than the seed
+    /// itself. A deferred seed's default test roots stay out of the graph.
+    pub fn load_graph_workspace_from_seeds_recorded(
+        &self,
+        root: &Path,
+        targets: Vec<Target>,
+        deferred: Vec<Target>,
+    ) -> Result<(Vec<GraphTarget>, crate::ResolutionRecord)> {
         super::with_analysis_resources_blocking(Arc::clone(&self.host_cache.resources), || {
             crate::graph::load_graph_workspace_with_compiled_schemas_and_targets_recorded(
                 root,
                 &self.target_kind_schemas,
                 targets,
+                deferred,
                 &self.options,
             )
             .map_err(anyhow::Error::new)

@@ -10,7 +10,11 @@ then emits ordinary `mix_dependencies`, `mix_project`, `elixir_test`, and
 
 For a leaf project, the seed's build capability follows `mix_env`, then
 `MIX_ENV`, defaulting to the development application. For an umbrella root, it selects the detected child
-`mix_workspace` seeds. Nested projects and path dependencies preserve their
+`mix_workspace` seeds and emits one `mix_dependencies` set per environment from
+the root lockfile. A child whose `lockfile` lies in the umbrella root depends on
+the root's packages it declares and on its `in_umbrella` siblings, and declares
+the root lockfile and configuration as its inputs. Commands run inside a child
+select that child and load the root and siblings it depends on. Nested projects and path dependencies preserve their
 workspace-relative layout. From an unconfigured project directory,
 `struo build` and `struo test` automatically select the current Mix project.
 The nearest Git repository root contains sibling path dependencies without

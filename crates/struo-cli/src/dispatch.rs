@@ -148,6 +148,9 @@ async fn run_command(
             let mut resolved =
                 commands::graph::resolve_invocation_configuration(workspace, config)?;
             resolved.native_targets = native.map(|invocation| invocation.targets.clone());
+            resolved.native_deferred_targets = native
+                .map(|invocation| invocation.deferred_targets.clone())
+                .unwrap_or_default();
             Ok(resolved)
         };
     if command_runs_actions(&command) {

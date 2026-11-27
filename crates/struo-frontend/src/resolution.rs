@@ -123,6 +123,7 @@ struct ResolvedTargetSpec {
 pub(crate) fn expand_workspace_targets(
     root: &Path,
     targets: Vec<Target>,
+    deferred: Vec<Target>,
     schemas: &[TargetKindSchema],
     options: &crate::analysis::AnalysisOptions,
 ) -> Result<ExpandedWorkspaceTargets> {
@@ -154,6 +155,7 @@ pub(crate) fn expand_workspace_targets(
             Ok(expand_resolver_targets(
                 root,
                 targets,
+                deferred,
                 schemas,
                 resolve,
                 &mut record.resolvers,
@@ -172,6 +174,7 @@ pub(crate) fn expand_workspace_targets(
 fn expand_resolver_targets<F>(
     root: &Path,
     mut targets: Vec<Target>,
+    mut deferred: Vec<Target>,
     schemas: &[TargetKindSchema],
     resolve: &mut F,
     inputs: &mut Vec<ResolverInputs>,
@@ -182,8 +185,14 @@ where
 {
     let mut ids = targets.iter().map(Target::id).collect::<BTreeSet<_>>();
     let mut diagnostics = BTreeMap::<String, Vec<crate::Diagnostic>>::new();
+    let mut loaded_on_demand = BTreeSet::new();
     let mut index = 0;
-    while index < targets.len() {
+    loop {
+        if index == targets.len()
+            && !load_wanted_seeds(&mut targets, &mut ids, &mut deferred, &mut loaded_on_demand)
+        {
+            break;
+        }
         let target = targets[index].clone();
         if target_kind_has_resolver(schemas, &target.kind) {
             let graph_target = graph_target_from_schema(&target, schemas);
@@ -254,17 +263,11 @@ where
                     targets[index].deps.push(dependency);
                 }
             }
-            for name in attrs.keys() {
-                if targets[index].typed_attrs.contains_key(name) {
-                    return Err(resolution_error(
-                        &target.id(),
-                        format!(
-                            "resolver attribute `{name}` conflicts with a value declared by the owner target"
-                        ),
-                    ));
-                }
-            }
-            targets[index].typed_attrs.extend(attrs);
+            merge_owner_attrs(
+                &mut targets[index],
+                attrs,
+                loaded_on_demand.contains(&target.id()),
+            )?;
             targets.extend(emitted_ids);
         }
         index += 1;
@@ -274,6 +277,75 @@ where
         diagnostics,
         record: ResolutionRecord::default(),
     })
+}
+
+/// Add a resolver's attributes to its owner, which must not declare them
+/// already. A seed loaded on demand is not part of the invocation, so it keeps
+/// no default test roots.
+fn merge_owner_attrs(
+    owner: &mut Target,
+    mut attrs: BTreeMap<String, AttrValue>,
+    on_demand: bool,
+) -> Result<()> {
+    if let Some(name) = attrs
+        .keys()
+        .find(|name| owner.typed_attrs.contains_key(*name))
+    {
+        return Err(resolution_error(
+            &owner.id(),
+            format!(
+                "resolver attribute `{name}` conflicts with a value declared by the owner target"
+            ),
+        ));
+    }
+    if on_demand {
+        attrs.remove("_default_test_roots");
+    }
+    owner.typed_attrs.extend(attrs);
+    Ok(())
+}
+
+/// Move into `targets` each deferred seed whose package holds a target that a
+/// loaded target depends on, other than the seed itself. Returns whether any
+/// seed moved.
+fn load_wanted_seeds(
+    targets: &mut Vec<Target>,
+    ids: &mut BTreeSet<String>,
+    deferred: &mut Vec<Target>,
+    loaded: &mut BTreeSet<String>,
+) -> bool {
+    let wanted = targets
+        .iter()
+        .flat_map(|target| {
+            target
+                .deps
+                .iter()
+                .chain(target.dependency_edges.values().flatten())
+        })
+        .filter(|id| !ids.contains(id.as_str()))
+        .map(|id| {
+            (
+                id.rsplit_once('/').map_or("", |(package, _)| package),
+                id.as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let (load, keep) = std::mem::take(deferred)
+        .into_iter()
+        .partition::<Vec<_>, _>(|seed| {
+            wanted
+                .iter()
+                .any(|(package, id)| seed.package == *package && seed.id() != *id)
+        });
+    *deferred = keep;
+    let moved = !load.is_empty();
+    for seed in load {
+        if ids.insert(seed.id()) {
+            loaded.insert(seed.id());
+            targets.push(seed);
+        }
+    }
+    moved
 }
 
 fn target_kind_has_resolver(schemas: &[TargetKindSchema], kind: &str) -> bool {

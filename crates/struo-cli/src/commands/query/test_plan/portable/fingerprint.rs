@@ -110,6 +110,9 @@ fn hash_target_inputs(
     let mut named = Vec::new();
     for pattern in &node.srcs {
         let directory_only = pattern.ends_with(std::path::is_separator);
+        // A pattern that climbs out of its package, as a glob may, binds the
+        // same files from the workspace root.
+        let (package, pattern) = climbing_source(&node.label.package, pattern)?;
         let source = WorkspacePath::try_from(pattern.as_str())?;
         // Wildcard patterns go through the walk `glob()` uses, which never
         // enters an excluded tree such as a build output directory. A path
@@ -122,18 +125,24 @@ fn hash_target_inputs(
         {
             let literal = source.as_str();
             if literal.contains(['*', '?', '[']) {
-                walked.push(vec![literal.to_string(), format!("{literal}/**")]);
+                walked.push((
+                    package.clone(),
+                    vec![literal.to_string(), format!("{literal}/**")],
+                ));
                 continue;
             }
-            let path = workspace.join(&node.label.package).join(literal);
+            let path = workspace.join(&package).join(literal);
             match std::fs::symlink_metadata(&path) {
-                Ok(metadata) if metadata.is_dir() => walked.push(vec![if literal.is_empty() {
-                    "**".to_string()
-                } else {
-                    format!("{literal}/**")
-                }]),
+                Ok(metadata) if metadata.is_dir() => walked.push((
+                    package.clone(),
+                    vec![if literal.is_empty() {
+                        "**".to_string()
+                    } else {
+                        format!("{literal}/**")
+                    }],
+                )),
                 Ok(_) if !is_excluded(literal) => {
-                    let input = Path::new(&node.label.package).join(literal);
+                    let input = Path::new(&package).join(literal);
                     let input = input.to_str().context("non-UTF-8 discovery input")?;
                     named.push(WorkspacePath::try_from(input)?.as_str().to_string());
                 }
@@ -149,7 +158,7 @@ fn hash_target_inputs(
         let pattern = if source.as_str().split('/').next() == Some(".struo") {
             PathBuf::from(source.as_str())
         } else {
-            Path::new(&node.label.package).join(source.as_str())
+            Path::new(&package).join(source.as_str())
         };
         let pattern = pattern.to_str().context("non-UTF-8 source pattern")?;
         let pattern = WorkspacePath::try_from(pattern)?;
@@ -182,12 +191,12 @@ fn hash_target_inputs(
         }
     }
     let mut external_links = Vec::new();
-    for patterns in walked {
+    for (package, patterns) in walked {
         // One walk per pattern, so each starts at that pattern's own literal
         // directory and follows it when it is a symbolic link.
         let (matches, links) = struo_frontend::analysis::expand_globs_reporting_external_links(
             workspace,
-            &node.label.package,
+            &package,
             &patterns,
             &srcs_exclude,
         )?;
@@ -273,4 +282,23 @@ fn hash_input(
         }
     }
     Ok(())
+}
+
+fn climbing_source(package: &str, pattern: &str) -> Result<(String, String)> {
+    if !pattern.split('/').any(|part| part == "..") {
+        return Ok((package.to_string(), pattern.to_string()));
+    }
+    let mut parts = Vec::new();
+    for part in package.split('/').chain(pattern.split('/')) {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts
+                    .pop()
+                    .with_context(|| format!("source `{pattern}` escapes the workspace"))?;
+            }
+            part => parts.push(part),
+        }
+    }
+    Ok((String::new(), parts.join("/")))
 }

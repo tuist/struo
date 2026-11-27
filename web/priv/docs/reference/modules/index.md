@@ -332,6 +332,13 @@ native = native_project(
   other native project seeds beside or below it. Use this for a native
   workspace whose checked tree intentionally contains another package format,
   examples, or third-party projects that belong to the outer build.
+- `enclosing_on_demand = true` lets a command run inside a nested project of
+  this family reach the enclosing projects of the same family. The command
+  still loads and selects only the nested project, and an enclosing or sibling
+  project joins the graph only when a loaded target depends on one of its
+  generated targets. A project loaded this way adds no default tests. Use it
+  when nested projects build against targets their enclosing project owns,
+  such as a shared set of locked dependencies. The default is `false`.
 
 ### Choosing an entry point
 

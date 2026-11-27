@@ -244,12 +244,22 @@ impl InputPattern {
         // `./**/*` names the package directory itself, but `glob::Pattern`
         // compares it literally, so it would never match `src/lib.rs`.
         let pattern = pattern.trim_start_matches("./");
-        let path = if package.is_empty() {
-            pattern.to_string()
-        } else {
-            format!("{package}/{pattern}")
-        };
-        Self::workspace_relative(&path)
+        if Path::new(pattern).is_absolute() || pattern.starts_with('/') {
+            return None;
+        }
+        let mut parts = Vec::new();
+        // A pattern may climb out of its package, as globs do, but not out
+        // of the workspace.
+        for part in package.split('/').chain(pattern.split('/')) {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    parts.pop()?;
+                }
+                part => parts.push(part),
+            }
+        }
+        Self::workspace_relative(&parts.join("/"))
     }
 
     fn workspace_relative(pattern: &str) -> Option<Self> {

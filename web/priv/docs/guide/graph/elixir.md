@@ -139,9 +139,19 @@ An umbrella root builds its detected child projects, and nested Mix projects
 get their own package-qualified targets. Use `struo query targets` to find
 them rather than assuming every target lives at the root.
 
+As in Mix, the umbrella root owns the locked dependencies. Struo resolves them
+once per environment from the root's `mix.lock`, and each child compiles
+against the packages it declares for the current target plus its
+`in_umbrella: true` siblings, built in the child's environment. Run
+`mix deps.get --check-locked` once in the root; an umbrella whose children
+depend only on each other needs no lockfile. Commands run inside a child
+directory build and test that child, loading the root and the siblings it
+needs. Because only the root sees every child's dependencies, child lint
+targets check formatting but not unused lockfile entries.
+
 Targetless `struo test` includes discovered nested test suites, even though
 `mix test` at the root runs only the root project. Each separate Mix project
-needs its own `mix deps.get --check-locked`. Provision any external services
+outside an umbrella needs its own `mix deps.get --check-locked`. Provision any external services
 that test aliases such as database creation and migration need before
 running those suites.
 

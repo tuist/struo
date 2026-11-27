@@ -48,6 +48,10 @@ pub(crate) struct NativeProjectSchema {
     pub(crate) requires_tools: Vec<String>,
     pub(crate) owns_descendants: bool,
     pub(crate) workspace_markers: Vec<String>,
+    /// Lets a command run inside a nested project load the enclosing projects
+    /// of the same kind on demand, for ecosystems whose nested projects build
+    /// against targets their enclosing project owns.
+    pub(crate) enclosing_on_demand: bool,
 }
 
 impl NativeProjectSchema {
@@ -326,6 +330,7 @@ fn native_project_schema(name: String, dict: &DictRef<'_>) -> Result<NativeProje
         requires_tools,
         owns_descendants: required_bool(dict, "owns_descendants")?,
         workspace_markers,
+        enclosing_on_demand: required_bool(dict, "enclosing_on_demand")?,
     })
 }
 

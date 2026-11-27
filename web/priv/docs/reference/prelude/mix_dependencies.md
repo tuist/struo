@@ -58,6 +58,7 @@ application name or Hex package name.
 
 | Attribute | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
+| `_mix_umbrella` | bool | no | `false` | Resolver-owned marker for the dependency set an umbrella root shares with its children, which leaves the children to their own targets |
 | `_mix_path_only` | bool | no | `false` | Resolver-owned marker allowing an absent lockfile only for an entirely local path dependency graph |
 | `_mix_resolve_envs` | list&lt;string&gt; | no | `[]` | Resolver-owned Mix environments of the same project resolved together with `mix_env` in one Mix invocation |
 | `manifest` | string | no | `mix.exs` | Package-relative Mix project manifest used to select the active graph |

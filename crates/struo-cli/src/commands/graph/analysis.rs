@@ -252,7 +252,11 @@ impl BuildSession {
                 workspace,
                 resolved.digest,
                 identity,
-                &workspace_targets,
+                &[
+                    workspace_targets.as_slice(),
+                    resolved.native_deferred_targets.as_slice(),
+                ]
+                .concat(),
             )
         });
         let reused = resolution_key
@@ -262,7 +266,11 @@ impl BuildSession {
             (graph, None)
         } else {
             let (graph, record) = analyzer
-                .load_graph_workspace_from_targets_recorded(workspace, workspace_targets)
+                .load_graph_workspace_from_seeds_recorded(
+                    workspace,
+                    workspace_targets,
+                    resolved.native_deferred_targets.clone(),
+                )
                 .context("loading graph")?;
             (graph, Some(record))
         };
