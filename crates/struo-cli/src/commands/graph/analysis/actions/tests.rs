@@ -4,7 +4,7 @@ use struo_core::{NetworkPolicy, OutputSymlinkMode, WorkspacePath};
 use struo_frontend::analysis::{DeclaredArgFileFormat, DeclaredCopyPathMode};
 
 use super::lowering::{
-    compose_input_digest, compose_input_digest_with_available,
+    canonical_action_value, compose_input_digest, compose_input_digest_with_available,
     compose_input_fingerprint_with_available,
 };
 use super::*;
@@ -3046,4 +3046,20 @@ fn remote_actions_are_labelled_by_the_identifier_kind() {
         "build"
     );
     assert_eq!(action_mnemonic("atlas/app", "atlas/app:", "test"), "test");
+}
+
+#[test]
+fn canonical_action_values_replace_only_the_whole_workspace_path() {
+    let workspace = std::path::Path::new("/src/app");
+    assert_eq!(
+        canonical_action_value(
+            "/src/app -L/src/app/out --x=/src/app:/src/apps/tool /src/app-cache /src/app.d",
+            workspace
+        ),
+        "{{struo.execution_root}} -L{{struo.execution_root}}/out --x={{struo.execution_root}}:/src/apps/tool /src/app-cache /src/app.d"
+    );
+    assert_eq!(
+        canonical_action_value("/usr/bin", std::path::Path::new("/")),
+        "/usr/bin"
+    );
 }

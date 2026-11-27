@@ -192,7 +192,7 @@ def _rust_materialized_cargo_sources(ctx):
     output_root = _rust_attr(ctx, "_cargo_materialized_source_root", "")
     if not host_root or not output_root:
         return []
-    materialize_host_tree(host_root, output_root)
+    materialize_host_tree(_workspace_absolute(host_root), output_root)
     inputs = [output_root]
     for destination, source in _rust_attr(ctx, "_cargo_build_script_sources", {}).items():
         materialize_host_file(source, destination)
@@ -492,6 +492,13 @@ def _rust_materialized_cwd_arg(arg):
         return parts[0] + "=" + execution_path(parts[1])
     return arg
 
+# Crates compiled from copied sources name them by absolute path, which rustc
+# records in the artifact. Spelling the execution root as `.`, as rules_rust
+# does, keeps a crate's bytes, and so its consumers' keys, the same in every
+# checkout. Outside any response file so the runner resolves the marker.
+def _rust_remap_execution_root_args():
+    return ["--remap-path-prefix=" + execution_path(".") + "=."]
+
 def _rust_user_flags(ctx):
     return _rust_attr(ctx, "rustc_flags", [])
 
@@ -663,6 +670,13 @@ def _workspace_absolute(path):
         return root
     return root + "/" + path
 
+# A workspace path as a command value that resolves against the execution
+# root at launch, so action keys stay the same in every checkout.
+def _rust_execution_absolute(path):
+    if not path or _is_absolute_path(path) or ".." in path.replace("\\", "/").split("/"):
+        return _workspace_absolute(path)
+    return execution_path(path)
+
 def _rust_bin_exe_deps(ctx):
     return _rust_dependency_role(ctx, "bin_deps")
 
@@ -700,10 +714,10 @@ def _rust_compile_env(ctx):
             env[key] = value
     manifest_dir = env.get("CARGO_MANIFEST_DIR")
     if manifest_dir:
-        env["CARGO_MANIFEST_DIR"] = _workspace_absolute(_rust_manifest_dir(ctx, manifest_dir))
+        env["CARGO_MANIFEST_DIR"] = _rust_execution_absolute(_rust_manifest_dir(ctx, manifest_dir))
     for key, value in _rust_cargo_package_env(ctx).items():
         if key not in env:
-            env[key] = _workspace_absolute(value) if key == "CARGO_MANIFEST_DIR" else value
+            env[key] = _rust_execution_absolute(value) if key == "CARGO_MANIFEST_DIR" else value
     return env
 
 # What Cargo sets for the package a first-party crate belongs to, recorded by
@@ -1294,7 +1308,7 @@ def _rust_build_script_env(ctx, rustc, target, host_triple, out_dir, script_path
     for feature in _unique(_rust_attr(ctx, "features", []) + _rust_attr(ctx, "crate_features", [])):
         env["CARGO_FEATURE_" + _ascii_env_key(feature)] = "1"
     if not env.get("CARGO_MANIFEST_DIR"):
-        env["CARGO_MANIFEST_DIR"] = _workspace_absolute(_parent_dir(script_path))
+        env["CARGO_MANIFEST_DIR"] = _rust_execution_absolute(_parent_dir(script_path))
     for key, value in _rust_build_script_profile_env(ctx).items():
         if key not in env:
             env[key] = value
@@ -1305,6 +1319,11 @@ def _rust_build_script_env(ctx, rustc, target, host_triple, out_dir, script_path
     env["RUSTC"] = _rust_execution_tool(rustc)
     env["RUSTDOC"] = _rust_execution_tool(rustc, "rustdoc")
     env["TARGET"] = target or host_triple
+    # Cargo's trim-paths contract, which cc and similar helpers read to remap
+    # native objects the way `_rust_remap_execution_root_args` remaps crates.
+    if "CARGO_TRIM_PATHS_SCOPE" not in env and "CARGO_TRIM_PATHS_REMAP" not in env:
+        env["CARGO_TRIM_PATHS_SCOPE"] = "all"
+        env["CARGO_TRIM_PATHS_REMAP"] = execution_path(".") + "=."
     if "CARGO_ENCODED_RUSTFLAGS" not in env:
         env["CARGO_ENCODED_RUSTFLAGS"] = _rust_encoded_rustflags(ctx)
     return env
@@ -1334,7 +1353,7 @@ def _rust_dep_metadata_exports(deps):
         inputs.append(stdout)
         prefix = "DEP_" + _ascii_env_key(links) + "_"
         snippets.append("""while IFS= read -r line; do
-  case "$line" in
+{root}  case "$line" in
     cargo:rustc-*|cargo::rustc-*|cargo:rerun-if-*|cargo::rerun-if-*|cargo:warning=*|cargo::warning=*|cargo:error=*|cargo::error=*) ;;
     cargo::metadata=*)
       value=${{line#cargo::metadata=}}
@@ -1354,9 +1373,15 @@ def _rust_dep_metadata_exports(deps):
       ;;
   esac
 done < {stdout}
-""".format(metadata = _rust_dep_metadata_key_shell(prefix), stdout = _shell_quote(execution_path(stdout))))
+""".format(metadata = _rust_dep_metadata_key_shell(prefix), stdout = _shell_quote(execution_path(stdout)), root = _rust_build_script_line_root()))
     return ("\n".join(snippets), _unique(inputs))
 
+_RUST_BUILD_SCRIPT_ROOT = "@STRUO_EXECUTION_ROOT@"
+
+# Build scripts print absolute paths, such as `OUT_DIR` in
+# `rustc-link-search`, which would make every consumer's key name the
+# checkout. The stored output spells the execution root as a placeholder, as
+# rules_rust does with `${pwd}`, and each reader puts back the root it runs in.
 def _rust_build_script_output_pipeline(runner, status, stdout):
     runner_exec = _shell_quote(execution_path(runner))
     printf = _shell_quote(host_which("printf"))
@@ -1364,7 +1389,43 @@ def _rust_build_script_output_pipeline(runner, status, stdout):
     status_abs = _shell_quote(status)
     stdout_abs = _shell_quote(execution_path(stdout))
     status_capture = "{ " + runner_exec + " 2>&1; " + printf + " '%s' \"$?\" > " + status_abs + "; }"
-    return status_capture + " | " + tee + " " + stdout_abs
+    if host_os() == "windows":
+        return status_capture + " | " + tee + " " + stdout_abs
+    # The log keeps real paths; only the stored copy names the placeholder,
+    # and only where the root ends a path component, as in action keys.
+    program = """BEGIN { root = ENVIRON["STRUO_ROOT"]; n = length(root); file = ENVIRON["STRUO_STDOUT"]; printf "" > file }
+{
+  print; fflush()
+  line = $0; out = ""
+  while (n > 0 && (i = index(line, root)) > 0) {
+    next_char = substr(line, i + n, 1)
+    out = out substr(line, 1, i - 1) (next_char == "" || next_char ~ /[\\\\\\/"':;=, \t]/ ? "MARKER" : root)
+    line = substr(line, i + n)
+  }
+  print out line > file
+}""".replace("MARKER", _RUST_BUILD_SCRIPT_ROOT)
+    return (
+        status_capture + " | STRUO_ROOT=" + _shell_quote(execution_path(".")) +
+        " STRUO_STDOUT=" + stdout_abs + " " + _shell_quote(host_which("awk")) + " " + _shell_quote(program)
+    )
+
+# Shell that restores the execution root in `$line`, read from a build
+# script's stored output.
+def _rust_build_script_line_root():
+    marker = _RUST_BUILD_SCRIPT_ROOT
+    return """  case "$line" in
+    *{marker}*)
+      struo_rest=$line
+      line=
+      while :; do
+        case "$struo_rest" in
+          *{marker}*) line="$line${{struo_rest%%{marker}*}}"{root}; struo_rest=${{struo_rest#*{marker}}} ;;
+          *) line="$line$struo_rest"; break ;;
+        esac
+      done
+      ;;
+  esac
+""".format(marker = marker, root = _shell_quote(execution_path(".")))
 
 # The literal directory or file a glob names before its first wildcard.
 def _rust_glob_root(pattern):
@@ -1382,7 +1443,7 @@ def _rust_build_script_depfile(stdout, manifest_dir, depfile):
 struo_deps=
 if [ "$code" = 0 ]; then
   while IFS= read -r line; do
-    case "$line" in
+{root}    case "$line" in
       cargo:rerun-if-changed=*) struo_path=${{line#cargo:rerun-if-changed=}} ;;
       cargo::rerun-if-changed=*) struo_path=${{line#cargo::rerun-if-changed=}} ;;
       cargo:rerun-if-env-changed=*|cargo::rerun-if-env-changed=*) struo_rerun=yes; continue ;;
@@ -1406,6 +1467,7 @@ fi""".format(
         package_dir = _shell_quote(manifest_dir),
         stdout = _shell_quote(execution_path(stdout)),
         depfile = _shell_quote(execution_path(depfile)),
+        root = _rust_build_script_line_root(),
     )
 
 # Input discovery for a Rust action whose command names what it read in
@@ -1463,6 +1525,7 @@ def _rust_build_script(ctx, rustc, identity, target, host_triple, edition, dep_a
     compile_args.append(script_path)
     compile_argv = (
         [_rust_execution_tool(rustc)] +
+        _rust_remap_execution_root_args() +
         _rust_inline_proc_macro_extern_args(deps, _rust_aliases(ctx)) +
         _rust_response_file_args(ctx, compile_args, "build-script-rustc.rsp")
     )
@@ -1529,7 +1592,7 @@ def _rust_build_script(ctx, rustc, identity, target, host_triple, edition, dep_a
 
 def _rustc_unix_read_dependency_link_searches(stdout):
     return """while IFS= read -r line; do
-  case "$line" in
+{root}  case "$line" in
     cargo:rustc-link-search=*|cargo::rustc-link-search=*)
       value=${{line#cargo:rustc-link-search=}}
       value=${{value#cargo::rustc-link-search=}}
@@ -1540,11 +1603,11 @@ def _rustc_unix_read_dependency_link_searches(stdout):
       ;;
   esac
 done < {stdout}
-""".format(stdout = _shell_quote(execution_path(stdout)), out_root = _shell_quote(execution_path(".struo/out")))
+""".format(stdout = _shell_quote(execution_path(stdout)), out_root = _shell_quote(execution_path(".struo/out")), root = _rust_build_script_line_root())
 
 def _rustc_unix_read_own_build_script_args(stdout):
     return """while IFS= read -r line; do
-  case "$line" in
+{root}  case "$line" in
     cargo:rustc-cfg=*|cargo::rustc-cfg=*)
       value=${{line#cargo:rustc-cfg=}}
       value=${{value#cargo::rustc-cfg=}}
@@ -1580,7 +1643,7 @@ def _rustc_unix_read_own_build_script_args(stdout):
       ;;
   esac
 done < {stdout}
-""".format(stdout = _shell_quote(execution_path(stdout)), out_root = _shell_quote(execution_path(".struo/out")))
+""".format(stdout = _shell_quote(execution_path(stdout)), out_root = _shell_quote(execution_path(".struo/out")), root = _rust_build_script_line_root())
 
 # macOS removes every DYLD_* variable when it starts a SIP-protected program
 # such as /bin/sh, so the wrapper sets them again before it runs rustc.
@@ -1908,7 +1971,6 @@ def _rust_compile(ctx, crate_type, default_root, output_name, test = False, prov
         rustc_args.append("--test")
     if _rust_attr(ctx, "coverage", False) or (test and _rust_attr(ctx, "coverage_per_test", False)):
         rustc_args.extend(["-C", "instrument-coverage", "-C", "link-dead-code"])
-        rustc_args.extend(["--remap-path-prefix", workspace_root() + "=."])
     rustc_args.extend(_rust_extra_filename_args(ctx, crate_type))
     rustc_args.extend(_rust_output_args(crate_type, output))
     if not materialized_sources:
@@ -1929,6 +1991,7 @@ def _rust_compile(ctx, crate_type, default_root, output_name, test = False, prov
     rustc_args.append(crate_root)
     argv = (
         [_rust_execution_tool(rustc)] +
+        _rust_remap_execution_root_args() +
         _rust_response_file_args(ctx, _rust_inline_proc_macro_extern_args(deps, aliases) + rustc_args, "rustc.rsp")
     )
     dependency_build_outputs = _rust_dep_build_script_outputs(deps)
@@ -2984,7 +3047,6 @@ def _cargo_config_env(ctx):
     if type(entries) != type({}):
         return {}
     package = ctx["label"]["package"]
-    base = _workspace_absolute(package) if package else workspace_root()
     env = {}
     for key, value in entries.items():
         if type(value) == type(""):
@@ -2992,7 +3054,9 @@ def _cargo_config_env(ctx):
         elif type(value) == type({}):
             raw = value.get("value")
             if type(raw) == type(""):
-                env[key] = base + "/" + raw if value.get("relative") else raw
+                if value.get("relative") and not _is_absolute_path(raw):
+                    raw = _rust_execution_absolute((package + "/" if package else "") + raw)
+                env[key] = raw
     return env
 
 # Cargo builds with the `dev` profile, and builds test targets with the `test`
@@ -3178,6 +3242,19 @@ def _cargo_workspace_dependency_names(metadata, id_to_target_name, id_to_host_na
         "build_dep_aliases": build_aliases_by_package,
         "package_env": package_env,
     }
+
+# A package directory inside the workspace, such as a path dependency the
+# workspace excludes, spelled relative to it so the graph stays the same in
+# every checkout. Directories elsewhere, such as Cargo's registry, stay as
+# they are.
+def _cargo_workspace_relative_root(path):
+    root = _cargo_comparison_path(workspace_root())
+    compared = _cargo_comparison_path(path)
+    if root and compared == root:
+        return "."
+    if root and compared.startswith(root + "/"):
+        return compared[len(root) + 1:]
+    return path
 
 # The package-level part of Cargo's compile environment. The manifest directory
 # is kept workspace-relative so the resolved graph stays machine-independent.
@@ -3959,7 +4036,7 @@ def _cargo_metadata_attrs(ctx, package, target, node, source_root, crate_root, a
     if aliases:
         attrs["crate_aliases"] = aliases
     if host_source_root:
-        attrs["_cargo_source_root"] = host_source_root
+        attrs["_cargo_source_root"] = _cargo_workspace_relative_root(host_source_root)
         attrs["_cargo_materialized_source_root"] = source_root
     build_script = _cargo_build_script_target(package)
     if build_script != None:
@@ -4740,7 +4817,7 @@ _RUST_COMMON_ATTRS = [
     attr("build_script_tools", "list<string>", default = "[]", docs = "Host tool names the build script invokes, such as `cmake`. Each name is resolved on PATH during graph loading, a version-manager shim such as one from mise to the binary it would run; the resolved directory joins the build script's search path and the resolved path joins the action identity. Names that resolve to nothing are ignored, so a script that only needs a tool on some platforms still loads.", configurable = False),
     attr("cargo_config_env", "map<string, string>", default = "{}", docs = "Environment variables declared by Cargo configuration, applied to the compiler, the build script, the test process, and `struo run`. They sit below `env`, `rustc_env`, `test_env`, and `run_env`, matching how Cargo lets its own variables win.", configurable = False),
     attr("_binary_output_name", "string", docs = "Resolver-owned executable name before the platform extension.", configurable = False),
-    attr("_cargo_source_root", "string", docs = "Resolver-owned absolute Cargo source directory materialized through a declared host-tree action.", configurable = False),
+    attr("_cargo_source_root", "string", docs = "Resolver-owned Cargo source directory materialized through a declared host-tree action: workspace-relative inside the workspace, absolute elsewhere.", configurable = False),
     attr("_cargo_host_tool", "bool", default = "false", docs = "Resolver-owned host-tool output role used for action presentation and logical history.", configurable = False),
     attr("_cargo_resolver", "string", default = "", docs = "Resolver-owned logical label scopes action history independently of package versions and execution/cache identity.", configurable = False),
     attr("_cargo_materialized_source_root", "string", docs = "Resolver-owned Struo output directory for one materialized Cargo package.", configurable = False),

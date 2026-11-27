@@ -817,15 +817,32 @@ pub(super) fn push_declared_action_metadata(
     Ok(())
 }
 
-/// Spell workspace paths and paths inside Struo's own data and cache
-/// directories with markers, so one action has one key on every host and
-/// for every user.
+/// Spell workspace, data, and cache paths with markers for fingerprints
+/// and for spotting values that name the checkout. Only whole workspace
+/// paths match: with workspace `/app`, `/apps/tool` stays as it is.
 pub(super) fn canonical_action_value(value: &str, workspace: &Path) -> String {
     let workspace = workspace.to_string_lossy();
+    let workspace = workspace.trim_end_matches(['/', '\\']);
     if workspace.is_empty() {
         return struo_core::portable_host_value(value);
     }
-    struo_core::portable_host_value(&value.replace(workspace.as_ref(), "{{struo.execution_root}}"))
+    let mut canonical = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(index) = rest.find(workspace) {
+        let end = index + workspace.len();
+        let whole = rest[end..].chars().next().is_none_or(|next| {
+            next.is_whitespace() || matches!(next, '/' | '\\' | '"' | '\'' | ':' | ';' | '=' | ',')
+        });
+        canonical.push_str(&rest[..index]);
+        canonical.push_str(if whole {
+            "{{struo.execution_root}}"
+        } else {
+            workspace
+        });
+        rest = &rest[end..];
+    }
+    canonical.push_str(rest);
+    struo_core::portable_host_value(&canonical)
 }
 
 #[cfg(test)]

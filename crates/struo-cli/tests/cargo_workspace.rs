@@ -51,12 +51,21 @@ fn dependency_values() { assert_eq!(helper::value() + shared::value(), 42); }
     root
 }
 
+/// Caches for this run only. Keys do not depend on the checkout path, so a
+/// shared cache would serve a result an earlier run stored for the same edit.
+static CACHES: std::sync::LazyLock<tempfile::TempDir> =
+    std::sync::LazyLock::new(|| tempfile::tempdir().unwrap());
+
 fn struo(root: &std::path::Path, color: &str, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_struo"))
         .current_dir(root)
         .args(["--format", "json", "--cpu-limit", "1"])
         .args(args)
         .env("CARGO_TERM_COLOR", color)
+        .env(
+            "XDG_CACHE_HOME",
+            CACHES.path().join(root.file_name().unwrap()),
+        )
         .env("CARGO", env!("CARGO"))
         .env("STRUO_CACHE_PROVIDER", "local")
         .env("STRUO_CHANGE_TRACKER", "0")
@@ -795,4 +804,126 @@ fn shared_files_a_build_script_joins_select_its_dependents_tests() {
         ]
     );
     assert!(selected("target/debug/app").is_empty());
+}
+
+/// Each target's action digest from a build of a fresh copy of `files` at
+/// `root`, with its own cache, after checking that a second build reuses
+/// every action.
+fn action_digests(
+    root: &std::path::Path,
+    files: &[(&str, &str)],
+) -> std::collections::BTreeMap<String, String> {
+    write_files(root, files);
+    let build = || {
+        let output = Command::new(env!("CARGO_BIN_EXE_struo"))
+            .current_dir(root)
+            .args(["--format", "json", "--cpu-limit", "1", "build"])
+            .env("CARGO", env!("CARGO"))
+            .env("STRUO_CACHE_PROVIDER", "local")
+            .env("STRUO_CHANGE_TRACKER", "0")
+            .env("XDG_CACHE_HOME", root.join("../cache"))
+            .env("XDG_STATE_HOME", root.join("../state"))
+            .output()
+            .unwrap();
+        success(&output);
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .map(|record| {
+                (
+                    record["target"].as_str().unwrap().to_string(),
+                    (
+                        record["action_digest"].as_str().unwrap().to_string(),
+                        record["cache"].as_str().unwrap_or_default().to_string(),
+                    ),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let first = build();
+    let second = build();
+    for (target, (digest, cache)) in &second {
+        assert_eq!(cache, "hit", "{target} was not reused");
+        assert_eq!(digest, &first[target].0, "{target}");
+    }
+    // Cargo's output and Git state differ in every checkout, and no target
+    // reads them.
+    let root_text = root.display().to_string();
+    write_files(
+        root,
+        &[
+            ("target/debug/.fingerprint/app", &root_text),
+            (".git/index", &root_text),
+        ],
+    );
+    let fingerprint = struo(root, "never", &["query", "graph-fingerprint"]);
+    success(&fingerprint);
+    let fingerprint: serde_json::Value = serde_json::from_slice(&fingerprint.stdout).unwrap();
+    first
+        .into_iter()
+        .map(|(target, (digest, _))| (target, digest))
+        .chain([(
+            "graph-fingerprint".to_string(),
+            fingerprint["digest"].as_str().unwrap().to_string(),
+        )])
+        .collect()
+}
+
+// Windows stores build-script output with the checkout path as printed.
+#[cfg(unix)]
+#[test]
+fn action_keys_do_not_depend_on_the_checkout_path() {
+    // `ext` sits outside the workspace, so it builds from a copy of its
+    // sources under `.struo/out`, like a registry crate. Its build script
+    // prints absolute paths into every directive Struo reads back, as
+    // `-sys` crates do.
+    let files = [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\next = { path = \"ext\" }\n[workspace]\nexclude = [\"ext\"]\n",
+        ),
+        (
+            "build.rs",
+            r#"fn main() {
+    let include = std::env::var("DEP_EXT_INCLUDE").unwrap();
+    assert!(std::path::Path::new(&include).join("gen.txt").is_file(), "{include}");
+}
+"#,
+        ),
+        ("src/lib.rs", "pub fn value() -> u8 { ext::value() }\n"),
+        (
+            ".cargo/config.toml",
+            "[env]\nAPP_DATA = { value = \"data\", relative = true }\n",
+        ),
+        (
+            "ext/Cargo.toml",
+            "[package]\nname = \"ext\"\nversion = \"0.1.0\"\nedition = \"2021\"\nlinks = \"ext\"\n",
+        ),
+        (
+            "ext/build.rs",
+            r#"fn main() {
+    let out = std::env::var("OUT_DIR").unwrap();
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    std::fs::write(format!("{out}/gen.txt"), "42").unwrap();
+    println!("cargo:rustc-link-search=native={out}");
+    println!("cargo:rustc-env=EXT_GEN={out}/gen.txt");
+    println!("cargo:rerun-if-changed={manifest}/build.rs");
+    println!("cargo:include={out}");
+    // cc and other native build helpers remap paths under these prefixes.
+    let remap = std::env::var("CARGO_TRIM_PATHS_REMAP").unwrap();
+    let (from, _) = remap.split_once('=').unwrap();
+    assert!(out.starts_with(from) && manifest.starts_with(from), "{remap}");
+}
+"#,
+        ),
+        (
+            "ext/src/lib.rs",
+            "pub fn value() -> u8 { if file!().is_empty() { 0 } else { include_str!(env!(\"EXT_GEN\")).parse().unwrap() } }\n",
+        ),
+    ];
+    let parent = tempfile::tempdir().unwrap();
+    let first = action_digests(&parent.path().join("a/ws"), &files);
+    let second = action_digests(&parent.path().join("b/nested/checkout/ws"), &files);
+    assert!(first.contains_key("cargo_app"), "{first:?}");
+    assert_eq!(first, second);
 }

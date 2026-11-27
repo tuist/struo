@@ -15,7 +15,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use struo_cas::Digest;
 use struo_core::{digest_source_path, InputDigestBuilder, InputFingerprintComponent};
-use struo_frontend::{GraphTarget, TOML_BUILD_FILE_NAME};
+use struo_frontend::{AttrValue, GraphTarget, TOML_BUILD_FILE_NAME};
 
 /// Wire schema for the graph fingerprint record.
 pub const GRAPH_FINGERPRINT_SCHEMA: &str = "struo.graph_fingerprint.v1";
@@ -95,11 +95,21 @@ pub fn graph_fingerprint(
     if options.include_sources {
         let mut sources = BTreeSet::new();
         for target in &ordered {
+            // A target kind leaves out what `srcs_exclude` names, such as
+            // tool output or version control state, so the graph does too.
+            let excludes = match target.attrs.get("srcs_exclude") {
+                Some(AttrValue::List(values)) => values
+                    .iter()
+                    .filter_map(AttrValue::as_str)
+                    .map(str::to_string)
+                    .collect(),
+                _ => Vec::new(),
+            };
             let resolved = struo_frontend::analysis::expand_globs_with_excludes(
                 workspace_root,
                 &target.label.package,
                 &target.srcs,
-                &[],
+                &excludes,
             )
             .with_context(|| format!("resolving sources for {}", target.label.id))?;
             sources.extend(resolved);

@@ -115,6 +115,16 @@ Changing only a test file reruns the affected test without recompiling an
 unchanged library. Build-script outputs that embed timestamps or other
 changing bytes still invalidate their consumers.
 
+Cache keys do not depend on where the repository is checked out, so two
+clones at different paths share cached results. The compiler records the
+checkout as `.` in the paths it embeds. On macOS and Linux, build-script
+output is stored with the checkout replaced by a placeholder that each reader
+resolves, and build scripts receive Cargo's `CARGO_TRIM_PATHS_SCOPE` and
+`CARGO_TRIM_PATHS_REMAP`, which the `cc` crate uses to remap the paths it
+compiles into C and C++ objects when the C compiler supports
+`-ffile-prefix-map`. A build script that writes the checkout path into a file
+by other means still makes its consumers' keys differ between clones.
+
 Continue with [Caching](/guide/scripted/caching) to configure a shared remote
 cache.
 

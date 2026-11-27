@@ -10780,14 +10780,15 @@ result = repr([
     let values: serde_json::Value = serde_json::from_str(&out).unwrap();
 
     // The target's own rustc_env wins over the inherited package values, and
-    // the manifest directory is the package's, not the consuming target's.
+    // the manifest directory is the package's, not the consuming target's,
+    // spelled against the execution root so the key names no checkout.
     assert_eq!(
         values[0],
         serde_json::json!({
             "CARGO_PKG_NAME": "app",
             "CARGO_PKG_VERSION": "9.9.9",
             "CARGO_PKG_VERSION_MINOR": "1",
-            "CARGO_MANIFEST_DIR": "/workspace/app",
+            "CARGO_MANIFEST_DIR": "{{struo.execution_root}}/app",
             "CARGO_CRATE_NAME": "",
         }),
         "{out}"
@@ -13366,9 +13367,14 @@ result = repr("ok")
         .inputs
         .iter()
         .any(|input| input == ".struo/tmp/analysis/crates/app/app/rustc.rsp"));
-    // Only the toolchain and the response-file reference remain on the command
-    // line; everything else is written to the response file.
-    assert_eq!(rustc.argv.len(), 2);
+    // Only the toolchain, the source path remap whose execution root resolves
+    // at launch, and the response-file reference remain on the command line;
+    // everything else is written to the response file.
+    assert_eq!(rustc.argv.len(), 3);
+    assert_eq!(
+        rustc.argv[1],
+        "--remap-path-prefix={{struo.execution_root}}=."
+    );
     assert_eq!(rustc.arg_files.len(), 1);
     let arg_file = &rustc.arg_files[0];
     assert_eq!(
@@ -13721,7 +13727,7 @@ fn assert_release_dependency_response_file(store: &AnalysisStore) {
         rustc.identifier.as_deref(),
         Some("crates/struo-core/struo_core_x86_64_pc_windows_msvc:rustc")
     );
-    assert_eq!(rustc.argv.len(), 2);
+    assert_eq!(rustc.argv.len(), 3);
     assert_eq!(rustc.arg_files.len(), 1);
     let arg_file = &rustc.arg_files[0];
     assert_eq!(
