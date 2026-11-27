@@ -20,6 +20,10 @@ module lookup disabled.
 | `resolver_inputs` | list&lt;string&gt; | no | `srcs` | Manifest, checksum, workspace, and vendor manifest files supplied to the resolver |
 | `_go_resolved` | bool | resolver-owned | `false` | Marks a dependency set expanded by the resolver |
 | `_go_module_targets` | list&lt;string&gt; | resolver-owned | `[]` | Names of generated module targets |
+| `_go_module_cache` | string | resolver-owned | empty | Workspace directory that native discovery lays out as the module cache for builds instead of a vendor directory |
+| `_go_cache_files` | list&lt;string&gt; | resolver-owned | `[]` | Module cache manifests and zip hashes snapshotted into `_go_module_cache` |
+| `_affected_srcs` | list&lt;string&gt; | resolver-owned | `srcs` | Files that select dependent tests; native discovery lists the module manifests |
+| `srcs_exclude` | list&lt;string&gt; | no | `[]` | Globs removed from `srcs` for test selection |
 
 ## Dependency Edges
 

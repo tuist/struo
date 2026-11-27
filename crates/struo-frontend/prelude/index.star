@@ -107,6 +107,7 @@ PRELUDE_TARGET_KINDS = {
     ],
     "swift_package.star": ["swift_package_workspace"],
     "go.star": [
+        "go_workspace",
         "go_dependencies",
         "go_module",
         "go_source",

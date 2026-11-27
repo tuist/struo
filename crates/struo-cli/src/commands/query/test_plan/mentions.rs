@@ -206,7 +206,12 @@ fn quoted_directories(text: &[u8]) -> BTreeSet<String> {
         let Ok(literal) = std::str::from_utf8(&body[..length]) else {
             continue;
         };
-        let mut rest = literal;
+        // A suffix joined onto another directory, as in `join(dir, "/../testdata")`,
+        // is relative however it is written; no absolute path starts this way.
+        let mut rest = literal
+            .strip_prefix('/')
+            .filter(|joined| joined.starts_with("./") || joined.starts_with("../"))
+            .unwrap_or(literal);
         loop {
             if let Some(next) = rest.strip_prefix("./").or_else(|| rest.strip_prefix("../")) {
                 rest = next;
@@ -262,9 +267,17 @@ mod tests {
     fn quoted_strings_name_directories_only_when_written_as_paths() {
         let named = quoted_directories(
             br#"read_dir("docs/reference"); migrate!("./migrations"); folder("$ROOT/assets/");
-            glob("fixtures/**/*.json"); join("dev"); open("/tmp/dev"); "x/a.toml""#,
+            glob("fixtures/**/*.json"); join("dev"); open("/tmp/dev"); "x/a.toml";
+            join(here, "/../testdata"); join(here, "/./golden/")"#,
         );
-        for directory in ["docs/reference", "migrations", "assets", "fixtures"] {
+        for directory in [
+            "docs/reference",
+            "migrations",
+            "assets",
+            "fixtures",
+            "testdata",
+            "golden",
+        ] {
             assert!(named.contains(directory), "{directory}: {named:?}");
         }
         for unnamed in ["dev", "tmp", "tmp/dev"] {

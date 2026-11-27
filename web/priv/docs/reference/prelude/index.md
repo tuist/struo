@@ -227,6 +227,8 @@ you already have.
 
 ## Go target kinds
 
+- [`go_workspace`](/reference/prelude/go_workspace): native integration seed
+  that derives packages, commands, tests, and modules from `go.mod`
 - [`go_dependencies`](/reference/prelude/go_dependencies): locked, vendored Go
   module graph imported as queryable targets
 - [`go_module`](/reference/prelude/go_module): one generated checksum-bound Go

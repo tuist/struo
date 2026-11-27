@@ -16,6 +16,26 @@ mise install
 mise exec -- go version
 ```
 
+## Build an existing module without configuration
+
+Struo recognizes every directory with a `go.mod` and derives its graph from
+the Go command, so no `struo.toml` is needed:
+
+```sh
+struo query targets
+struo build go
+struo test
+```
+
+Each package becomes a library or command target, each package with tests a
+test target, and each external module a module target read from `vendor`, a
+local replacement, or a snapshot of the Go module cache. See the
+[`go_workspace` reference](/reference/prelude/go_workspace) for how targets are
+named, how changed files select tests, and the current limitations.
+
+Declare targets by hand, as below, when a module needs settings that discovery
+does not infer, such as cross-compilation or exported C libraries.
+
 ## Declare targets
 
 ### Declare a module
@@ -173,6 +193,7 @@ record when `android_abi` is set. Other supported build modes are `exe`, `pie`,
 
 ## Target kinds
 
+- [`go_workspace`](/reference/prelude/go_workspace)
 - [`go_dependencies`](/reference/prelude/go_dependencies)
 - [`go_module`](/reference/prelude/go_module)
 - [`go_source`](/reference/prelude/go_source)

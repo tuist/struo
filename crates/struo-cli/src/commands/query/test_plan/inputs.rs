@@ -285,10 +285,18 @@ impl InputPattern {
     pub(super) fn matches(&self, path: &str) -> bool {
         match self {
             Self::Exact(expected) => expected == path,
-            Self::Glob(pattern) => pattern.matches(path),
+            Self::Glob(pattern) => pattern.matches_with(path, GLOB_MATCH_OPTIONS),
         }
     }
 }
+
+/// The options target kinds expand `srcs` with, so a single `*` matches one
+/// path segment here as it does when the graph is built.
+const GLOB_MATCH_OPTIONS: glob::MatchOptions = glob::MatchOptions {
+    case_sensitive: true,
+    require_literal_separator: true,
+    require_literal_leading_dot: false,
+};
 
 fn has_glob_metacharacters(pattern: &str) -> bool {
     pattern

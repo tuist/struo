@@ -1,0 +1,7 @@
+[[target]]
+name = "go"
+kind = "go_workspace"
+srcs = ["go.mod"]
+
+[target.attrs]
+resolver_inputs = ["go.mod", "go.sum", "vendor/modules.txt", "**/*.go"]

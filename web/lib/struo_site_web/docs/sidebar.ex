@@ -324,7 +324,7 @@ defmodule StruoSiteWeb.Docs.Sidebar do
                 mix_release elixir_library elixir_test)),
           target_group(
             "Go",
-            ~w(go_dependencies go_module go_source go_library go_binary go_test)
+            ~w(go_workspace go_dependencies go_module go_source go_library go_binary go_test)
           ),
           target_group("JavaScript", ~w(javascript_build vitest_test jest_test)),
           target_group(

@@ -1,8 +1,11 @@
 # `go_module`
 
-Represents one checksum-bound vendored Go module.
+Represents one checksum-bound Go module.
 
-`go_dependencies` generates these targets. They remain visible through target,
+`go_dependencies` and [`go_workspace`](/reference/prelude/go_workspace)
+generate these targets. A module comes from a vendor directory, from a local
+replacement directory, or, for native discovery, from a snapshot of the host's
+Go module cache. They remain visible through target,
 dependency, and schema queries, but should not be declared manually.
 
 ## Attributes
@@ -17,6 +20,8 @@ dependency, and schema queries, but should not be declared manually.
 | `source_root` | string | yes | Package-relative vendored module directory |
 | `packages` | list&lt;string&gt; | no | Vendored import paths owned by this module |
 | `_go_locked` | bool | resolver-owned | Proves that `go_dependencies` generated the target |
+| `_go_cache_module` | string | resolver-owned | Escaped `path@version` directory in the host module cache that native discovery snapshots into `source_root` |
+| `_go_source_files` | list&lt;string&gt; | resolver-owned | Workspace-relative files of a vendored or locally replaced module found by native discovery |
 
 ## Providers and Capabilities
 

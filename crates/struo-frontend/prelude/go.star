@@ -1,5 +1,7 @@
 _GO_TOOL = tool("go", executables = ["go"])
 
+_GO_SHARED_BUILD_CACHE = ".struo/tmp/go-build-cache"
+
 _GO_SOURCE_EXTENSIONS = [
     ".go",
     ".s",
@@ -17,6 +19,8 @@ _GO_SOURCE_EXTENSIONS = [
     ".m",
     ".mm",
 ]
+
+_GO_HEADER_EXTENSIONS = (".h", ".hh", ".hpp", ".hxx", ".inc")
 
 def _go_attr(ctx, key, default):
     value = ctx["attr"].get(key)
@@ -119,6 +123,7 @@ def _go_module_context(ctx):
             "sum_files": dependency.get("sum_files") or [],
             "vendor_manifest": dependency.get("vendor_manifest") or "",
             "vendor_dir": dependency.get("vendor_dir") or "",
+            "module_cache": dependency.get("module_cache") or "",
             "workspace_file": dependency.get("workspace_file") or "",
             "inputs": dependency.get("transitive_sources") or [],
         }
@@ -129,6 +134,7 @@ def _go_module_context(ctx):
         "sum_files": [_go_join(root, "go.sum")],
         "vendor_manifest": _go_join(root, "vendor/modules.txt"),
         "vendor_dir": _go_join(root, "vendor"),
+        "module_cache": "",
         "workspace_file": _go_attr(ctx, "go_work", ""),
         "inputs": [],
     }
@@ -276,9 +282,17 @@ def _go_action_env(ctx, module, scratch):
     env["GOSUMDB"] = "off"
     env["GOOS"] = _go_target_os(ctx)
     env["GOARCH"] = _go_target_arch(ctx)
-    env["GOCACHE"] = execution_path(scratch + "/cache")
-    env["GOMODCACHE"] = execution_path(scratch + "/modules")
+    # Go's build cache is content-addressed, safe for concurrent processes,
+    # and never changes what a build produces, so every Go action shares one.
+    # A private cache per action rebuilt the standard library for each package.
+    env["GOCACHE"] = execution_path(_GO_SHARED_BUILD_CACHE)
+    env["GOMODCACHE"] = execution_path(module["module_cache"] or (scratch + "/modules"))
     env["TMPDIR"] = execution_path(scratch + "/tmp")
+    if host_os() != "windows":
+        # The go command's work directory must not lie inside the module:
+        # -trimpath rewrites the module root first, which leaves the work
+        # directory's random name in the file table of cgo-generated sources.
+        env["GOTMPDIR"] = "/tmp"
     env["HOME"] = execution_path(scratch + "/home")
     workspace_file = module["workspace_file"]
     env["GOWORK"] = execution_path(workspace_file) if workspace_file else "off"
@@ -289,6 +303,8 @@ def _go_action_env(ctx, module, scratch):
         cxx = _go_attr(ctx, "cxx", "") or host_which("c++")
         env["CC"] = cc
         env["CXX"] = cxx
+        # The C compiler driver finds the assembler and linker on PATH.
+        env["PATH"] = _go_tool_path([cc, cxx, host_which_optional("ld"), host_which_optional("as")])
         native = _go_native_info(ctx)
         cflags = []
         for include in native["include_dirs"] + native["quote_include_dirs"]:
@@ -307,6 +323,15 @@ def _go_action_env(ctx, module, scratch):
             ldflags.append(_go_relative_to_module(module, library))
         ldflags.extend(native["linkopts"])
         ldflags.extend(_go_attr(ctx, "clinkopts", []))
+        # Go's build cache does not track headers that cgo flags reach
+        # outside a package directory, and every Go action shares one cache,
+        # so their contents go into the flags that Go's cache key includes.
+        headers = []
+        for path in sorted(_unique(_go_build_inputs(ctx, module) + native["headers"])):
+            if path.endswith(_GO_HEADER_EXTENSIONS) and host_file_exists(workspace_root() + "/" + path):
+                headers.append(path + "=" + host_file_sha256(workspace_root() + "/" + path))
+        if headers:
+            env["CGO_CPPFLAGS"] = "-DSTRUO_CGO_HEADERS=" + content_sha256("\n".join(headers))
         if cflags:
             env["CGO_CFLAGS"] = " ".join(cflags)
         if cxxflags:
@@ -314,6 +339,18 @@ def _go_action_env(ctx, module, scratch):
         if ldflags:
             env["CGO_LDFLAGS"] = " ".join(ldflags)
     return env
+
+def _go_system_dirs():
+    if host_os() == "windows":
+        return []
+    return ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+
+def _go_tool_path(tools):
+    dirs = []
+    for tool in tools:
+        if tool and "/" in tool:
+            dirs.append(tool[:tool.rfind("/")])
+    return ":".join(_unique(dirs + _go_system_dirs()))
 
 def _go_mod_flag(ctx, module):
     mode = _go_attr(ctx, "mod_mode", "vendor" if module["vendor_manifest"] else "readonly")
@@ -466,7 +503,7 @@ def _go_declared_build(ctx, mode, explicit_mode = True):
         inputs = _unique(inputs),
         outputs = outputs,
         clean_paths = [scratch],
-        create_dirs = [scratch + "/cache", scratch + "/modules", scratch + "/tmp", scratch + "/home"],
+        create_dirs = [_GO_SHARED_BUILD_CACHE, scratch + "/modules", scratch + "/tmp", scratch + "/home"],
         cwd = _go_cwd(module),
         env = _go_action_env(ctx, module, scratch),
         toolchain_identity = toolchain["identity"] + "\x00" + _go_target_os(ctx) + "\x00" + _go_target_arch(ctx),
@@ -1280,6 +1317,10 @@ def _go_test_env(ctx, module, scratch, test_dir):
     for key, value in _go_attr(ctx, "test_env", {}).items():
         env[key] = value
     env["HOME"] = execution_path(test_dir + "/home")
+    if "PATH" not in env and _go_system_dirs():
+        # Tests that start `sh` or another system program find it, as under
+        # `go test`, without the action depending on the host's own PATH.
+        env["PATH"] = ":".join(_go_system_dirs())
     if _go_attr(ctx, "coverage_per_test", False):
         env["STRUO_GO_COVERAGE_PER_TEST"] = "1"
         env["STRUO_GO_MODULE_ROOT"] = module["root"] or "."
@@ -1291,6 +1332,10 @@ def _go_test_info(ctx, toolchain, module, binary, runner, results, log, native, 
     rundir = _go_attr(ctx, "rundir", "")
     if rundir:
         argv.extend(["--struo-rundir", _package_relative(ctx, rundir)])
+    elif (package.startswith("./") or package == ".") and _go_join(module["root"], package[2:]):
+        # `go test` runs a test binary in its package directory, which is
+        # where tests find `testdata` and other relative paths.
+        argv.extend(["--struo-rundir", _go_join(module["root"], package[2:])])
     argv.extend(_go_test_filter_args(ctx))
     argv.append("--")
     argv.extend(_go_test_runtime_args(ctx))
@@ -1349,7 +1394,7 @@ def _go_test_impl(ctx):
         inputs = _unique(inputs),
         outputs = [binary],
         clean_paths = [scratch],
-        create_dirs = [scratch + "/cache", scratch + "/modules", scratch + "/tmp", scratch + "/home"],
+        create_dirs = [_GO_SHARED_BUILD_CACHE, scratch + "/modules", scratch + "/tmp", scratch + "/home"],
         cwd = _go_cwd(module),
         env = _go_action_env(ctx, module, scratch),
         toolchain_identity = toolchain["identity"] + "\x00struo.go.test-build.v1",
@@ -1386,7 +1431,7 @@ def _go_test_impl(ctx):
             inputs = _unique([runner, binary] + _go_runtime_data(ctx) + native_info["dynamic_libraries"]),
             outputs = [inventory],
             clean_paths = [runner_scratch],
-            create_dirs = [test_dir, test_dir + "/home", runner_scratch + "/cache", runner_scratch + "/modules", runner_scratch + "/tmp", runner_scratch + "/home"],
+            create_dirs = [test_dir, test_dir + "/home", _GO_SHARED_BUILD_CACHE, runner_scratch + "/modules", runner_scratch + "/tmp", runner_scratch + "/home"],
             cacheable = False,
             toolchain_identity = toolchain["identity"] + "\x00struo.go.test-discovery.v1",
         )
@@ -1405,7 +1450,7 @@ def _go_test_impl(ctx):
         inputs = _unique([runner, binary] + _go_runtime_data(ctx) + native_info["dynamic_libraries"]),
         outputs = outputs,
         clean_paths = [runner_scratch],
-        create_dirs = [runner_scratch + "/cache", runner_scratch + "/modules", runner_scratch + "/tmp", runner_scratch + "/home"],
+        create_dirs = [_GO_SHARED_BUILD_CACHE, runner_scratch + "/modules", runner_scratch + "/tmp", runner_scratch + "/home"],
         env = command["env"],
         cacheable = not _go_attr(ctx, "coverage_per_test", False),
         toolchain_identity = toolchain["identity"] + "\x00struo.go.test-runner.v1",
@@ -1578,6 +1623,9 @@ def _go_manifest_replacement(manifest, path, version):
     return manifest["replacements"].get(path + "\x00" + version) or manifest["replacements"].get(path + "\x00")
 
 def _go_dependencies_resolver(ctx):
+    if (ctx.get("attrs") or {}).get("_go_resolved"):
+        # Native Go discovery already emitted this set's modules beside it.
+        return {"targets": [], "roots": []}
     manifest_path = (ctx.get("attrs") or {}).get("manifest") or "go.mod"
     sum_files = (ctx.get("attrs") or {}).get("sum_files") or ["go.sum"]
     workspace_file = (ctx.get("attrs") or {}).get("workspace_file") or ""
@@ -1638,10 +1686,29 @@ def _go_dependencies_resolver(ctx):
         "attrs": {"_go_resolved": True, "_go_module_targets": names},
     }
 
+def _go_host_module_cache(ctx):
+    go = _go_toolchain(ctx)["go"]
+    root = host_command([go, "env", "GOMODCACHE"]).strip()
+    if not root:
+        fail(ctx["label"]["id"] + ": `go env GOMODCACHE` is empty")
+    return root
+
 def _go_module_impl(ctx):
     if not _go_attr(ctx, "_go_locked", False):
         fail(ctx["label"]["id"] + ": go_module targets are generated by go_dependencies")
-    sources = glob(ctx["srcs"])
+    cached = _go_attr(ctx, "_go_cache_module", "")
+    if cached:
+        destination = _go_attr(ctx, "source_root", "")
+        materialize_host_tree(
+            _go_host_module_cache(ctx) + "/" + cached,
+            destination,
+            display_name = "Snapshot Go module " + cached,
+        )
+        sources = [destination]
+    elif _go_attr(ctx, "_go_source_files", []):
+        sources = _go_attr(ctx, "_go_source_files", [])
+    else:
+        sources = glob(ctx["srcs"])
     return {
         "go_module": True,
         "label_id": ctx["label"]["id"],
@@ -1668,7 +1735,29 @@ def _go_dependencies_impl(ctx):
     vendor_manifest = vendor_dir + "/modules.txt"
     workspace_file = _package_relative(ctx, _go_attr(ctx, "workspace_file", ""))
     modules = [dep for dep in ctx["deps"] if dep.get("go_module")]
-    sources = _go_collect(modules, "transitive_sources", [manifest, vendor_manifest] + sum_files + ([workspace_file] if workspace_file else []))
+    module_cache = _go_attr(ctx, "_go_module_cache", "")
+    if module_cache:
+        # The module graph is loaded from every go.mod it reaches, and each
+        # module whose packages build is verified against its zip hash, so a
+        # build needs those small metadata files but not the downloaded zips.
+        vendor_dir = ""
+        vendor_manifest = ""
+        host_cache = _go_host_module_cache(ctx)
+        metadata = []
+        for path in _go_attr(ctx, "_go_cache_files", []):
+            destination = module_cache + "/" + path
+            materialize_host_file(host_cache + "/" + path, destination, display_name = "Snapshot Go module metadata " + path.split("/@v/")[-1])
+            metadata.append(destination)
+        own = [path for path in [manifest] + sum_files if host_file_exists(workspace_root() + "/" + path)] + metadata
+        sources = _go_collect(modules, "transitive_sources", own)
+    else:
+        own = [manifest, vendor_manifest] + ([workspace_file] if workspace_file else [])
+        if _go_attr(ctx, "_affected_srcs", None) != None:
+            # Native discovery lists go.sum whether or not the module has one.
+            own.extend([path for path in sum_files if host_file_exists(workspace_root() + "/" + path)])
+        else:
+            own.extend(sum_files)
+        sources = _go_collect(modules, "transitive_sources", own)
     return {
         "go_dependency_set": True,
         "label_id": ctx["label"]["id"],
@@ -1678,10 +1767,527 @@ def _go_dependencies_impl(ctx):
         "sum_files": sum_files,
         "vendor_dir": vendor_dir,
         "vendor_manifest": vendor_manifest,
+        "module_cache": module_cache,
         "workspace_file": workspace_file,
         "modules": modules,
         "transitive_sources": sources,
         "affected_inputs": sources,
+    }
+
+# Native Go module discovery. `go list` stays authoritative for which files
+# build on this host, which packages they import, and which module version
+# provides each import; the resolver lowers that answer into one Struo target
+# per first-party package, binary, and test, and one per external module.
+
+_GO_LIST_FILE_FIELDS = ["GoFiles", "CgoFiles", "CFiles", "CXXFiles", "MFiles", "HFiles", "FFiles", "SFiles", "SwigFiles", "SwigCXXFiles", "SysoFiles"]
+
+_GO_LIST_TEST_FIELDS = ["TestGoFiles", "XTestGoFiles", "EmbedFiles", "TestEmbedFiles", "XTestEmbedFiles", "TestImports", "XTestImports", "Imports"]
+
+_GO_LIST_CGO_FLAG_FIELDS = ["CgoCFLAGS", "CgoCPPFLAGS", "CgoCXXFLAGS", "CgoFFLAGS"]
+
+def _go_list_fields():
+    return ",".join(["ImportPath", "Name", "Dir", "Standard", "DepOnly", "ForTest", "Module", "Error", "DepsErrors"] + _GO_LIST_FILE_FIELDS + _GO_LIST_TEST_FIELDS + _GO_LIST_CGO_FLAG_FIELDS)
+
+# The directories a package's cgo flags search for headers, as `go list`
+# prints them with `${SRCDIR}` already expanded.
+def _go_native_include_dirs(entry):
+    out = []
+    for field in _GO_LIST_CGO_FLAG_FIELDS:
+        flags = entry.get(field) or []
+        for index in range(len(flags)):
+            flag = flags[index]
+            for prefix in ["-I", "-iquote", "-isystem", "-idirafter"]:
+                if flag == prefix and index + 1 < len(flags):
+                    out.append(flags[index + 1])
+                elif flag.startswith(prefix) and len(flag) > len(prefix) and not (prefix == "-I" and flag.startswith("-iquote")):
+                    out.append(flag[len(prefix):])
+    return _unique(out)
+
+# Workspace-relative directories holding a struo.toml or another go.mod below
+# the seed. Their files belong to those packages, so the dependency set leaves
+# them out of what it claims and they fall back to their own package.
+def _go_native_nested_roots(package):
+    roots = {}
+    prefix = package + "/" if package else ""
+    found = glob(["**/go.mod", "**/struo.toml"], exclude = [".git/**", ".struo/**"])
+    for path in found:
+        if not path.startswith(prefix):
+            continue
+        parts = path[len(prefix):].split("/")
+        if len(parts) < 2 or parts[-1] not in ["go.mod", "struo.toml"]:
+            continue
+        if [part for part in parts[:-1] if part in ["vendor", "testdata", "node_modules"] or part.startswith(".")]:
+            continue
+        roots["/".join(parts[:-1])] = True
+    return roots
+
+# Globs covering the module tree except `nested` directories, listing the
+# directories beside each nested root rather than claiming its parent.
+def _go_native_claim(root, directory, nested):
+    prefix = "" if directory == "." else directory + "/"
+    inside = [path for path in nested if path.startswith(prefix)]
+    if not inside:
+        return [prefix + "**/*"]
+    out = [prefix + "*"]
+    host = root if directory == "." else root + "/" + directory
+    for name in host_read_dir(host):
+        if name in [".git", ".struo"]:
+            continue
+        child = prefix + name
+        if nested.get(child):
+            continue
+        if [path for path in inside if path.startswith(child + "/")]:
+            out.extend(_go_native_claim(root, child, nested))
+        else:
+            out.append(child + "/**/*")
+    return out
+
+# The module-relative path a relative `literal` names from package directory
+# `relative`, or None when it climbs out of the module. Segments after the
+# first one holding a format verb or glob are dropped, leaving the directory.
+def _go_native_resolve(relative, literal):
+    parts = [] if relative == "." else relative.split("/")
+    for segment in literal.split("/"):
+        if "%" in segment or "*" in segment or "{" in segment or "\\" in segment:
+            break
+        if segment in ["", "."]:
+            continue
+        if segment == "..":
+            if not parts:
+                return None
+            parts.pop()
+        else:
+            parts.append(segment)
+    return "/".join(parts) if parts else None
+
+# Files outside a test's package directory that its Go files reach with a
+# relative path such as `"../fixtures"` or `path.Join(dir, "/../testdata")`.
+def _go_native_relative_reads(files, sources, relative):
+    out = []
+    for source in sources:
+        chunks = (files.get(source) or "").split("\"")
+        for index in range(1, len(chunks), 2):
+            literal = chunks[index].lstrip("/")
+            if not literal.startswith("../") or "\n" in literal:
+                continue
+            resolved = _go_native_resolve(relative, literal)
+            if resolved and not (relative != "." and (resolved == relative or resolved.startswith(relative + "/"))):
+                out.extend([resolved, resolved + "/**/*"])
+    return _unique(out)
+
+# Headers a cgo preamble includes by a relative path above its package
+# directory, such as `#include "../shared/offset.h"`.
+def _go_native_cgo_includes(files, sources, relative):
+    out = []
+    for source in sources:
+        for line in (files.get(source) or "").split("\n"):
+            line = line.strip()
+            if line.startswith("//"):
+                line = line[2:].strip()
+            if not line.startswith("#") or "include" not in line or line.count("\"") < 2:
+                continue
+            literal = line.split("\"")[1]
+            if literal.startswith("../"):
+                resolved = _go_native_resolve(relative, literal)
+                if resolved:
+                    out.append(resolved)
+    return _unique(out)
+
+def _go_native_load_errors(listed):
+    out = []
+    for entry in listed:
+        error = entry.get("Error")
+        if not error:
+            continue
+        message = error.get("Err") or ""
+        if "build constraints exclude all Go files" in message or "no Go files" in message:
+            continue
+        position = error.get("Pos") or entry.get("ImportPath") or ""
+        out.append(position + ": " + message)
+    return _unique(out)
+
+# The go.mod files loading the module graph reads, found by loading it into an
+# empty module cache fed from the host's, so they are the same on every host
+# no matter what else its cache already holds. `key` digests every manifest
+# that shapes the graph, so the cache only ever holds one graph's files and
+# loading it again, as replaying these observations does, changes nothing.
+def _go_native_graph_manifests(go, env, root, host_cache, scratch, key):
+    scratch = scratch + "/" + key
+    proxy = host_cache.replace("\\", "/") + "/cache/download"
+    load_env = dict(env)
+    load_env.update({
+        "GOMODCACHE": scratch,
+        "GOPROXY": ("file://" if proxy.startswith("/") else "file:///") + proxy,
+        "GOPRIVATE": "",
+        "GONOPROXY": "",
+        "GOSUMDB": "off",
+        "GOFLAGS": env["GOFLAGS"] + " -modcacherw",
+    })
+    # `go mod graph` reads each go.mod in the graph and nothing else, unlike
+    # `go list -m`, which also wants version metadata the host may lack.
+    host_command([go, "mod", "graph"], env = load_env, cwd = root, max_output_bytes = 256 * 1024 * 1024)
+    out = []
+    pending = ["cache/download"]
+    for _ in range(1000000):
+        if not pending:
+            break
+        directory = pending.pop()
+        for name in host_read_dir(scratch + "/" + directory):
+            path = directory + "/" + name
+            if name.endswith(".mod") and directory.endswith("/@v"):
+                out.append(path)
+            elif not directory.endswith("/@v") and "." not in name[:1]:
+                pending.append(path)
+    return sorted(out)
+
+def _go_native_env(cgo_enabled, vendored):
+    return {
+        "GOFLAGS": "-mod=vendor" if vendored else "-mod=readonly",
+        "GOWORK": "off",
+        "GOTOOLCHAIN": "local",
+        "CGO_ENABLED": cgo_enabled,
+    }
+
+def _go_escape_module(path):
+    out = []
+    for ch in path.elems():
+        if ch >= "A" and ch <= "Z":
+            out.append("!" + ch.lower())
+        else:
+            out.append(ch)
+    return "".join(out)
+
+# `go list -json` prints one indented object after another; only the braces
+# that open and close each object sit at the start of a line.
+def _go_native_objects(output):
+    output = output.strip()
+    if not output:
+        return []
+    return json_decode("[" + output.replace("\n}\n{", "\n},\n{") + "]")
+
+def _go_native_files(package, fields):
+    out = []
+    for field in fields:
+        out.extend(package.get(field) or [])
+    return out
+
+def _go_native_relative(root, path, description):
+    if path == root:
+        return "."
+    if not path.startswith(root + "/"):
+        fail(description + " `" + path + "` is outside `" + root + "`")
+    return path[len(root) + 1:]
+
+def _go_native_join(directory, name):
+    return name if directory == "." else directory + "/" + name
+
+# A workspace-relative path as the seed package sees it, climbing with `../`
+# when the path lies outside the package.
+def _go_native_from_package(package, path):
+    base = [part for part in package.split("/") if part]
+    parts = [part for part in path.split("/") if part]
+    common = 0
+    for index in range(min(len(base), len(parts))):
+        if base[index] != parts[index]:
+            break
+        common = index + 1
+    return "/".join([".."] * (len(base) - common) + parts[common:])
+
+def _go_native_base_name(module_path, relative):
+    if relative != ".":
+        return relative.replace("/", "_")
+    parts = module_path.split("/")
+    last = parts[-1]
+    if len(parts) > 1 and len(last) > 1 and last[0] == "v" and last[1:].isdigit():
+        last = parts[-2]
+    return last
+
+def _go_native_module_key(module):
+    replacement = module.get("Replace")
+    if replacement:
+        if replacement.get("Version"):
+            return replacement["Path"] + "@" + replacement["Version"]
+        return module["Path"] + "@local"
+    return module["Path"] + "@" + (module.get("Version") or "")
+
+# Bare names in emitted dependencies resolve from the workspace root, so
+# these are written `./name` to stay inside the seed's own package.
+def _go_native_deps(names, module_names, closure, imports, own, variant):
+    out = ["./go_dependencies"]
+    for imported in imports:
+        target = names.get(imported)
+        if target and target != own:
+            out.append("./" + target)
+    for key in sorted((closure.get(variant) or {}).keys()):
+        out.append("./" + module_names[key])
+    return _unique(out)
+
+def _go_workspace_resolver(ctx):
+    attrs = ctx.get("attrs") or {}
+    package = ctx["label"]["package"]
+    files = ctx.get("files") or {}
+    if files.get("go.mod") == None:
+        fail(ctx["label"]["id"] + ": go.mod must be a resolver input")
+    # The go command ignores directories whose names begin with `_` or `.`,
+    # such as `_examples`, so a module there is not part of the build.
+    if [part for part in package.split("/") if part.startswith("_") or part.startswith(".")]:
+        return {"targets": [], "roots": [], "attrs": {"_default_test_roots": []}}
+    workspace = workspace_root()
+    root = workspace + "/" + package if package else workspace
+    go = _go_attr({"attr": attrs}, "go", "") or host_which("go")
+    host = json_decode(host_command([go, "env", "-json", "CGO_ENABLED"], cwd = root))
+    vendored = files.get("vendor/modules.txt") != None
+    cgo_enabled = host.get("CGO_ENABLED") or "0"
+    env = _go_native_env(cgo_enabled, vendored)
+
+    # A module Go cannot load, such as one with a malformed go.mod, fails here
+    # with Go's own message rather than as an unusable go command.
+    loaded = host_command([go, "list", "-m"], env = env, cwd = root, merge_stderr = True, check = False).strip()
+    if not loaded or "\n" in loaded or " " in loaded or loaded.startswith("go:"):
+        _diagnostic_fail(
+            "go_module_load_failed",
+            None,
+            ctx["label"]["id"] + ": Go cannot load the module in `" + (package or ".") + "`:\n" + loaded,
+            "Run `go list ./...` in `" + (package or ".") + "` and fix what it reports, or, if the module is not meant to build, add `" + (package or ".") + "` to `exclude` under `[workspace]` in the root struo.toml.",
+        )
+    listed = _go_native_objects(host_command(
+        [go, "list", "-e", "-deps", "-test", "-json=" + _go_list_fields(), "./..."],
+        env = env,
+        cwd = root,
+        max_output_bytes = 512 * 1024 * 1024,
+    ))
+    module_path = ""
+    for entry in listed:
+        module = entry.get("Module") or {}
+        if module.get("Main") and not module_path:
+            module_path = module["Path"]
+
+    # A package's external modules are those of everything it imports,
+    # transitively. `go list -deps` prints dependencies before dependents.
+    closure = {}
+    external = {}
+    for entry in listed:
+        modules = {}
+        for imported in entry.get("Imports") or []:
+            for key in closure.get(imported) or {}:
+                modules[key] = True
+        module = entry.get("Module")
+        if module and not module.get("Main") and not entry.get("Standard"):
+            key = _go_native_module_key(module)
+            if key:
+                modules[key] = True
+                record = external.get(key)
+                if record == None:
+                    record = {"module": module, "files": []}
+                    external[key] = record
+                if vendored or (module.get("Replace") and not module["Replace"].get("Version")):
+                    directory = _go_native_relative(workspace, entry["Dir"], "Go package")
+                    record["files"].extend([_go_native_join(directory, name) for name in _go_native_files(entry, _GO_LIST_FILE_FIELDS + ["EmbedFiles"])])
+                    # Go reads a local replacement's own go.mod to load the module graph.
+                    if module["Replace"].get("GoMod") if module.get("Replace") else False:
+                        record["files"].append(_go_native_relative(workspace, module["Replace"]["GoMod"], "Go module manifest"))
+        closure[entry["ImportPath"]] = modules
+
+    errors = _go_native_load_errors(listed)
+    if errors:
+        _diagnostic_fail(
+            "go_package_load_failed",
+            None,
+            ctx["label"]["id"] + ": `go list` reports packages Go cannot build:\n  " + "\n  ".join(errors[:10]) + ("\n  ..." if len(errors) > 10 else ""),
+            "Run `go build ./...` in `" + (package or ".") + "` to see the same errors, then fix them, such as with `go mod tidy` or `go mod download`.",
+        )
+
+    seed = ctx["label"]["id"]
+    cache_root = ".struo/out/" + seed + "/gomodcache"
+    targets = []
+    module_names = {}
+
+    # Different module paths can flatten to the same name, such as
+    # `a/b_c` and `a_b/c`.
+    taken = {}
+    archives = []
+    for key in sorted(external.keys()):
+        record = external[key]
+        module = record["module"]
+        replacement = module.get("Replace") or {}
+        base = "go_module_" + key.replace("/", "_").replace("@", "-")
+        name = base
+        suffix = 2
+        for _ in range(len(external)):
+            if not taken.get(name):
+                break
+            name = base + "_" + str(suffix)
+            suffix += 1
+        taken[name] = True
+        module_names[key] = name
+        attrs_out = {
+            "module_path": module["Path"],
+            "version": module.get("Version") or "",
+            "replacement_path": replacement.get("Path") or "",
+            "replacement_version": replacement.get("Version") or "",
+            "_go_locked": True,
+        }
+        srcs = []
+        if vendored or (replacement and not replacement.get("Version")):
+            # A local replacement may live anywhere in the workspace, such as
+            # `../`, so its files are workspace-relative rather than globs.
+            attrs_out["_go_source_files"] = sorted(_unique(record["files"]))
+            attrs_out["source_root"] = "."
+            srcs = [_go_native_from_package(package, path) for path in attrs_out["_go_source_files"]]
+        else:
+            cached = _go_escape_module(key.split("@")[0]) + "@" + _go_escape_module(key.split("@")[1])
+            attrs_out["_go_cache_module"] = cached
+            attrs_out["source_root"] = cache_root + "/" + cached
+            archives.append("cache/download/" + _go_escape_module(key.split("@")[0]) + "/@v/" + _go_escape_module(key.split("@")[1]) + ".ziphash")
+        targets.append({"name": name, "kind": "go_module", "srcs": srcs, "attrs": attrs_out})
+
+    # The set claims the whole module tree but reads only its manifests, so a
+    # changed file no package compiles, such as a README, selects a test only
+    # when that test's Go files name it, rather than every test in the module.
+    manifests = [path for path in ["go.mod", "go.sum", "vendor/modules.txt"] if files.get(path) != None]
+    dependencies = {
+        "name": "go_dependencies",
+        "kind": "go_dependencies",
+        "srcs": _go_native_claim(root, ".", _go_native_nested_roots(package)),
+        "deps": [],
+        "attrs": {
+            "_go_resolved": True,
+            "sum_files": ["go.sum"],
+            "_affected_srcs": manifests + (["vendor/**"] if vendored else []),
+            "srcs_exclude": [".git/**", ".struo/**"],
+        },
+    }
+    if vendored:
+        dependencies["attrs"]["vendor_dir"] = "vendor"
+    else:
+        host_cache = host_command([go, "env", "GOMODCACHE"], cwd = root).strip()
+        graph_inputs = [files.get("go.mod") or "", files.get("go.sum") or ""]
+        for key in sorted(external.keys()):
+            replacement = external[key]["module"].get("Replace") or {}
+            if replacement.get("GoMod") and not replacement.get("Version"):
+                graph_inputs.append(host_file_sha256(replacement["GoMod"]))
+        metadata = _go_native_graph_manifests(go, env, root, host_cache, workspace + "/.struo/tmp/go-module-graph/" + seed, content_sha256("\x00".join(graph_inputs)))
+        dependencies["attrs"]["_go_module_cache"] = cache_root
+        dependencies["attrs"]["_go_cache_files"] = sorted(metadata + archives)
+    targets.append(dependencies)
+
+    first_party = [
+        entry for entry in listed
+        if (entry.get("Module") or {}).get("Main") and not entry.get("DepOnly") and not entry.get("ForTest") and
+           " " not in entry["ImportPath"] and not entry["ImportPath"].endswith(".test") and
+           (_go_native_files(entry, _GO_LIST_FILE_FIELDS) or entry.get("TestGoFiles") or entry.get("XTestGoFiles"))
+    ]
+    names = {}
+
+    # Generated names share the seed's package, so a package directory never
+    # takes the name of the dependency set or of an external module.
+    used = {"go_dependencies": True}
+    for name in module_names.values():
+        used[name] = True
+    for entry in sorted(first_party, key = lambda entry: entry["ImportPath"]):
+        relative = _go_native_relative(root, entry["Dir"], "Go package")
+        base = "go_" + _go_native_base_name(module_path, relative).replace(":", "_").replace("\\", "_")
+        name = base
+        suffix = 2
+        for _ in range(len(first_party)):
+            if not used.get(name) and not used.get(name + "_test"):
+                break
+            name = base + "_" + str(suffix)
+            suffix += 1
+        used[name] = True
+        used[name + "_test"] = True
+        names[entry["ImportPath"]] = name
+
+    roots = []
+    test_roots = []
+    cgo = cgo_enabled == "1"
+    prefix = package + "/" if package else ""
+    nested = _go_native_nested_roots(package)
+    package_dirs = {}
+    for entry in first_party:
+        package_dirs[_go_native_relative(root, entry["Dir"], "Go package")] = True
+    for entry in first_party:
+        relative = _go_native_relative(root, entry["Dir"], "Go package")
+        name = names[entry["ImportPath"]]
+        package_arg = "." if relative == "." else "./" + relative
+        library_files = _go_native_files(entry, _GO_LIST_FILE_FIELDS)
+        common = {
+            "package": package_arg,
+            "importpath": entry["ImportPath"],
+            "mod_mode": "vendor" if vendored else "readonly",
+            "cgo": cgo,
+        }
+
+        if library_files:
+            kind = "go_binary" if entry.get("Name") == "main" else "go_library"
+            attrs_out = dict(common)
+            embeds = [_go_native_join(relative, path) for path in entry.get("EmbedFiles") or []]
+            if embeds:
+                attrs_out["embedsrcs"] = embeds
+
+            # Headers that cgo flags reach outside the package directory,
+            # such as `-I${SRCDIR}/include`, are compile inputs too.
+            headers = []
+            for directory in _go_native_include_dirs(entry):
+                if directory == entry["Dir"] or not (directory + "/").startswith(workspace + "/"):
+                    continue
+                headers.append(_go_native_from_package(package, _go_native_relative(workspace, directory, "cgo include directory")) + "/**/*")
+            cgo_sources = [_go_native_join(relative, path) for path in entry.get("CgoFiles") or []]
+            headers.extend(_go_native_cgo_includes(files, cgo_sources, relative))
+            targets.append({
+                "name": name,
+                "kind": kind,
+                "srcs": [_go_native_join(relative, path) for path in library_files] + embeds + headers,
+                "deps": _go_native_deps(names, module_names, closure, entry.get("Imports") or [], name, entry["ImportPath"]),
+                "attrs": attrs_out,
+            })
+            roots.append(name)
+        if entry.get("TestGoFiles") or entry.get("XTestGoFiles"):
+            attrs_out = dict(common)
+            embeds = [_go_native_join(relative, path) for path in (entry.get("TestEmbedFiles") or []) + (entry.get("XTestEmbedFiles") or [])]
+            if embeds:
+                attrs_out["embedsrcs"] = embeds
+
+            # `go test` runs in the package directory, so a test may read any
+            # file below it that no other package owns, and any file its Go
+            # files reach with `../`. They are inputs of the test run, so a
+            # cached result never outlives a change to one. Of those files,
+            # only testdata and the ones its Go files name select it.
+            test_sources = [_go_native_join(relative, path) for path in (entry.get("TestGoFiles") or []) + (entry.get("XTestGoFiles") or [])]
+            inside = "" if relative == "." else relative + "/"
+            excluded = [inside + "**/*.go", inside + "**/.*", inside + "**/.*/**"]
+            for directory in sorted(package_dirs.keys()) + sorted(nested.keys()):
+                if directory != relative and directory.startswith(inside):
+                    excluded.append(directory + "/**")
+            if relative == ".":
+                excluded.append("vendor/**")
+            local = [path[len(prefix):] for path in glob([inside + "**/*"], exclude = excluded)]
+            testdata = _go_native_join(relative, "testdata/**/*")
+            attrs_out["data"] = local + [testdata] + _go_native_relative_reads(files, test_sources, relative)
+            attrs_out["_affected_mentions"] = [_go_native_join(relative, "*.go")]
+            test = {
+                "name": name + "_test",
+                "kind": "go_test",
+                "srcs": test_sources + embeds + [testdata],
+                "deps": _go_native_deps(names, module_names, closure, (entry.get("TestImports") or []) + (entry.get("XTestImports") or []), name, entry["ImportPath"] + ".test"),
+                "attrs": attrs_out,
+            }
+            if library_files:
+                test["dependencies"] = {"target_under_test": ["./" + name]}
+            targets.append(test)
+            test_roots.append(name + "_test")
+    return {
+        "targets": targets,
+        "roots": roots,
+        "attrs": {"_default_test_roots": test_roots},
+    }
+
+def _go_workspace_impl(ctx):
+    return {
+        "label_id": ctx["label"]["id"],
+        "target_kind": "go_workspace",
+        "go_workspace": True,
+        "targets": ctx["deps"],
     }
 
 _GO_MODULE_ATTRS = [
@@ -1876,10 +2482,15 @@ go_dependencies = target_kind(
         attr("resolver_inputs", "list<string>", default = "[]", docs = "Manifest, checksum, workspace, and vendor/modules.txt files supplied to the resolver.", configurable = False),
         attr("_go_resolved", "bool", default = "false", docs = "Resolver-owned marker for an expanded module graph.", configurable = False),
         attr("_go_module_targets", "list<string>", default = "[]", docs = "Resolver-owned generated module target names.", configurable = False),
+        attr("_go_module_cache", "string", docs = "Resolver-owned workspace directory that native Go discovery lays out as the module cache for builds. When set, builds load modules from it instead of a vendor directory.", configurable = False),
+        attr("_affected_srcs", "list<string>", docs = "Resolver-owned globs, relative to the package like `srcs`, of the files that select dependent tests in `struo query affected-tests`. Native Go discovery lists the module manifests, so other files in the tree select a test only when its Go files name them.", configurable = False),
+        attr("srcs_exclude", "list<string>", default = "[]", docs = "Package-relative globs removed from `srcs` for test selection.", configurable = False),
+        attr("_go_cache_files", "list<string>", default = "[]", docs = "Resolver-owned module cache metadata files, relative to the host module cache, snapshotted into `_go_module_cache`: each go.mod in the module graph and the zip hash of each module that provides a package.", configurable = False),
     ],
     deps = [dep("deps", ["go_module"], "Locked vendored modules emitted by the resolver.")],
     providers = ["go_dependency_set"],
     capabilities = [capability("build", [])],
+    tools = [_GO_TOOL],
     examples = _GO_EXAMPLE,
     source_references = _GO_DEPENDENCY_REFERENCES,
     resolver = _go_dependencies_resolver,
@@ -1887,7 +2498,7 @@ go_dependencies = target_kind(
 )
 
 go_module = target_kind(
-    docs = "One checksum-bound vendored Go module generated from go_dependencies.",
+    docs = "One checksum-bound Go module generated from go_dependencies or native Go module discovery, read from a vendor directory, a local replacement, or a snapshot of the host module cache.",
     attrs = [
         attr("module_path", "string", required = True, docs = "Canonical Go module path.", configurable = False),
         attr("version", "string", docs = "Selected Go module version.", configurable = False),
@@ -1897,9 +2508,12 @@ go_module = target_kind(
         attr("source_root", "string", required = True, docs = "Package-relative vendored module source root.", configurable = False),
         attr("packages", "list<string>", default = "[]", docs = "Vendored import paths owned by this module.", configurable = False),
         attr("_go_locked", "bool", default = "false", docs = "Resolver-owned marker proving locked generation.", configurable = False),
+        attr("_go_source_files", "list<string>", default = "[]", docs = "Resolver-owned workspace-relative source files of a vendored or locally replaced module found by native Go discovery.", configurable = False),
+        attr("_go_cache_module", "string", docs = "Resolver-owned escaped `path@version` directory in the host module cache that native Go discovery snapshots into source_root.", configurable = False),
     ],
     providers = ["go_module"],
     capabilities = [capability("build", [])],
+    tools = [_GO_TOOL],
     examples = _GO_EXAMPLE,
     source_references = _GO_DEPENDENCY_REFERENCES,
     impl = _go_module_impl,
@@ -1954,6 +2568,7 @@ go_test = target_kind(
         attr("test_env", "map<string,string>", default = "{}", docs = "Environment variables passed to the test runner.", configurable = False),
         attr("env_inherit", "list<string>", default = "[]", docs = "Host environment variable names inherited by the test runner.", configurable = False),
         attr("rundir", "string", docs = "Package-relative working directory for the test binary.", configurable = False),
+        attr("_affected_mentions", "list<string>", docs = "Resolver-owned globs, relative to the package, of files `struo query affected-tests` searches for a changed path no target reads. A file that names the path selects this test. Native Go discovery searches the test's package directory.", configurable = False),
         attr("labels", "list<string>", default = "[]", docs = "Labels exposed through generic test discovery.", configurable = True),
         attr("timeout_ms", "int", docs = "Optional test timeout in milliseconds.", configurable = False),
         attr("cover_packages", "list<string>", default = "[]", docs = "Import path patterns included in coverage instrumentation.", configurable = False),
@@ -1971,4 +2586,42 @@ go_test = target_kind(
     source_references = _GO_TEST_REFERENCES,
     tools = [_GO_TOOL],
     impl = _go_test_impl,
+)
+
+go_workspace = target_kind(
+    docs = "Native Go module seed. Its resolver runs `go list` and `go mod graph` and emits one go_library or go_binary per first-party package, one go_test per package with tests, and one go_module per external module, snapshotted from the host module cache unless the module is vendored.",
+    attrs = [
+        attr("go", "string", docs = "Override path to the Go command used for discovery.", configurable = False),
+        attr("resolver_inputs", "list<string>", default = "[]", docs = "Package-relative text globs supplied to native integration resolution. Defaults to srcs when empty.", configurable = False),
+        attr("_default_test_roots", "list<string>", default = "[]", docs = "Resolver-owned first-party test target names used by targetless test selection.", configurable = False),
+    ],
+    deps = [dep("deps", ["go_package"], "First-party Go packages and commands emitted by native discovery.")],
+    providers = ["go_workspace"],
+    capabilities = [capability("build", [])],
+    tools = [_GO_TOOL],
+    examples = [
+        example(
+            "go-module-native-project",
+            name = "Go native integration seed",
+            use_when = "Use this when a Go module should derive its package, command, and test targets from go.mod without a hand-written graph.",
+        ),
+    ],
+    source_references = _GO_DEPENDENCY_REFERENCES,
+    resolver = _go_workspace_resolver,
+    impl = _go_workspace_impl,
+)
+
+go = native_project(
+    target_kind = "go_workspace",
+    docs = "Recognizes a native Go module from go.mod.",
+    markers = ["go.mod"],
+    target_name = "go",
+    # `go list` reads every Go file to find packages and imports, so any of
+    # them can change the derived graph.
+    inputs = ["go.sum", "vendor/modules.txt", "**/*.go"],
+    exclude = ["vendor", "testdata", "node_modules"],
+    input_exclude = [".git"],
+    manifests = ["go.mod", "go.sum", "go.work", "vendor/modules.txt", "**/*.go"],
+    on_match = "descend",
+    requires_tools = ["go"],
 )
