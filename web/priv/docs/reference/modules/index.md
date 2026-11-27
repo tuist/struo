@@ -851,6 +851,13 @@ input, including non-Rust files embedded at compile time. `compile_data` adds
 compile-time files outside those source patterns. Source-file presentation
 remains limited to Rust sources.
 
+Local Rust compiler actions reserve an estimated 512 MiB each from the shared
+resource pool. Local build scripts reserve 512 MiB per declared job, so a native
+build script with four jobs reserves four CPU slots and 2 GiB. These are
+admission estimates, not per-process memory limits. `--memory-limit` sets
+the command's total memory budget. Provider-backed Rust actions retain a
+2 GiB allocation because isolated workers may enforce it as a hard limit.
+
 Cargo seeds expose `build_script_sources`, a map from an external consumer
 package selector to sibling destination paths and locked package source files.
 The built-in resolver emits `_cargo_build_script_sources` output-to-host-file

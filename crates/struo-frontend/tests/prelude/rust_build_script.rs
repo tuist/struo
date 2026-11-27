@@ -318,3 +318,70 @@ result = repr([
         "[1, 1, 4, 4, 4, 2, 1]"
     );
 }
+
+#[test]
+fn rust_action_estimates_scale_with_native_build_jobs() {
+    for (execution, build_deps, jobs, expected_jobs, (compiler_mib, script_mib)) in [
+        ("None", "[]", 4, 1, (512, 512)),
+        ("None", "[cc]", 4, 4, (512, 2048)),
+        ("None", "[cc]", 2, 2, (512, 1024)),
+        ("{'provider': 'local'}", "[]", 4, 1, (512, 512)),
+        (
+            "{'provider': 'workers', 'executor': 'local'}",
+            "[]",
+            4,
+            1,
+            (512, 512),
+        ),
+        (
+            "{'provider': 'workers', 'executor': 'docker'}",
+            "[]",
+            4,
+            1,
+            (2048, 2048),
+        ),
+        ("{'provider': 'e2b'}", "[cc]", 2, 2, (2048, 2048)),
+    ] {
+        let workspace = TempDir::new().unwrap();
+        let source = format!(
+            r#"{prelude}
+def execution_context():
+    return {execution}
+cc = {{"label_id": "cc", "package_name": "cc"}}
+ctx = {{
+    "label": {{"package": "", "name": "app", "id": "app"}},
+    "attr": {{"crate_root": "lib.rs", "build_script": "build.rs", "build_script_jobs": {jobs}}},
+    "deps": [],
+    "deps_by_role": {{"build_deps": {build_deps}}},
+    "srcs": ["*.rs"],
+}}
+_rust_compile(ctx, "rlib", "lib.rs", "libapp.rlib")
+result = repr("ok")
+"#,
+            prelude = all_prelude_source(),
+        );
+        let (store, result) = with_active_store(store_for(workspace.path(), "app"), || {
+            eval_prelude_source_to_repr(source)
+        });
+        result.unwrap();
+        for identifier in ["app:rustc", "app:build-script-rustc", "app:build-script"] {
+            let action = action_by_identifier(&store, identifier);
+            let slots = if identifier == "app:build-script" {
+                expected_jobs
+            } else {
+                1
+            };
+            assert_eq!(action.resources.cpu_slots, slots, "{identifier}");
+            let memory_mib = if identifier == "app:build-script" {
+                script_mib
+            } else {
+                compiler_mib
+            };
+            assert_eq!(
+                action.resources.memory_bytes,
+                memory_mib * 1024 * 1024,
+                "{identifier}"
+            );
+        }
+    }
+}
