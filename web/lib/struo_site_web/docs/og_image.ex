@@ -15,7 +15,7 @@ defmodule StruoSiteWeb.Docs.OgImage do
   alias Phoenix.HTML.Safe
 
   @max_title_length 60
-  @max_description_length 120
+  @max_description_length 96
   @width 1920
   @height 1080
 
@@ -79,7 +79,7 @@ defmodule StruoSiteWeb.Docs.OgImage do
             padding: 104px 112px;
             display: flex;
             flex-direction: column;
-            gap: 152px;
+            gap: 72px;
           }
           /* Scanlines over the whole card. */
           body::before {
@@ -130,35 +130,37 @@ defmodule StruoSiteWeb.Docs.OgImage do
           }
           [data-part="author-avatar"]:last-child { margin-right: 0; }
           [data-part="content"] {
+            flex: 1;
             min-height: 0;
             display: flex;
             flex-direction: column;
-            gap: 48px;
+            justify-content: center;
+            gap: 40px;
           }
           [data-part="title"], [data-part="description"] {
             flex-shrink: 0;
             display: -webkit-box;
             -webkit-box-orient: vertical;
-            -webkit-line-clamp: 3;
             overflow: hidden;
             overflow-wrap: anywhere;
           }
           [data-part="title"] {
+            -webkit-line-clamp: 3;
             font-family: 'Geist Pixel Line', 'Geist Mono', monospace;
+            font-size: 120px;
             font-weight: 500;
+            letter-spacing: -1.5px;
             line-height: 1.08;
             color: var(--noora-neutral-dark-50);
             text-wrap: balance;
           }
-          [data-part="title"][data-size="large"] { font-size: 168px; letter-spacing: -3px; }
-          [data-part="title"][data-size="medium"] { font-size: 128px; letter-spacing: -2px; }
-          [data-part="title"][data-size="small"] { font-size: 96px; letter-spacing: -1px; }
           [data-part="description"] {
             font-size: 52px;
             font-weight: 400;
             letter-spacing: -1.5px;
             line-height: 1.4;
             color: var(--noora-neutral-dark-300);
+            -webkit-line-clamp: 2;
           }
         </style>
       </head>
@@ -178,7 +180,7 @@ defmodule StruoSiteWeb.Docs.OgImage do
           </div>
         </header>
         <main data-part="content">
-          <div data-part="title" data-size={title_size(@title)}>
+          <div data-part="title">
             {truncate(@title, @max_title_length)}
           </div>
           <div :if={@description} data-part="description">
@@ -220,19 +222,6 @@ defmodule StruoSiteWeb.Docs.OgImage do
   defp font_data_uri(fonts_dir, file), do: data_uri("font/woff2", Path.join(fonts_dir, file))
 
   defp data_uri(mime, path), do: "data:#{mime};base64,#{path |> File.read!() |> Base.encode64()}"
-
-  # Short titles are set large; long ones step down so three lines still fit.
-  # A word longer than a line would break in the middle, so it steps down too.
-  defp title_size(title) do
-    title = truncate(title, @max_title_length)
-    longest_word = title |> String.split() |> Enum.map(&String.length/1) |> Enum.max(fn -> 0 end)
-
-    case {String.length(title), longest_word} do
-      {length, word} when length <= 26 and word <= 17 -> "large"
-      {length, word} when length <= 42 and word <= 23 -> "medium"
-      _ -> "small"
-    end
-  end
 
   @doc "Map a docs slug to its OG image filename, e.g. `guide/why` -> `guide-why.jpg`."
   def slug_to_filename(segments) when is_list(segments) do

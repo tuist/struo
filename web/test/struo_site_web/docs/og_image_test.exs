@@ -73,20 +73,6 @@ defmodule StruoSiteWeb.Docs.OgImageTest do
     refute html =~ "The default"
   end
 
-  test "render_html steps the title down for long titles and long words" do
-    size = fn title ->
-      html = OgImage.render_html(title: title, fonts_dir: fonts(), logo_path: logo())
-      [_, size] = Regex.run(~r/data-part="title" data-size="(\w+)"/, html)
-      size
-    end
-
-    assert size.("Rust") == "large"
-    assert size.("Build once. Reuse everywhere.") == "medium"
-    assert size.("Remote cache & execution, for the rest of us") == "small"
-    assert size.("react_native_android_application") == "small"
-    assert size.("Run native Xcode script phases with reconciled settings") == "small"
-  end
-
   test "render_html embeds multiple author avatars" do
     avatar = "data:image/png;base64,avatar"
 
