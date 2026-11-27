@@ -2284,7 +2284,7 @@ ctx = {{
     "attr": {{}},
     "deps": [],
 }}
-module = {{"workspace_file": "apps/hello/go.work"}}
+module = {{"workspace_file": "apps/hello/go.work", "module_cache": ""}}
 result = repr(_go_action_env(ctx, module, ".struo/tmp/analysis/apps/hello/Hello/go-build"))
 "#,
         go_prelude_source()
@@ -2292,8 +2292,10 @@ result = repr(_go_action_env(ctx, module, ".struo/tmp/analysis/apps/hello/Hello/
 
     let out = eval_prelude_source_to_repr(source).unwrap();
 
-    assert!(out
-        .contains("{{struo.execution_root}}/.struo/tmp/analysis/apps/hello/Hello/go-build/cache"));
+    assert!(out.contains("{{struo.execution_root}}/.struo/tmp/go-build-cache"));
+    assert!(out.contains(
+        "{{struo.execution_root}}/.struo/tmp/analysis/apps/hello/Hello/go-build/modules"
+    ));
     assert!(out.contains("{{struo.execution_root}}/apps/hello/go.work"));
     assert!(!out.contains("../"));
 }

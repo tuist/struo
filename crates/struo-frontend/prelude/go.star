@@ -2050,12 +2050,27 @@ def _go_workspace_resolver(ctx):
             ctx["label"]["id"] + ": Go cannot load the module in `" + (package or ".") + "`:\n" + loaded,
             "Run `go list ./...` in `" + (package or ".") + "` and fix what it reports, or, if the module is not meant to build, add `" + (package or ".") + "` to `exclude` under `[workspace]` in the root struo.toml.",
         )
-    listed = _go_native_objects(host_command(
+    output = host_command(
         [go, "list", "-e", "-deps", "-test", "-json=" + _go_list_fields(), "./..."],
         env = env,
         cwd = root,
         max_output_bytes = 512 * 1024 * 1024,
-    ))
+    )
+
+    # Go reports directories as the operating system resolves them, which can
+    # differ from the workspace path through a symbolic link, such as macOS
+    # `/var` and `/private/var`. Paths are compared in the workspace's form.
+    for entry in _go_native_objects(output):
+        module = entry.get("Module") or {}
+        directory = module.get("Dir") or ""
+        if module.get("Main") and directory and directory != root:
+            suffix = "/" + package if package else ""
+            if suffix and not directory.endswith(suffix):
+                break
+            resolved = directory[:len(directory) - len(suffix)]
+            output = output.replace(resolved + "/", workspace + "/").replace(resolved + "\"", workspace + "\"")
+            break
+    listed = _go_native_objects(output)
     module_path = ""
     for entry in listed:
         module = entry.get("Module") or {}

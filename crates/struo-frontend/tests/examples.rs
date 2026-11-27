@@ -201,6 +201,36 @@ fn every_impl_backed_target_kind_has_a_schema_example() {
 }
 
 #[cfg(unix)]
+// macOS temporary directories live under `/var`, a symbolic link to
+// `/private/var`, so the workspace path differs from the one Go reports.
+#[cfg(unix)]
+#[test]
+fn go_native_project_loads_through_a_symlinked_workspace_path() {
+    let schemas = built_in_target_kind_schemas_result().expect("built-in target kind schemas load");
+    let schema = schemas
+        .iter()
+        .find(|schema| schema.kind == "go_workspace")
+        .expect("go_workspace schema");
+    let bundle = load_target_kind_example(schema, "go-module-native-project")
+        .expect("Go native project example materializes");
+    let tmp = TempDir::new().expect("tempdir");
+    let real = tmp.path().join("real");
+    materialize(&real, &bundle);
+    fs::remove_file(real.join("struo.toml")).expect("remove explicit Struo manifest");
+    let link = tmp.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).expect("symlink workspace");
+
+    let graph = struo_frontend::load_graph_workspace(&link)
+        .expect("Go native project graph loads through a symlinked path");
+    let kinds_by_id = graph
+        .iter()
+        .map(|target| (target.label.id.as_str(), target.kind.as_str()))
+        .collect::<BTreeMap<_, _>>();
+
+    assert_eq!(kinds_by_id.get("go_greeting"), Some(&"go_library"));
+    assert_eq!(kinds_by_id.get("go_greeting_test"), Some(&"go_test"));
+}
+
 #[test]
 fn cargo_native_project_loads_without_a_struo_manifest() {
     let schemas = built_in_target_kind_schemas_result().expect("built-in target kind schemas load");
