@@ -487,7 +487,10 @@ without bound.
 Built-in native workspace resolvers record first-party test target names in
 the non-configurable `_default_test_roots` attribute. Targetless `struo test`
 and native command compatibility adapters use that metadata to avoid running
-test suites that belong only to resolved dependencies. A custom resolver can
+test suites that belong only to resolved dependencies. When a changed file is
+owned only by seed targets that declare the attribute, such as a native
+manifest no generated target claims, `struo query affected-tests` selects
+those first-party tests. A custom resolver can
 use the same convention by declaring the attribute as `list<string>` on its
 seed target kind and returning the generated test names through `attrs`.
 

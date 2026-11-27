@@ -264,6 +264,9 @@ packages that depend on it, when one of these changes:
 - its `Cargo.toml`, `Cargo.lock`, `.cargo/` configuration, or
   `rust-toolchain` file.
 
+The root `Cargo.toml` of a virtual workspace, which belongs to no package,
+selects the tests of every workspace member.
+
 Any other file selects a target's tests only when that target's Rust files
 name it: its path, relative to the workspace, the package, or a directory
 above the package, as `include_str!("../dev/example.toml")` or a test opening

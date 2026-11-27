@@ -225,6 +225,86 @@ fn default_selection_uses_only_test_roots_reported_by_the_resolver() {
 }
 
 #[test]
+fn a_changed_workspace_manifest_selects_the_first_party_tests_it_reports() {
+    let workspace = TempDir::new().unwrap();
+    let mut resolver = target(
+        "packages/tool/swift_package",
+        "swift_package_workspace",
+        &["Package.swift"],
+        &["packages/tool/Tool"],
+        false,
+    );
+    resolver.attrs.insert(
+        "_default_test_roots".to_string(),
+        AttrValue::List(vec![AttrValue::String("ToolTests".to_string())]),
+    );
+    let graph = vec![
+        resolver,
+        target(
+            "packages/tool/Tool",
+            "apple_library",
+            &["Sources/Tool/Tool.swift"],
+            &[],
+            false,
+        ),
+        target(
+            "packages/tool/ToolTests",
+            "apple_test_bundle",
+            &["Tests/ToolTests/Test.swift"],
+            &["packages/tool/Tool"],
+            true,
+        ),
+        target(
+            "packages/tool/DependencyTests",
+            "apple_test_bundle",
+            &[".struo/swift-package-packages/dependency/Tests/Test.swift"],
+            &[],
+            true,
+        ),
+    ];
+
+    let selected = |graph: &[GraphTarget]| {
+        selection_report(
+            workspace.path(),
+            graph,
+            &["packages/tool/Package.swift".to_string()],
+        )
+        .unwrap()
+        .tests
+        .into_iter()
+        .map(|test| (test.id, test.reasons))
+        .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        selected(&graph),
+        vec![(
+            "packages/tool/ToolTests".to_string(),
+            vec!["changed workspace manifest `packages/tool/Package.swift` of `packages/tool/swift_package`".to_string()]
+        )]
+    );
+
+    // A generated target that claims the manifest itself owns the change.
+    let mut claimed = graph.clone();
+    claimed[1].srcs.push("Package.swift".to_string());
+    let selected = selected(&claimed);
+    assert_eq!(
+        selected
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["packages/tool/ToolTests"]
+    );
+    assert!(
+        !selected[0]
+            .1
+            .iter()
+            .any(|reason| reason.contains("workspace manifest")),
+        "{selected:?}"
+    );
+}
+
+#[test]
 fn default_selection_resolves_reported_test_names_inside_the_seed_package() {
     let mut resolver = target(
         "packages/tool/swift_package",

@@ -101,9 +101,7 @@ pub(super) fn selection_report(
             continue;
         }
 
-        for owner in owners {
-            add_affected_tests(path, owner, &targets, &reverse_dependencies, &mut reasons);
-        }
+        add_owner_tests(path, &owners, &targets, &reverse_dependencies, &mut reasons);
     }
 
     let tests = graph
@@ -142,21 +140,9 @@ pub(super) fn default_selection_report(
         .iter()
         .filter(|target| resolver_kinds.contains(&target.kind))
         .flat_map(|target| {
-            let Some(AttrValue::List(values)) = target.attrs.get("_default_test_roots") else {
-                return Vec::new();
-            };
-            has_declared_test_roots = true;
-            values
-                .iter()
-                .filter_map(AttrValue::as_str)
-                .map(|name| {
-                    if target.label.package.is_empty() {
-                        name.to_string()
-                    } else {
-                        format!("{}/{}", target.label.package, name)
-                    }
-                })
-                .collect::<Vec<_>>()
+            let roots = default_test_roots(target);
+            has_declared_test_roots |= roots.is_some();
+            roots.unwrap_or_default()
         })
         .collect::<BTreeSet<_>>();
     if has_declared_test_roots {
@@ -219,6 +205,22 @@ pub(super) fn default_selection_report(
         unmatched_paths: Vec::new(),
         tests,
     }
+}
+
+/// The first-party test target ids a resolver seed reports through
+/// `_default_test_roots`, resolved inside the seed's package.
+fn default_test_roots(seed: &GraphTarget) -> Option<Vec<String>> {
+    let Some(AttrValue::List(values)) = seed.attrs.get("_default_test_roots") else {
+        return None;
+    };
+    let roots = values.iter().filter_map(AttrValue::as_str).map(|name| {
+        if seed.label.package.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}/{}", seed.label.package, name)
+        }
+    });
+    Some(roots.collect())
 }
 
 fn depends_on_any_root<'a>(
@@ -316,6 +318,36 @@ fn add_full_test_scope(
             .entry(test.label.id.clone())
             .or_default()
             .insert(reason.to_string());
+    }
+}
+
+// A resolver seed's own sources are the native manifest it derives its targets
+// from. When none of those targets claims the manifest itself, a change to it
+// selects the first-party tests the seed reports, since it can change any of
+// them.
+fn add_owner_tests(
+    path: &str,
+    owners: &[&str],
+    targets: &BTreeMap<&str, &GraphTarget>,
+    reverse_dependencies: &BTreeMap<&str, Vec<&str>>,
+    reasons: &mut BTreeMap<String, BTreeSet<String>>,
+) {
+    let seed_roots = owners
+        .iter()
+        .map(|owner| {
+            targets
+                .get(owner)
+                .and_then(|target| default_test_roots(target))
+        })
+        .collect::<Option<Vec<_>>>();
+    for test in seed_roots.into_iter().flatten().flatten() {
+        reasons.entry(test).or_default().insert(format!(
+            "changed workspace manifest `{path}` of `{}`",
+            owners.join("`, `")
+        ));
+    }
+    for owner in owners {
+        add_affected_tests(path, owner, targets, reverse_dependencies, reasons);
     }
 }
 
