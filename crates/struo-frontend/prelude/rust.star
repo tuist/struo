@@ -1477,9 +1477,13 @@ fi""".format(
 # Input discovery for a Rust action whose command names what it read in
 # `depfile`: the package sources leave the cache key, and the reused result is
 # the one whose recorded reads are unchanged. Struo's own outputs stay keyed.
-def _rust_input_discovery(depfile, record, candidates):
+#
+# A crate built from sources Struo copied has no candidates, but its depfile
+# still says which environment values it read, so a result whose output names
+# this checkout is not restored in another one.
+def _rust_input_discovery(depfile, record, candidates, environment_only = False):
     candidates = [path for path in _unique(candidates) if not path.startswith(".struo/")]
-    if not candidates:
+    if not candidates and not environment_only:
         return None
     return {"depfile": depfile, "record": record, "candidates": candidates}
 
@@ -1549,7 +1553,7 @@ def _rust_build_script(ctx, rustc, identity, target, host_triple, edition, dep_a
         argv = compile_argv,
         inputs = _unique([script_path] + source_inputs + build_script_inputs + dep_inputs + dependency_build_outputs + dependency_build_inputs + wrapped[1] + _rust_extra_inputs(ctx)),
         outputs = [runner],
-        input_discovery = _rust_input_discovery(runner + ".d", runner + ".struo-inputs", [script_path] + source_inputs + build_script_inputs + _rust_extra_inputs(ctx)),
+        input_discovery = _rust_input_discovery(runner + ".d", runner + ".struo-inputs", [script_path] + source_inputs + build_script_inputs + _rust_extra_inputs(ctx), environment_only = True),
         env = build_script_compile_env,
         toolchain_identity = identity + linker_identity + "\x00build-script",
         identifier = _rust_action_identifier(ctx, "build-script-rustc"),
@@ -1977,8 +1981,10 @@ def _rust_compile(ctx, crate_type, default_root, output_name, test = False, prov
         rustc_args.extend(["-C", "instrument-coverage", "-C", "link-dead-code"])
     rustc_args.extend(_rust_extra_filename_args(ctx, crate_type))
     rustc_args.extend(_rust_output_args(crate_type, output))
-    if not materialized_sources:
+    if not materialized_sources or host_os() == "windows":
         rustc_args.append("--emit=link,dep-info=" + output + ".d")
+    else:
+        rustc_args.append("--emit=link,dep-info=" + execution_path(output + ".d"))
     rustc_args.extend(_rust_compile_target_args(target, host_triple))
     rustc_args.extend(_rust_proc_macro_codegen_args(crate_type))
     rustc_args.extend(feature_flags)
@@ -2017,7 +2023,7 @@ def _rust_compile(ctx, crate_type, default_root, output_name, test = False, prov
         argv = argv,
         inputs = _unique(srcs + source_inputs + dep_inputs + dep_search_inputs + build_inputs + dependency_build_outputs + dependency_build_inputs + linker_script_inputs + (_rust_native_dep_link_inputs(deps) if crate_type != "rlib" else []) + _rust_extra_inputs(ctx)),
         outputs = [output],
-        input_discovery = None if materialized_sources else _rust_input_discovery(output + ".d", output + ".struo-inputs", srcs + source_inputs + _rust_extra_inputs(ctx)),
+        input_discovery = _rust_input_discovery(output + ".d", output + ".struo-inputs", [] if materialized_sources else srcs + source_inputs + _rust_extra_inputs(ctx), environment_only = True),
         env = compile_env,
         cwd = compile_cwd,
         # Only consumed bytes matter, not which generator inputs produced them.

@@ -929,3 +929,56 @@ fn action_keys_do_not_depend_on_the_checkout_path() {
     assert!(first.contains_key("cargo_app"), "{first:?}");
     assert_eq!(first, second);
 }
+
+#[cfg(unix)]
+#[test]
+fn artifacts_that_embed_the_checkout_path_run_after_the_checkout_moves() {
+    // `env!` writes absolute paths into the test, the library, and the crate
+    // outside the workspace, so a copy built in another checkout names files
+    // that need not exist here.
+    let files = [
+        (
+            "Cargo.toml",
+            "[package]\nname = \"tool\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\next = { path = \"ext\" }\n[workspace]\nexclude = [\"ext\"]\n",
+        ),
+        ("src/main.rs", "fn main() {}\n"),
+        (
+            "src/lib.rs",
+            "pub fn manifest() -> &'static str { concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/Cargo.toml\") }\n",
+        ),
+        (
+            "tests/cli.rs",
+            r#"#[test]
+fn runs() {
+    assert!(std::path::Path::new(tool::manifest()).is_file());
+    assert!(std::path::Path::new(ext::MANIFEST).is_file());
+    assert!(std::process::Command::new(env!("CARGO_BIN_EXE_tool")).status().unwrap().success());
+}
+"#,
+        ),
+        (
+            "ext/Cargo.toml",
+            "[package]\nname = \"ext\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        ),
+        (
+            "ext/src/lib.rs",
+            "pub const MANIFEST: &str = concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/Cargo.toml\");\n",
+        ),
+    ];
+    // Both checkouts share one cache, as clones on CI share a remote one.
+    let parent = tempfile::tempdir().unwrap();
+    let first = parent.path().join("a/ws");
+    write_files(&first, &files);
+    success(&struo(&first, "never", &["build", "cargo_tool_test_cli"]));
+    std::fs::remove_dir_all(&first).unwrap();
+
+    let second = parent.path().join("b/ws");
+    write_files(&second, &files);
+    success(&struo(&second, "never", &["build", "cargo_tool_test_cli"]));
+    success(
+        &Command::new(second.join(".struo/out/cargo_tool_test_cli/deps/cli"))
+            .current_dir(&second)
+            .output()
+            .unwrap(),
+    );
+}

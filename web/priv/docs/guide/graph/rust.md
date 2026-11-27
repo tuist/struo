@@ -127,6 +127,14 @@ compiles into C and C++ objects when the C compiler supports
 `-ffile-prefix-map`. A build script that writes the checkout path into a file
 by other means still makes its consumers' keys differ between clones.
 
+A crate that reads a path through `env!`, such as
+`env!("CARGO_MANIFEST_DIR")` or `env!("CARGO_BIN_EXE_<name>")`, writes that
+path into its output. When it compiles locally without a sandbox, its cached
+result is reused only in the checkout that built it, so another clone
+compiles its own copy instead of one that names files in the first. A path a
+procedural macro reads from the environment, or one a build script writes
+into a generated file, is not detected, and the other clone reuses it.
+
 Continue with [Caching](/guide/scripted/caching) to configure a shared remote
 cache.
 
@@ -612,9 +620,9 @@ requests.
 - Tests and `struo run` start with a cleared environment and a private `HOME`.
   Name host variables a generated test needs in `test_env_inherit`, or in
   `env_inherit` on an explicit target.
-- A test that reads `CARGO_BIN_EXE_<name>` with the `env!` macro pins the path
-  at compile time, which breaks under sandboxing or remote execution. Read the
-  variable at run time instead.
+- A test that reads `CARGO_BIN_EXE_<name>` or `CARGO_MANIFEST_DIR` with the
+  `env!` macro pins the path at compile time, which breaks under sandboxing or
+  remote execution. Read the variable at run time instead.
 - Cargo configuration files take part in graph resolution. Keep the
   repository's source replacement and target configuration available when
   loading the graph.

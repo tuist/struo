@@ -1306,11 +1306,21 @@ async fn probe_cached_action(
             context.index, context.target_id, context.identifier
         )
     };
+    // Earlier discovered variants are fetched only once the main key cannot
+    // be reused, so a warm hit costs one lookup.
     let mut keys = vec![action_digest];
-    if context.input_discovery.is_some() {
-        keys.extend(discovered_inputs::variants(context.cache, &action_digest).await);
-    }
-    for key in keys {
+    let mut variants_loaded = context.input_discovery.is_none();
+    let mut next = 0;
+    loop {
+        let Some(&key) = keys.get(next) else {
+            if variants_loaded {
+                break;
+            }
+            variants_loaded = true;
+            keys.extend(discovered_inputs::variants(context.cache, &action_digest).await);
+            continue;
+        };
+        next += 1;
         let result = match reusable_result(context, &key).await {
             Err(error) if error.is_unavailable() => {
                 tracing::warn!(target = %context.target_id, action_index = context.index,

@@ -12,6 +12,13 @@
 //!
 //! The record lives in the cache entry it describes and is checked on every
 //! reuse, so what an action depends on never comes from another run's history.
+//!
+//! A depfile's `# env-dep:NAME=VALUE` comments name environment values the
+//! command read, which it may have written into its output. When one of them
+//! names the workspace, the record also holds the workspace path, and the
+//! result is reused only in that checkout: another clone at another path that
+//! shares the cache runs the command again instead of restoring an output that
+//! names files there.
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
@@ -26,6 +33,9 @@ use super::recovery::Producers;
 use crate::commands::graph::analysis::source_digest_cache::SourceDigestCache;
 
 const ABSENT: &[u8] = b"struo.discovered_input.absent.v1\0";
+/// The record entry for a checkout an output names. Recorded files are
+/// workspace-relative, so an absolute key never collides with one.
+const CHECKOUT: &str = "/checkout";
 
 /// The discovery the action declares, when this run can honor it: a command
 /// that runs locally with the whole workspace visible, so it can read files
@@ -106,6 +116,13 @@ pub(super) async fn still_valid(
         return Ok(false);
     };
     for (path, digest) in recorded {
+        if path == CHECKOUT {
+            if checkout_digest(workspace) != digest {
+                tracing::debug!("output names another checkout");
+                return Ok(false);
+            }
+            continue;
+        }
         if current_digest(workspace, source_digest_cache, &path) != digest {
             tracing::debug!(path = %path, "discovered input changed");
             return Ok(false);
@@ -192,8 +209,12 @@ pub(super) async fn record(
     result: &mut ActionResult,
 ) -> Result<()> {
     let depfile = workspace_path(&discovery.depfile)?.resolve(workspace);
+    let mut names_checkout = false;
     let paths = match std::fs::read_to_string(&depfile) {
         Ok(text) => {
+            names_checkout = depfile_environment(&text)
+                .iter()
+                .any(|value| super::lowering::canonical_action_value(value, workspace) != *value);
             let cwd = match &declared.cwd {
                 Some(cwd) => workspace_path(cwd)?.resolve(workspace),
                 None => workspace.to_path_buf(),
@@ -209,7 +230,7 @@ pub(super) async fn record(
             return Err(error).with_context(|| format!("reading depfile `{}`", depfile.display()))
         }
     };
-    let recorded = paths
+    let mut recorded = paths
         .into_iter()
         .filter(|path| !path.starts_with(".struo/") && path != ".struo")
         .map(|path| {
@@ -217,6 +238,9 @@ pub(super) async fn record(
             (path, digest)
         })
         .collect::<BTreeMap<_, _>>();
+    if names_checkout {
+        recorded.insert(CHECKOUT.to_string(), checkout_digest(workspace));
+    }
     let bytes = serde_json::to_vec(&recorded).context("encoding discovered inputs")?;
     let path = workspace_path(&discovery.record)?.resolve(workspace);
     if let Some(parent) = path.parent() {
@@ -237,9 +261,43 @@ pub(in crate::commands::graph::analysis) async fn recorded_paths(
     cache: &CacheProvider,
     record: &Digest,
 ) -> Result<Option<Vec<String>>> {
-    Ok(read_record(cache, record)
-        .await?
-        .map(|recorded| recorded.into_keys().collect()))
+    Ok(read_record(cache, record).await?.map(|recorded| {
+        recorded
+            .into_keys()
+            .filter(|path| path != CHECKOUT)
+            .collect()
+    }))
+}
+
+fn checkout_digest(workspace: &Path) -> Digest {
+    Digest::of_bytes(struo_core::command_path(workspace).as_bytes())
+}
+
+/// The values of a depfile's `# env-dep:NAME=VALUE` comments, as rustc
+/// writes them for each environment variable a crate read, with its escapes
+/// of `\\`, `\n`, and `\r` undone.
+fn depfile_environment(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|line| line.trim_start().strip_prefix("# env-dep:"))
+        .filter_map(|dependency| dependency.split_once('=').map(|(_, value)| value))
+        .map(|value| {
+            let mut unescaped = String::with_capacity(value.len());
+            let mut characters = value.chars();
+            while let Some(character) = characters.next() {
+                if character != '\\' {
+                    unescaped.push(character);
+                    continue;
+                }
+                match characters.next() {
+                    Some('n') => unescaped.push('\n'),
+                    Some('r') => unescaped.push('\r'),
+                    Some(other) => unescaped.push(other),
+                    None => unescaped.push('\\'),
+                }
+            }
+            unescaped
+        })
+        .collect()
 }
 
 async fn read_record(
@@ -355,6 +413,12 @@ fn normalize(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn depfile_environment_undoes_rustc_escapes() {
+        let depfile = "app.d: src/lib.rs\n\n# env-dep:CARGO_MANIFEST_DIR=C:\\\\ws\\\\pkg\n# env-dep:LINES=a\\nb\n# env-dep:UNSET\n";
+        assert_eq!(depfile_environment(depfile), ["C:\\ws\\pkg", "a\nb"]);
+    }
 
     #[test]
     fn depfiles_name_every_prerequisite_once() {
