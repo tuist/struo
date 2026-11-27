@@ -112,8 +112,10 @@ The second invocation restores unchanged actions from the configured cache.
 Changing a locked dependency invalidates that package and its consumers.
 Changing a workspace package invalidates that package and its dependants.
 Changing only a test file reruns the affected test without recompiling an
-unchanged library. Build-script outputs that embed timestamps or other
-changing bytes still invalidate their consumers.
+unchanged library. Generated files and `cargo:` directives from a build
+script that embed timestamps or other changing bytes still invalidate their
+consumers. On macOS and Linux, other lines a build script prints, such as a
+parallel `make` log or `cargo:warning` lines, do not.
 
 Cache keys do not depend on where the repository is checked out, so two
 clones at different paths share cached results. The compiler records the

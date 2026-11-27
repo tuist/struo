@@ -905,6 +905,8 @@ fn action_keys_do_not_depend_on_the_checkout_path() {
     let out = std::env::var("OUT_DIR").unwrap();
     let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     std::fs::write(format!("{out}/gen.txt"), "42").unwrap();
+    // Like a parallel `make`, whose log differs on every run.
+    println!("built at {:?}", std::time::SystemTime::now());
     println!("cargo:rustc-link-search=native={out}");
     println!("cargo:rustc-env=EXT_GEN={out}/gen.txt");
     println!("cargo:rerun-if-changed={manifest}/build.rs");

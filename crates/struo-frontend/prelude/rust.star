@@ -1391,11 +1391,15 @@ def _rust_build_script_output_pipeline(runner, status, stdout):
     status_capture = "{ " + runner_exec + " 2>&1; " + printf + " '%s' \"$?\" > " + status_abs + "; }"
     if host_os() == "windows":
         return status_capture + " | " + tee + " " + stdout_abs
-    # The log keeps real paths; only the stored copy names the placeholder,
-    # and only where the root ends a path component, as in action keys.
+    # The log keeps every line with real paths. The stored copy, which
+    # consumers key on, keeps only the Cargo directives readers use, as
+    # rules_rust keeps only the flags it parses, so a parallel `make` log or
+    # compiler warnings that interleave differently on each run change no key. It names the placeholder only
+    # where the root ends a path component, as action keys do.
     program = """BEGIN { root = ENVIRON["STRUO_ROOT"]; n = length(root); file = ENVIRON["STRUO_STDOUT"]; printf "" > file }
 {
   print; fflush()
+  if ($0 !~ /^cargo:/ || $0 ~ /^cargo::?warning=/) next
   line = $0; out = ""
   while (n > 0 && (i = index(line, root)) > 0) {
     next_char = substr(line, i + n, 1)
