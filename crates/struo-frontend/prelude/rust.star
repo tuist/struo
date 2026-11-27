@@ -4465,6 +4465,47 @@ def _cargo_workspace_build_script_data(ctx, packages):
             )
     return declared
 
+# What a package's tests depend on, for `struo query affected-tests`: its Rust
+# files, the directories that hold its targets (which keeps fixtures and
+# snapshots beside its tests), and its manifest and Cargo configuration. Any
+# other file in its tree selects a target's tests only when that target's Rust
+# files mention its path, which `affected-tests` checks with
+# `_affected_mentions`. A build script may read any file in its package, as may
+# a target whose source sits at the package root, so those packages keep their
+# whole tree. Reads no file contents, so editing a source never invalidates
+# the resolved graph.
+def _cargo_package_affected_srcs(package, source_root):
+    if _cargo_build_script_target(package) != None:
+        return None
+    prefix = "" if source_root == "." else source_root + "/"
+    package_root = _cargo_comparison_path(_cargo_package_root(package)) + "/"
+    directories = []
+    for target in package.get("targets") or []:
+        source = _cargo_comparison_path(target.get("src_path") or "")
+        relative = source[len(package_root):] if source.startswith(package_root) else ""
+        if "/" not in relative:
+            return None
+        directories.append(relative.split("/")[0])
+    manifests = ["Cargo.toml", "Cargo.lock", ".cargo/**", "rust-toolchain", "rust-toolchain.toml", "**/*.rs"]
+    return _unique([prefix + path for path in manifests] + [prefix + directory + "/**" for directory in directories])
+
+# Each target searches its package's Rust files for mentions, except the crate
+# roots of the package's other binaries, tests, benchmarks, and examples, which
+# only those targets compile, so a path one integration test names selects that
+# test alone. A helper that tests share through `mod` belongs in a file that is
+# no target's root, such as `tests/common/mod.rs`, where every target sees it.
+# Nested `target` and `node_modules` directories hold build output and
+# installed packages, never the package's own sources.
+def _cargo_apply_affected_mentions(specs, source_root):
+    prefix = "" if source_root == "." else source_root + "/"
+    library_roots = [spec["attrs"]["crate_root"] for spec in specs if spec["kind"] in ["rust_library", "rust_proc_macro"]]
+    roots = _unique([spec["attrs"]["crate_root"] for spec in specs])
+    for spec in specs:
+        own = spec["attrs"]["crate_root"]
+        spec["attrs"]["_affected_mentions"] = [prefix + "**/*.rs"]
+        others = [root for root in roots if root != own and root not in library_roots]
+        spec["attrs"]["_affected_mentions_exclude"] = [prefix + "**/target/**", prefix + "**/node_modules/**"] + others
+
 # Workspace paths outside its package that a member's build script names in
 # string literals, such as shared protobuf directories. A `../` literal names
 # one directly; a plain literal names one when it exists under a directory a
@@ -4593,11 +4634,15 @@ def _cargo_workspace_resolver(ctx):
         package_attrs = {}
         if input_excludes:
             package_attrs["srcs_exclude"] = input_excludes
+        affected_srcs = _cargo_package_affected_srcs(package, source_root)
+        if affected_srcs != None:
+            package_attrs["_affected_srcs"] = affected_srcs
         build_script = _cargo_build_script_target(package)
         if build_script != None:
             script_data = _unique((build_script_data.get(package["name"]) or []) + _cargo_build_script_outside_paths(ctx, package, build_script, source_root))
             if script_data:
                 package_attrs["build_script_data"] = script_data
+        first_spec = len(targets)
         for target in package.get("targets") or []:
             if not _cargo_workspace_target_enabled(target, node):
                 continue
@@ -4644,6 +4689,8 @@ def _cargo_workspace_resolver(ctx):
                 _cargo_apply_package_attrs(test_spec["attrs"], package_attrs, test_profile, package, False)
                 targets.append(test_spec)
                 test_roots.append(test_spec["name"])
+        if affected_srcs != None:
+            _cargo_apply_affected_mentions(targets[first_spec:], source_root)
 
     for spec in targets:
         if spec["kind"] == "rust_test":
@@ -4701,6 +4748,9 @@ _RUST_COMMON_ATTRS = [
     attr("compile_data", "list<string>", default = "[]", docs = "Bazel-compatible compile-time data file globs included in the rustc action inputs.", configurable = False),
     attr("build_script_data", "list<string>", default = "[]", docs = "Package-relative globs of files outside `srcs` that the build script reads, such as shared protobuf definitions. A change to one reruns the build script and selects this target's tests. Generated Cargo targets take them from the cargo_workspace `build_script_data` attribute.", configurable = False),
     attr("build_script_jobs", "int", default = "4", docs = "Job count passed as `NUM_JOBS` to a build script that depends on `cc`, `cmake`, or `autotools`, which use it for parallel native compiles. Its run action reserves the same number of CPU slots. Other build scripts get one job and one slot.", configurable = False),
+    attr("_affected_srcs", "list<string>", docs = "Resolver-owned globs, relative to the target's package like `srcs`, of the files that always select this target's tests in `struo query affected-tests`, which matches them instead of `srcs`. Generated Cargo targets list their package's Rust files, target directories, manifest, and Cargo configuration.", configurable = False),
+    attr("_affected_mentions", "list<string>", docs = "Resolver-owned globs, relative to the target's package, of files `struo query affected-tests` searches for a changed path that `_affected_srcs` leaves out. A file that mentions the path selects this target's tests. Generated Cargo targets search their package's Rust files.", configurable = False),
+    attr("_affected_mentions_exclude", "list<string>", docs = "Resolver-owned globs removed from `_affected_mentions`; a search does not enter a directory one ending in `/**` removes. Generated Cargo targets leave out nested `target` and `node_modules` directories and the crate roots only the package's other targets compile.", configurable = False),
     attr("_cargo_profile_flags", "list<string>", default = "[]", docs = "Resolver-owned rustc flags from the Cargo profile, passed before `rustc_flags` and left out of the build script's `CARGO_ENCODED_RUSTFLAGS`.", configurable = False),
     attr("srcs_exclude", "list<string>", default = "[]", docs = "Package-relative globs removed from `srcs`, `compile_data`, and build-script inputs. Changed paths that match one do not select this target's tests, and select no tests when no other target claims them. Generated Cargo targets exclude the local packages Cargo resolved inside them, their `target` directory, Cargo's configured target directory, and, at the workspace root, `.git`.", configurable = False),
     attr("crate_aliases", "map<string, string>", default = "{}", docs = "Map dependency label, package name, or crate name to the local extern crate name.", configurable = False),

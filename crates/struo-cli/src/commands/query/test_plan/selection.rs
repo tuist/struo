@@ -6,6 +6,7 @@ use struo_core::{TestSelectionPolicy, TestSelectionReport, WorkspacePath, TEST_S
 use struo_frontend::{AttrValue, GraphTarget};
 
 use super::inputs::{is_graph_input, target_input_patterns, workspace_graph_input_patterns};
+use super::mentions::mention_owners;
 use super::AffectedTestRecord;
 
 pub(super) fn selection_report(
@@ -38,6 +39,26 @@ pub(super) fn selection_report(
     let mut reasons = BTreeMap::<String, BTreeSet<String>>::new();
     let mut unmatched_paths = Vec::new();
 
+    let owners_of = |path: &str| {
+        target_patterns
+            .iter()
+            .filter_map(|(target_id, inputs)| inputs.matches(path).then_some(target_id.as_str()))
+            .collect::<Vec<_>>()
+    };
+    // A path a target leaves out of its inputs may still be one its sources
+    // name, so those are searched for together, reading each file once.
+    let unread = changed_paths
+        .iter()
+        .filter(|path| !is_graph_input(path, &graph_inputs))
+        .filter(|path| {
+            target_patterns
+                .values()
+                .any(|inputs| inputs.excludes_from_srcs(path))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut mentioned = mention_owners(workspace, &target_patterns, &unread);
+
     for path in &changed_paths {
         if is_graph_input(path, &graph_inputs) {
             add_full_test_scope(
@@ -48,19 +69,20 @@ pub(super) fn selection_report(
             continue;
         }
 
-        let mut owners = target_patterns
-            .iter()
-            .filter_map(|(target_id, inputs)| inputs.matches(path).then_some(target_id.as_str()))
-            .collect::<Vec<_>>();
-        if owners.is_empty()
-            && target_patterns
-                .values()
-                .any(|inputs| inputs.excludes_from_srcs(path))
-        {
-            // A target explicitly took this path out of its inputs, such as
-            // a build tool's output directory, and no other target claims it,
-            // so no build reads it.
-            continue;
+        let mut owners = owners_of(path);
+        if unread.contains(path) {
+            // A target took this path out of its inputs, such as a build
+            // tool's output directory or a file outside the code its resolver
+            // narrowed it to, so of those targets only one whose sources name
+            // the path reads it.
+            for owner in mentioned.remove(path).unwrap_or_default() {
+                if !owners.contains(&owner) {
+                    owners.push(owner);
+                }
+            }
+            if owners.is_empty() {
+                continue;
+            }
         }
         if owners.is_empty() {
             owners = nearest_package_owners(path, graph);

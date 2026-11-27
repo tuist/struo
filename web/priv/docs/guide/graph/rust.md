@@ -252,6 +252,37 @@ build_script_data = { "api-types" = ["proto/**"] }
 whose build script reads them, so changing one selects the tests of that
 package and of every package that depends on it.
 
+### Which files select a package's tests
+
+`struo query affected-tests` selects a Cargo package's tests, and those of the
+packages that depend on it, when one of these changes:
+
+- a Rust file anywhere in the package;
+- a file in a directory that holds one of its targets, such as `src/`,
+  `tests/`, `benches/`, or `examples/`, which covers snapshots and fixtures
+  kept beside the code;
+- its `Cargo.toml`, `Cargo.lock`, `.cargo/` configuration, or
+  `rust-toolchain` file.
+
+Any other file selects a target's tests only when that target's Rust files
+name it: its path, relative to the workspace, the package, or a directory
+above the package, as `include_str!("../dev/example.toml")` or a test opening
+`"docs/reference/cli.md"` does, or a directory it lies in, written as a path,
+such as `"docs/reference"`, `"./migrations"`, or `"fixtures/**/*.json"`. A
+path only one integration test names selects that test alone; a helper the
+tests share should live in a file that is no target's root, such as
+`tests/common/mod.rs`, so that every test sees what it names. For a package
+at the workspace root, editing `docs/`, `README.md`, or a script in `dev/`
+that no Rust file names leaves its tests out of the selection. A package with
+a build script, or with a target whose source file sits at the package root,
+keeps its whole directory, since either may read any file in it.
+
+A file reached through a name the code never writes as a path is not seen: a
+directory a procedural macro reads by convention with no argument, or a bare
+name joined at run time, such as `dir.join("fixtures").join(name)`. Keep such
+files in a directory that holds a target, such as `tests/`, or write the
+directory as a path.
+
 ### Profiles and native build parallelism
 
 Struo reads Cargo's `dev` profile, and the `test` profile for test targets,
@@ -578,10 +609,11 @@ requests.
 - Rust tests run only host-target executables. A cross-target test can be
   built, but running it needs a platform runner that the target kinds do not
   provide.
-- `struo query affected-tests` selects tests from each package's directory and
-  its build script's declared or literal paths, not from what the compiler
-  reported reading. Editing `docs/` in a package at the workspace root selects
-  that package's tests even though its crate stays cached.
+- `struo query affected-tests` selects tests from the directories a package's
+  targets live in and the paths its Rust files name, not from what the
+  compiler reported reading. A file a procedural macro or a test reaches
+  through a path it never writes out in full selects nothing unless it sits
+  in one of those directories.
 - Only the `dev` and `test` profiles are read. `--release` and custom
   profiles, `panic`, `lto`, and `strip` settings are not applied. As in Cargo,
   objects leave out LLVM bitcode unless the profile enables `lto`, which keeps

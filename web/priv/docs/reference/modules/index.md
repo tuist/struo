@@ -491,6 +491,21 @@ test suites that belong only to resolved dependencies. A custom resolver can
 use the same convention by declaring the attribute as `list<string>` on its
 seed target kind and returning the generated test names through `attrs`.
 
+A resolver can also narrow which changed paths select a generated target's
+tests. `struo query affected-tests` matches a target's `srcs` unless the target
+sets the non-configurable `_affected_srcs` attribute, a `list<string>` of globs
+relative to the target's package; then it matches those instead, still minus
+`srcs_exclude`. A path in `srcs` that they leave out selects the target's
+tests only when one of the files its `_affected_mentions` globs select, minus
+`_affected_mentions_exclude`, names the path or a directory it lies in,
+relative to the workspace, to the directory those globs start from, or to a
+directory above that one. A search does not enter a directory that
+`srcs_exclude` or `_affected_mentions_exclude` removes with a `/**` pattern. Struo searches those files only while
+answering the query, so graph loading reads none of them. A path no target
+claims this way selects no tests. Use these when `srcs` must cover a whole
+directory for staging or input discovery but only some of its files can change
+the target's tests. The Cargo resolver sets them for workspace packages.
+
 The Nx resolver emits `nx_task` for ordinary tasks and `nx_test` for test
 suites, and records every first-party test in `_default_test_roots`. Both
 kinds carry resolver-owned `executor_graph` and `workspace_outputs` attributes.

@@ -21,6 +21,7 @@ struo-events-client = { version = "0.0.0", path = "../struo-events-client" }
 struo-frontend.workspace = true
 struo-host-tree.workspace = true
 
+aho-corasick.workspace = true
 anyhow.workspace = true
 bytes.workspace = true
 base64.workspace = true

@@ -556,6 +556,129 @@ fn runs_the_package_binary() {
     }
 }
 
+/// The tests one `affected-tests` query selects for each changed path, read
+/// from the reasons that name it.
+fn affected_tests_by_path(
+    root: &std::path::Path,
+    paths: &[&str],
+) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut args = vec!["query", "affected-tests"];
+    for path in paths {
+        args.extend(["--changed-path", path]);
+    }
+    let output = struo(root, "never", &args);
+    success(&output);
+    let tests: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    paths
+        .iter()
+        .map(|path| {
+            let mut ids = tests
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|test| {
+                    test["reasons"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|reason| reason.as_str().unwrap().contains(&format!("`{path}`")))
+                })
+                .map(|test| test["id"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>();
+            ids.sort();
+            (path.to_string(), ids)
+        })
+        .collect()
+}
+
+#[test]
+fn root_package_files_its_crates_never_name_select_no_tests() {
+    let root = tempfile::tempdir().unwrap();
+    write_files(
+        root.path(),
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[workspace]\nmembers = [\"crates/core\"]\n",
+            ),
+            ("README.md", "# App\n"),
+            ("docs/guide.md", "# Guide\n"),
+            ("docs/reference/cli.md", "app --help\n"),
+            ("dev/run.sh", "echo run\n"),
+            ("dev/example.toml", "port = 1\n"),
+            ("dev/shared.toml", "name = \"core\"\n"),
+            ("skills/use/SKILL.md", "# Skill\n"),
+            (
+                "src/lib.rs",
+                "mod config;\n#[test]\nfn example() { assert!(config::EXAMPLE.contains(\"port\")); }\n",
+            ),
+            (
+                "src/config.rs",
+                "pub const QUOTE: char = '\"';\npub const EXAMPLE: &str = include_str!(\"../dev/example.toml\");\n",
+            ),
+            ("tests/fixtures/input.txt", "input\n"),
+            (
+                "tests/cli.rs",
+                "mod common;\n#[test]\nfn reference() { let _ = std::fs::read_to_string(\"docs/reference/cli.md\"); let _ = std::fs::read_to_string(\"crates/core/fixtures/x.json\"); let _ = std::fs::read_dir(\"docs/examples\"); }\n",
+            ),
+            (
+                "tests/common/mod.rs",
+                "pub fn data() -> String { std::fs::read_to_string(\"data/y.json\").unwrap() }\n",
+            ),
+            ("data/y.json", "{}\n"),
+            ("docs/examples/a.md", "a\n"),
+            ("crates/testdata/z.json", "{}\n"),
+            ("crates/core/fixtures/x.json", "{}\n"),
+            (
+                "crates/core/Cargo.toml",
+                "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            ),
+            (
+                "crates/core/src/lib.rs",
+                "pub const SHARED: &str = include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../../dev/shared.toml\"));\npub const Z: &str = include_str!(\"../../testdata/z.json\");\n",
+            ),
+        ],
+    );
+    // A compile-fail fixture need not be UTF-8.
+    std::fs::create_dir_all(root.path().join("tests/ui")).unwrap();
+    std::fs::write(root.path().join("tests/ui/invalid.rs"), b"\xff\n").unwrap();
+    let root_tests: &[&str] = &["cargo_app_test_cli", "cargo_app_unit_tests"];
+    let cases: &[(&str, &[&str])] = &[
+        // Nothing in the root package compiles, includes, or names these.
+        ("README.md", &[]),
+        ("docs/guide.md", &[]),
+        ("docs/new.md", &[]),
+        ("dev/run.sh", &[]),
+        ("skills/use/SKILL.md", &[]),
+        // Its sources, its manifest, a fixture beside its tests, and the file
+        // its library includes select every test of the package.
+        ("src/lib.rs", root_tests),
+        ("Cargo.toml", root_tests),
+        ("tests/fixtures/input.txt", root_tests),
+        ("dev/example.toml", root_tests),
+        // A file only one integration test names, even inside a member's
+        // tree or under a directory it names, selects that test alone.
+        ("docs/reference/cli.md", &["cargo_app_test_cli"]),
+        ("crates/core/fixtures/x.json", &["cargo_app_test_cli"]),
+        ("docs/examples/a.md", &["cargo_app_test_cli"]),
+        // A shared test helper is no target's root, so every target sees it.
+        ("data/y.json", root_tests),
+        // A file in the root package's tree that only a member includes
+        // selects that member's tests, not the root package's.
+        ("dev/shared.toml", &["cargo_core_unit_tests"]),
+        ("crates/testdata/z.json", &["cargo_core_unit_tests"]),
+    ];
+    let paths = cases.iter().map(|(path, _)| *path).collect::<Vec<_>>();
+    let expected = cases
+        .iter()
+        .map(|(path, tests)| {
+            let tests = tests.iter().map(ToString::to_string).collect();
+            (path.to_string(), tests)
+        })
+        .collect();
+    assert_eq!(affected_tests_by_path(root.path(), &paths), expected);
+}
+
 #[test]
 fn shared_files_a_build_script_joins_select_its_dependents_tests() {
     let root = tempfile::tempdir().unwrap();

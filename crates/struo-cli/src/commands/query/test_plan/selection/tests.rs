@@ -320,6 +320,46 @@ fn root_package_owns_its_tree_except_the_paths_it_excludes() {
     assert_eq!(selected("target/debug/app"), (vec![], vec![]));
 }
 
+#[test]
+fn a_path_another_target_owns_still_selects_the_targets_that_name_it() {
+    let workspace = TempDir::new().unwrap();
+    std::fs::create_dir_all(workspace.path().join("src")).unwrap();
+    std::fs::write(
+        workspace.path().join("src/lib.rs"),
+        "read(\"docs/reference/cli.md\")",
+    )
+    .unwrap();
+    let mut app = target("app", "library", &["./**/*"], &[], false);
+    for (name, pattern) in [
+        ("_affected_srcs", "src/**"),
+        ("_affected_mentions", "**/*.rs"),
+    ] {
+        app.attrs.insert(
+            name.to_string(),
+            AttrValue::List(vec![AttrValue::String(pattern.to_string())]),
+        );
+    }
+    let graph = vec![
+        app,
+        target("app_tests", "test", &[], &["app"], true),
+        target("docs_lint", "test", &["docs/**"], &[], true),
+    ];
+    let selected = |path: &str| {
+        selection_report(workspace.path(), &graph, &[path.to_string()])
+            .unwrap()
+            .tests
+            .into_iter()
+            .map(|test| test.id)
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        selected("docs/reference/cli.md"),
+        ["app_tests", "docs_lint"]
+    );
+    assert_eq!(selected("docs/guide.md"), ["docs_lint"]);
+}
+
 fn target(id: &str, kind: &str, srcs: &[&str], deps: &[&str], test: bool) -> GraphTarget {
     let (package, name) = id.rsplit_once('/').unwrap_or(("", id));
     GraphTarget {

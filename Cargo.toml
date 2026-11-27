@@ -29,6 +29,7 @@ struo-frontend = { version = "0.0.0", path = "crates/struo-frontend" }
 struo-host-tree = { version = "0.0.0", path = "crates/struo-host-tree" }
 struo-presentation = { version = "0.0.0", path = "crates/struo-presentation" }
 
+aho-corasick = "1"
 allocative = "0.3"
 anyhow = "1"
 async-trait = "0.1"
