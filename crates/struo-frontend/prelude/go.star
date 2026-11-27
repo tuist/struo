@@ -745,6 +745,14 @@ func main() {
 			}
 		}
 	}
+	// An input sandbox lays out only the action's inputs, so the package
+	// directory the test runs in exists only when some data file lives there.
+	if runDir != "" {
+		if err := os.MkdirAll(runDir, 0o755); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+	}
 	absBinary, _ := filepath.Abs(binary)
 	listed, listingErr := listTests(absBinary, runDir)
 	if listingErr != nil && (os.Getenv("STRUO_GO_DISCOVER") == "1" || isolateCoverage) {
