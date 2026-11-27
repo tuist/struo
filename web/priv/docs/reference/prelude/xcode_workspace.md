@@ -18,6 +18,11 @@ defaults to the directory containing the `.xcodeproj`. A relative `SRCROOT`
 override is resolved from that directory, while `$(PROJECT_DIR)` still names
 the project directory.
 
+`SWIFT_ACTIVE_COMPILATION_CONDITIONS` accepts strings and arrays whose entries
+can contain multiple conditions. Struo keeps quoted text together and resolves
+configuration-specific project conditions before expanding `$(inherited)` in
+target settings.
+
 `build_settings` supplies native command-line overrides after project, target,
 and xcconfig settings. For example, `build_settings = { MACOSX_DEPLOYMENT_TARGET = "13.0" }`
 applies the same deployment target to every lowered native target without

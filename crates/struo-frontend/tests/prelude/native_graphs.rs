@@ -624,6 +624,56 @@ result = repr(flags[:flags.index("-enable-bare-slash-regex")])
     );
 }
 
+#[test]
+fn prelude_xcode_lowers_list_valued_swift_conditions_after_inheritance() {
+    let mut objects = native_target(
+        "APP",
+        "ReproApp",
+        "com.apple.product-type.application",
+        &[],
+        &[],
+    );
+    objects.insert("ROOT".into(), serde_json::json!({"isa": "PBXProject", "buildConfigurationList": "PROJECT_CONFIGS", "targets": ["APP"], "mainGroup": "GROUP"}));
+    objects.insert("GROUP".into(), serde_json::json!({"isa": "PBXGroup", "sourceTree": "<group>", "children": ["APP_FILE", "XCCONFIG"]}));
+    objects.insert("XCCONFIG".into(), serde_json::json!({"isa": "PBXFileReference", "sourceTree": "<group>", "path": "Project.xcconfig"}));
+    objects.insert("PROJECT_CONFIGS".into(), serde_json::json!({"isa": "XCConfigurationList", "buildConfigurations": ["PROJECT_DEBUG", "PROJECT_RELEASE"], "defaultConfigurationName": "Debug"}));
+    for (id, name) in [("PROJECT_DEBUG", "Debug"), ("PROJECT_RELEASE", "Release")] {
+        objects.insert(id.into(), serde_json::json!({"isa": "XCBuildConfiguration", "name": name, "baseConfigurationReference": "XCCONFIG", "buildSettings": {"SDKROOT": "macosx", "MACOSX_DEPLOYMENT_TARGET": "14.0"}}));
+    }
+    objects.get_mut("APP_TEST").unwrap()["name"] = "Release".into();
+    let source = package_source(&format!(
+        r#"
+def workspace_root():
+    return "/repo"
+def host_command(argv, env = None, cwd = None, merge_stderr = None, check = True):
+    return _json_encode({{"rootObject": "ROOT", "objects": objects}})
+def host_file_exists(path):
+    return path in ["/repo/app/Project.xcconfig", "/repo/app/ReproApp.swift"]
+def host_file_read(path):
+    if path.endswith(".xcconfig"):
+        return "SWIFT_ACTIVE_COMPILATION_CONDITIONS[config=Debug]=DEBUG\n"
+    return ""
+objects = json_decode({objects:?})
+def conditions(configuration, value):
+    config = "APP_DEBUG" if configuration == "Debug" else "APP_TEST"
+    objects[config]["buildSettings"]["SWIFT_ACTIVE_COMPILATION_CONDITIONS"] = value
+    ctx = {{"label": {{"package": "app", "name": "xcode", "id": "app/xcode"}}, "attr": {{"project": "Repro.xcodeproj", "configuration": configuration}}}}
+    return _xcode_workspace_resolver(ctx)["targets"][0]["attrs"]["swift_defines"]
+result = repr([
+    conditions("Debug", ["$(inherited) FEATURE_X", "DEBUG"]),
+    conditions("Debug", ['"QUOTED CONDITION" $(inherited) FEATURE_X']),
+    conditions("Debug", ["OVERRIDE_ONLY"]),
+    conditions("Release", ["$(inherited) FEATURE_X"]),
+])
+"#,
+        objects = serde_json::Value::Object(objects).to_string(),
+    ));
+    assert_eq!(
+        eval_prelude_source_to_repr(source).unwrap(),
+        r#"[["DEBUG", "FEATURE_X"], ["QUOTED CONDITION", "DEBUG", "FEATURE_X"], ["OVERRIDE_ONLY"], ["FEATURE_X"]]"#
+    );
+}
+
 fn test_configuration_project(explicit_configuration: Option<&str>) -> String {
     let mut objects = serde_json::Map::new();
     objects.insert("ROOT".into(), serde_json::json!({"isa": "PBXProject", "buildConfigurationList": "PROJECT_CONFIGS", "targets": ["APP", "UTIL", "STORE", "OTHER", "TESTS", "OTHER_TESTS"], "mainGroup": "GROUP"}));

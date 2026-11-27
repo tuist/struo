@@ -932,12 +932,13 @@ def _xcode_xcproj_to_pbxproj(project, project_dir = ""):
 # Build settings: layering, .xcconfig flattening, and variable expansion
 # ---------------------------------------------------------------------------
 
+_XCODE_SWIFT_CONDITIONS = "SWIFT_ACTIVE_COMPILATION_CONDITIONS"
+
 # Settings that Xcode stores as whitespace- or comma-separated lists even when
 # they look scalar in the editor. plutil surfaces these as JSON arrays when the
 # pbxproj writes them as `(a, b, c)`, and as strings otherwise.
 _XCODE_LIST_SETTINGS = {
     "GCC_PREPROCESSOR_DEFINITIONS": True,
-    "SWIFT_ACTIVE_COMPILATION_CONDITIONS": True,
     "SWIFT_INCLUDE_PATHS": True,
     "SWIFT_LOAD_BINARY_MACROS": True,
     "OTHER_SWIFT_FLAGS": True,
@@ -975,6 +976,8 @@ _XCODE_LINKER_OPTION_ARITY = {
 def _xcode_setting_to_list(value):
     if value == None:
         return []
+    if type(value) == "tuple":
+        return list(value)
     if type(value) == type([]):
         out = []
         for item in value:
@@ -1135,6 +1138,21 @@ def _xcode_select_conditional_settings(settings, parameters):
         selected[name] = value
     return selected
 
+def _xcode_select_configuration_swift_conditions(settings, configuration):
+    # Resolve configuration-only conditions within their own layer, so a
+    # project condition becomes the input to inheritance, not a late override.
+    selected = {}
+    matching = {}
+    for key, value in settings.items():
+        if key.startswith(_XCODE_SWIFT_CONDITIONS + "["):
+            parsed = _xcode_conditional_setting_key(key)
+            if parsed and all([parameter == "config" for parameter, _ in parsed["conditions"]]):
+                if all([_xcode_glob_match(pattern, configuration) for _, pattern in parsed["conditions"]]):
+                    matching[_XCODE_SWIFT_CONDITIONS] = value
+                continue
+        selected[key] = value
+    return _xcode_merge_settings(selected, matching) if matching else selected
+
 def _xcode_base_config_xcconfig(ctx, objects, config, path_maps):
     # Classic form: a direct file reference to the `.xcconfig`.
     ref = config.get("baseConfigurationReference")
@@ -1159,7 +1177,10 @@ def _xcode_merge_settings(lower, higher):
     for key, value in lower.items():
         merged[key] = value
     for key, value in higher.items():
-        if key in _XCODE_LIST_SETTINGS:
+        if key.split("[", 1)[0] == _XCODE_SWIFT_CONDITIONS:
+            # These tokens can contain quoted whitespace. Don't split them again.
+            merged[key] = tuple(_xcode_resolve_inherited_list(value, merged.get(key)))
+        elif key in _XCODE_LIST_SETTINGS:
             parts = _xcode_resolve_inherited_list(value, merged.get(key))
             if key == "OTHER_SWIFT_FLAGS":
                 # Later setting layers and Swift flag lowering tokenize these entries again.
@@ -1476,8 +1497,9 @@ def _xcode_effective_settings(ctx, objects, config_list, default_name, project_s
     configs = (config_list or {}).get("buildConfigurations") or []
     config_id = _xcode_choose_config(objects, configs, default_name, configuration or ctx["attr"].get("configuration") or "Debug")
     config = objects.get(config_id) or {}
-    xcconfig_settings = _xcode_base_config_xcconfig(ctx, objects, config, path_maps)
-    target_settings = config.get("buildSettings") or {}
+    selected_configuration = config.get("name") or configuration or default_name
+    xcconfig_settings = _xcode_select_configuration_swift_conditions(_xcode_base_config_xcconfig(ctx, objects, config, path_maps), selected_configuration)
+    target_settings = _xcode_select_configuration_swift_conditions(config.get("buildSettings") or {}, selected_configuration)
     layered = _xcode_merge_settings(project_settings, xcconfig_settings)
     layered = _xcode_merge_settings(layered, target_settings)
     overrides = ctx["attr"].get("build_settings") or {}
@@ -1505,8 +1527,10 @@ def _xcode_effective_settings_for_list(ctx, objects, config_list, default_name, 
     configs = (config_list or {}).get("buildConfigurations") or []
     config_id = _xcode_choose_config(objects, configs, default_name, configuration)
     config = objects.get(config_id) or {}
-    xcconfig_settings = _xcode_base_config_xcconfig(ctx, objects, config, path_maps)
-    return _xcode_merge_settings(xcconfig_settings, config.get("buildSettings") or {})
+    selected_configuration = config.get("name") or configuration
+    xcconfig_settings = _xcode_select_configuration_swift_conditions(_xcode_base_config_xcconfig(ctx, objects, config, path_maps), selected_configuration)
+    project_settings = _xcode_select_configuration_swift_conditions(config.get("buildSettings") or {}, selected_configuration)
+    return _xcode_merge_settings(xcconfig_settings, project_settings)
 
 # ---------------------------------------------------------------------------
 # File references and build phases
@@ -4552,7 +4576,7 @@ def _xcode_minimum_os(settings, platform):
 def _xcode_scalar(value):
     if value == None:
         return ""
-    if type(value) == type([]):
+    if type(value) in ["list", "tuple"]:
         return str(value[0]) if value else ""
     return str(value)
 
@@ -4572,7 +4596,7 @@ def _xcode_clean_flags(flags):
 
 def _xcode_swift_defines(settings, subs = {}):
     out = []
-    for condition in _xcode_setting_to_list(settings.get("SWIFT_ACTIVE_COMPILATION_CONDITIONS")):
+    for condition in _xcode_setting_to_list(settings.get(_XCODE_SWIFT_CONDITIONS)):
         out.append(_xcode_resolve_vars(condition, subs))
     return _xcode_clean_flags(_unique(out))
 
