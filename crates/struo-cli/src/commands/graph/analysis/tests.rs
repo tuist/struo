@@ -596,25 +596,25 @@ async fn uncacheable_declared_actions_bypass_action_cache() {
             ("uncacheable".to_string(), AttrValue::Bool(true)),
         ],
     )];
-    let analyzer = AnalysisEngine::from_source(GRAPH_TEST_PRELUDE).unwrap();
-    let session = BuildSession::new_with_analyzer(
-        workspace.path(),
-        &cache,
-        graph.clone(),
-        analyzer,
-        SandboxMode::default(),
-    );
+    // Each build is its own invocation: within one, targets that declare the
+    // same uncached action share a single run.
+    let build = || async {
+        let analyzer = AnalysisEngine::from_source(GRAPH_TEST_PRELUDE).unwrap();
+        BuildSession::new_with_analyzer(
+            workspace.path(),
+            &cache,
+            graph.clone(),
+            analyzer,
+            SandboxMode::default(),
+        )
+        .build_with_analysis(&graph[0])
+        .await
+        .unwrap()
+        .unwrap()
+    };
 
-    let first = session
-        .build_with_analysis(&graph[0])
-        .await
-        .unwrap()
-        .unwrap();
-    let second = session
-        .build_with_analysis(&graph[0])
-        .await
-        .unwrap()
-        .unwrap();
+    let first = build().await;
+    let second = build().await;
 
     assert_eq!(first.cache_tag, "bypass");
     assert_eq!(second.cache_tag, "bypass");
