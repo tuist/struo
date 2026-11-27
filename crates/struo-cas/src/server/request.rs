@@ -21,8 +21,8 @@ pub(super) async fn serve(
         length,
         expect,
         keep_alive,
+        zstd,
     } = request;
-    let mut buffer = vec![0; CHUNK];
     let staging = if method == Method::Put {
         let Ok(Ok(reservation)) =
             timeout(IDLE, budget.reserve_staging(storage::charge(length))).await
@@ -41,6 +41,7 @@ pub(super) async fn serve(
         return Err(io::Error::other("cache storage busy"));
     };
     if method == Method::Put {
+        let mut buffer = vec![0; CHUNK];
         if !storage.prepare(&key, length).await? {
             reply(socket, 507, 0, false).await?;
             return Err(io::Error::other("cache capacity exhausted"));
@@ -77,19 +78,21 @@ pub(super) async fn serve(
         drop(staging);
         reply(socket, 204, 0, keep_alive).await
     } else {
-        let Some((mut source, length)) = storage.reader(&key).await? else {
+        let Some((source, length)) = storage.reader(&key).await? else {
             return reply(socket, 404, 0, keep_alive).await;
         };
-        reply(socket, 200, length, keep_alive).await?;
         if method == Method::Get {
-            loop {
-                let count = source.read(&mut buffer).await?;
-                if count == 0 {
-                    break;
-                }
-                timeout(IDLE, socket.write_all(&buffer[..count])).await??;
-            }
+            super::download::send(
+                socket,
+                source,
+                length,
+                zstd && key.starts_with("v1.cas."),
+                keep_alive,
+                budget,
+            )
+            .await
+        } else {
+            reply(socket, 200, length, keep_alive).await
         }
-        Ok(())
     }
 }

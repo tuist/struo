@@ -194,10 +194,13 @@ outages, or insufficient worker transfer memory use coordinator transfers.
 
 ### Service requirements
 
-- Chunked responses without a `Content-Length` are rejected as protocol errors.
+- Raw responses need a `Content-Length`. Negotiated zstd downloads may use
+  chunked framing; Struo checks their decoded size and digest before caching.
 - A `PUT` that becomes readable before its body completes turns a hit into a
   failure, because Struo rejects the partial object.
-- Content is stored uncompressed.
+- Content and uploads remain uncompressed. `struo cache serve` compresses large
+  blob downloads with zstd when the client accepts it and the memory budget
+  admits the encoder. Old clients and servers continue to use raw transfers.
 - Remote reads use `GET` directly and verify its declared length. Result
   lookup uses one `HEAD` per referenced blob not already held locally so
   records with evicted content are treated as misses. Uploads use `HEAD` to

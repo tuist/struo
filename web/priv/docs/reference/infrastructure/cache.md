@@ -95,6 +95,20 @@ The server must answer:
   "already stored", because content keys are immutable and a concurrent writer
   publishes the same bytes. Never make a partial body readable.
 
+Blob downloads advertise `Accept-Encoding: zstd`. Servers may return raw bytes
+as before, or a zstd stream with `Content-Encoding: zstd`. In an encoded
+response, `Content-Length`, when present, describes the compressed body;
+`X-Struo-Uncompressed-Length` describes the decoded byte count. If the latter
+header is absent, Struo obtains the decoded size with an identity `HEAD`.
+Encoded responses may use chunked transfer framing. Decoded size and BLAKE3
+verification still apply, and zstd decoding rejects windows larger than 8 MiB.
+Servers that vary the response encoding must send `Vary: Accept-Encoding`.
+
+`HEAD`, uploads, and action record downloads request identity encoding. The
+stored v1 values remain uncompressed; compression changes only the download
+representation, not keys, digests, or the stored format. Clients that do not
+request zstd continue to receive raw responses.
+
 `401` and `403` are refusals. `408`, `429`, `5xx`, and connection failures are
 outages. Any other status is a protocol error. Ordering and verification match
 the object storage layout above.
@@ -108,6 +122,12 @@ HTTP/1.1 connections support keep-alive. Each connection reserves 128 KiB
 from the server's memory budget and closes after ten seconds of network
 inactivity. `Connection: close` requests and rejected requests close immediately
 after the response.
+
+For clients accepting zstd, it streams blob downloads of at least 64 KiB using
+zstd level 3 and chunked framing, with `X-Struo-Uncompressed-Length`. Compression
+reserves 32 MiB from the server's transfer memory budget and falls back to raw
+responses immediately when the budget cannot admit the encoder. It does not
+buffer whole blobs or create compressed copies on disk.
 See [running the server](/guide/infrastructure/http-cache#run-struo-as-the-server)
 for credentials, TLS, disk budgets, and restart behavior.
 

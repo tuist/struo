@@ -1,3 +1,4 @@
+mod compression;
 mod limits;
 mod protocol;
 mod storage;

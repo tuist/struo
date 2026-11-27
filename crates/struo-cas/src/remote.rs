@@ -42,7 +42,8 @@ pub struct RemoteBody {
     /// Bytes the store says the body holds. Ingest rejects a body of any
     /// other length.
     pub size: u64,
-    /// The body. Dropping it cancels the transfer.
+    /// The body. Dropping it cancels the transfer. `InvalidData` read errors
+    /// indicate corrupt content; other read errors indicate transport failures.
     pub reader: Pin<Box<dyn AsyncRead + Send>>,
 }
 
@@ -711,10 +712,13 @@ impl AsyncRead for RemoteReader {
         cx: &mut std::task::Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        self.0
-            .as_mut()
-            .poll_read(cx, buf)
-            .map_err(|error| std::io::Error::other(RemoteReadFailed(error)))
+        self.0.as_mut().poll_read(cx, buf).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::InvalidData {
+                error
+            } else {
+                std::io::Error::other(RemoteReadFailed(error))
+            }
+        })
     }
 }
 

@@ -1,5 +1,6 @@
 //! Bounded HTTP service for opaque cache objects.
 
+mod download;
 mod protocol;
 mod request;
 mod storage;

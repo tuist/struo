@@ -6,10 +6,15 @@ use std::fmt;
 use std::path::Path;
 use std::time::Duration;
 
+use async_compression::codecs::zstd::params::DParameter;
+use async_compression::tokio::bufread::ZstdDecoder;
 use bytes::Bytes;
 use futures::TryStreamExt;
-use reqwest::header::{HeaderValue, AUTHORIZATION, CONTENT_LENGTH};
+use reqwest::header::{
+    HeaderValue, ACCEPT_ENCODING, AUTHORIZATION, CONTENT_ENCODING, CONTENT_LENGTH,
+};
 use reqwest::{Method, StatusCode, Url};
+use tokio::io::BufReader;
 use tokio_util::io::{ReaderStream, StreamReader};
 
 use super::{RemoteBody, RemoteStore};
@@ -141,6 +146,10 @@ impl HttpCacheRemote {
         }
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            .no_gzip()
+            .no_brotli()
+            .no_deflate()
+            .no_zstd()
             .connect_timeout(Duration::from_secs(10))
             .read_timeout(Duration::from_secs(60))
             .build()
@@ -164,7 +173,15 @@ impl HttpCacheRemote {
     }
 
     fn request(&self, method: Method, key: &str) -> Result<reqwest::RequestBuilder> {
-        let request = self.client.request(method, self.url(key)?);
+        let encoding = if method == Method::GET && key.starts_with("cas/") {
+            "zstd"
+        } else {
+            "identity"
+        };
+        let request = self
+            .client
+            .request(method, self.url(key)?)
+            .header(ACCEPT_ENCODING, encoding);
         Ok(match &self.auth {
             HttpCacheAuth::None => request,
             HttpCacheAuth::Bearer(token) => {
@@ -231,18 +248,56 @@ impl RemoteStore for HttpCacheRemote {
     }
 
     async fn get(&self, key: &str) -> Result<Option<RemoteBody>> {
+        let blob = key.starts_with("cas/");
         let response = self.send("get", self.request(Method::GET, key)?).await?;
         match response.status() {
             StatusCode::NOT_FOUND => Ok(None),
             status if status.is_success() => {
-                let size = content_length(&response, "get")?;
+                let compressed = match response.headers().get(CONTENT_ENCODING) {
+                    None => false,
+                    Some(value) if value.as_bytes().eq_ignore_ascii_case(b"identity") => false,
+                    Some(value) if blob && value.as_bytes().eq_ignore_ascii_case(b"zstd") => true,
+                    _ => return Err(protocol_error("unsupported Content-Encoding")),
+                };
+                let size = if compressed {
+                    if let Some(value) = response.headers().get("x-struo-uncompressed-length") {
+                        value
+                            .to_str()
+                            .ok()
+                            .and_then(|value| value.parse().ok())
+                            .ok_or_else(|| protocol_error("invalid uncompressed length"))?
+                    } else {
+                        // Generic HTTP servers need not know Struo's size header.
+                        self.head(key)
+                            .await?
+                            .ok_or_else(|| protocol_error("compressed object vanished after GET"))?
+                    }
+                } else {
+                    content_length(&response, "get")?
+                };
                 let stream = response
                     .bytes_stream()
                     .map_err(|error| std::io::Error::other(error.without_url()));
-                Ok(Some(RemoteBody {
-                    size,
-                    reader: Box::pin(StreamReader::new(stream)),
-                }))
+                let reader = StreamReader::new(stream);
+                let reader: std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>> = if compressed {
+                    let mut decoder = ZstdDecoder::with_params(
+                        BufReader::new(reader),
+                        &[DParameter::window_log_max(23)],
+                    );
+                    decoder.multiple_members(true);
+                    let chunks = ReaderStream::new(decoder).map_err(|error| {
+                        if matches!(error.get_ref(), Some(source) if source.is::<reqwest::Error>())
+                        {
+                            error
+                        } else {
+                            std::io::Error::new(std::io::ErrorKind::InvalidData, error)
+                        }
+                    });
+                    Box::pin(StreamReader::new(chunks))
+                } else {
+                    Box::pin(reader)
+                };
+                Ok(Some(RemoteBody { size, reader }))
             }
             status => Err(status_error("get", status)),
         }
@@ -335,6 +390,10 @@ fn content_length(response: &reqwest::Response, operation: &'static str) -> Resu
         })
 }
 
+fn protocol_error(message: &str) -> Error {
+    Error::remote(PROVIDER, "get", ErrorKind::Protocol, message)
+}
+
 fn status_error(operation: &'static str, status: StatusCode) -> Error {
     let kind = match status {
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => ErrorKind::Refused,
@@ -368,6 +427,9 @@ fn is_loopback(url: &Url) -> bool {
         None => false,
     }
 }
+
+#[cfg(test)]
+mod compression_tests;
 
 #[cfg(test)]
 mod tests {

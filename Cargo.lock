@@ -6507,6 +6507,7 @@ name = "struo-cas"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "async-compression",
  "async-trait",
  "aws-config",
  "aws-credential-types",

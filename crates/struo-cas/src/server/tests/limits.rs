@@ -78,7 +78,7 @@ async fn idle_connections_timeout_and_release_reservations() {
     let mut client = TcpStream::connect(server.address).await.unwrap();
     let request = wire("HEAD", &key(1), AUTH, "").replace("Connection: close\r\n", "");
     client.write_all(request.as_bytes()).await.unwrap();
-    let expected = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
+    let expected = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nVary: Accept-Encoding\r\nConnection: keep-alive\r\n\r\n";
     let mut bytes = vec![0; expected.len()];
     client.read_exact(&mut bytes).await.unwrap();
     assert_eq!(bytes, expected);

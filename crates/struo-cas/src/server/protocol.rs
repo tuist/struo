@@ -20,6 +20,7 @@ pub(super) struct Request {
     pub length: u64,
     pub expect: bool,
     pub keep_alive: bool,
+    pub zstd: bool,
 }
 
 pub(super) fn valid_key(key: &str) -> bool {
@@ -134,7 +135,34 @@ fn validate(
                     .split(|byte| *byte == b',')
                     .any(|token| token.trim_ascii().eq_ignore_ascii_case(b"close"))
             }),
+        zstd: accepts_zstd(values("accept-encoding")),
     })
+}
+
+fn accepts_zstd<'a>(values: impl Iterator<Item = &'a [u8]>) -> bool {
+    let mut explicit = None;
+    let mut wildcard = false;
+    for value in values.filter_map(|value| std::str::from_utf8(value).ok()) {
+        for coding in value.split(',') {
+            let mut parts = coding.split(';');
+            let name = parts.next().unwrap_or_default().trim();
+            let enabled = parts.all(|parameter| {
+                parameter.split_once('=').is_some_and(|(name, value)| {
+                    name.trim().eq_ignore_ascii_case("q")
+                        && value
+                            .trim()
+                            .parse::<f32>()
+                            .is_ok_and(|value| value > 0.0 && value <= 1.0)
+                })
+            });
+            if name.eq_ignore_ascii_case("zstd") {
+                explicit = Some(explicit.unwrap_or(true) && enabled);
+            } else if name == "*" {
+                wildcard |= enabled;
+            }
+        }
+    }
+    explicit.unwrap_or(wildcard)
 }
 
 fn untrimmed_value<'a>(header: &httparse::Header<'_>, raw: &'a [u8]) -> &'a [u8] {
@@ -170,6 +198,6 @@ pub(super) async fn reply(
         _ => "Internal Server Error",
     };
     let connection = if keep_alive { "keep-alive" } else { "close" };
-    let header = format!("HTTP/1.1 {status} {reason}\r\nContent-Length: {length}\r\nConnection: {connection}\r\n\r\n");
+    let header = format!("HTTP/1.1 {status} {reason}\r\nContent-Length: {length}\r\nVary: Accept-Encoding\r\nConnection: {connection}\r\n\r\n");
     timeout(IDLE, socket.write_all(header.as_bytes())).await?
 }

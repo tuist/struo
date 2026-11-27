@@ -181,11 +181,11 @@ async fn persistent_connections_frame_uploads_heads_misses_and_pipelined_request
     );
     socket.write_all(requests.as_bytes()).await.unwrap();
     for expected in [
-        "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n",
-        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\n",
-        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n",
-        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\nhello",
-        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\n",
+        "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nVary: Accept-Encoding\r\nConnection: keep-alive\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nVary: Accept-Encoding\r\nConnection: keep-alive\r\n\r\n",
+        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nVary: Accept-Encoding\r\nConnection: keep-alive\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nVary: Accept-Encoding\r\nConnection: keep-alive\r\n\r\nhello",
+        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nVary: Accept-Encoding\r\nConnection: keep-alive\r\n\r\n",
     ] {
         let mut bytes = vec![0; expected.len()];
         timeout(Duration::from_secs(5), socket.read_exact(&mut bytes))
@@ -215,7 +215,7 @@ async fn persistent_requests_reauthenticate_and_reject_unconsumed_bodies() {
             wire("HEAD", &key(1), AUTH, "").replace("Connection: close", "Connection: keep-alive");
         socket.write_all(first.as_bytes()).await.unwrap();
         let expected =
-            b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
+            b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nVary: Accept-Encoding\r\nConnection: keep-alive\r\n\r\n";
         let mut bytes = vec![0; expected.len()];
         socket.read_exact(&mut bytes).await.unwrap();
         assert_eq!(bytes, expected);
