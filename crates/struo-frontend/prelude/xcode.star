@@ -1160,7 +1160,15 @@ def _xcode_merge_settings(lower, higher):
         merged[key] = value
     for key, value in higher.items():
         if key in _XCODE_LIST_SETTINGS:
-            merged[key] = _xcode_resolve_inherited_list(value, merged.get(key))
+            parts = _xcode_resolve_inherited_list(value, merged.get(key))
+            if key == "OTHER_SWIFT_FLAGS":
+                # Later setting layers and Swift flag lowering tokenize these entries again.
+                parts = [
+                    '"' + part.replace("\\", "\\\\").replace('"', '\\"') + '"'
+                    if part.strip() != part or any([ch in part for ch in [" ", "\t", "\\", '"', "'"]]) else part
+                    for part in parts
+                ]
+            merged[key] = parts
         elif value == "$(inherited)":
             merged[key] = merged.get(key, "")
         elif type(value) == type("") and "$(inherited)" in value:

@@ -23,6 +23,10 @@ and xcconfig settings. For example, `build_settings = { MACOSX_DEPLOYMENT_TARGET
 applies the same deployment target to every lowered native target without
 editing the Xcode project.
 
+Each `OTHER_SWIFT_FLAGS` list entry can contain multiple compiler arguments.
+Whitespace inside double quotes stays in a single argument, and Struo removes
+the grouping quotes before passing the argument to the compiler.
+
 Shared schemes contribute their `SkippedTests` exclusions to lowered test
 bundles. When several schemes reference the same bundle, only exclusions common
 to every reference are applied, so one scheme cannot silently suppress another

@@ -582,6 +582,48 @@ fn native_target(
     entries
 }
 
+#[test]
+fn xcode_preserves_quoted_swift_flags_across_setting_layers() {
+    let mut objects = native_target(
+        "APP",
+        "ReproApp",
+        "com.apple.product-type.application",
+        &[],
+        &[],
+    );
+    let macro_flag =
+        r#"-enable-experimental-feature "AvailabilityMacro=ReproOS 1.0: macOS 14.0, iOS 17.0""#;
+    objects["APP_DEBUG"]["buildSettings"]["OTHER_SWIFT_FLAGS"] =
+        serde_json::json!(["$(inherited)", macro_flag]);
+    objects.insert("ROOT".into(), serde_json::json!({"isa": "PBXProject", "buildConfigurationList": "PROJECT_CONFIGS", "targets": ["APP"]}));
+    objects.insert(
+        "PROJECT_CONFIGS".into(),
+        serde_json::json!({"isa": "XCConfigurationList", "buildConfigurations": ["PROJECT_DEBUG"]}),
+    );
+    objects.insert("PROJECT_DEBUG".into(), serde_json::json!({"isa": "XCBuildConfiguration", "name": "Debug", "buildSettings": {
+        "SDKROOT": "macosx", "MACOSX_DEPLOYMENT_TARGET": "14.0", "OTHER_SWIFT_FLAGS": r#"-D PROJECT -I "Vendor/My Modules""#,
+    }}));
+    let pbxproj = serde_json::json!({"rootObject": "ROOT", "objects": objects}).to_string();
+    let source = package_source(&format!(
+        r#"
+def workspace_root():
+    return "/repo"
+def host_command(argv, env = None, cwd = None, merge_stderr = None, check = True):
+    return {pbxproj:?}
+def host_file_exists(path):
+    return path.endswith("/ReproApp.swift")
+ctx = {{"label": {{"package": "app", "name": "xcode", "id": "app/xcode"}}, "attr": {{"project": "Repro.xcodeproj"}}}}
+app = [spec for spec in _xcode_workspace_resolver(ctx)["targets"] if spec["name"] == "ReproApp"][0]
+flags = app["attrs"]["swift_flags"]
+result = repr(flags[:flags.index("-enable-bare-slash-regex")])
+"#,
+    ));
+    assert_eq!(
+        eval_prelude_source_to_repr(source).unwrap(),
+        r#"["-D", "PROJECT", "-I", "Vendor/My Modules", "-enable-experimental-feature", "AvailabilityMacro=ReproOS 1.0: macOS 14.0, iOS 17.0"]"#
+    );
+}
+
 fn test_configuration_project(explicit_configuration: Option<&str>) -> String {
     let mut objects = serde_json::Map::new();
     objects.insert("ROOT".into(), serde_json::json!({"isa": "PBXProject", "buildConfigurationList": "PROJECT_CONFIGS", "targets": ["APP", "UTIL", "STORE", "OTHER", "TESTS", "OTHER_TESTS"], "mainGroup": "GROUP"}));
