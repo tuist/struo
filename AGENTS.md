@@ -74,11 +74,27 @@ prose docs. When adding support for a new toolchain (Android, JVM,
 Rust, etc.), mirror the shape already established for the Apple target kinds
 rather than inventing a parallel surface.
 
-Rust code must stay toolchain-agnostic. Do not add Rust branches that
-recognize Apple, Android, JVM, Rust, or any other build system by name.
-Build system behavior belongs in target kinds. The Rust side should provide
-generic primitives, typed graph plumbing, validation surfaces, and
-execution policy that target kinds can compose to express their needs.
+Rust code must stay toolchain-agnostic. Toolchain knowledge (Cargo,
+SwiftPM, Xcode, Gradle, Zig, Mix, npm, and the rest) lives in the
+Starlark target kinds under `crates/struo-frontend/prelude/`, such as
+`rust.star`, `swift_package.star`, `zig.star`, and `elixir.star`. The
+graph, analysis, execution, and cache code in `struo-frontend`,
+`struo-core`, `struo-cas`, and `struo-cache-core` must not match on a
+toolchain name, parse a toolchain's manifests or output, or hardcode its
+flags, paths, or defaults. The Rust side provides generic primitives,
+typed graph plumbing, validation surfaces, and execution policy that
+target kinds compose to express their needs.
+
+When a target kind needs something Starlark cannot express, add a
+generic primitive to the Starlark globals in
+`crates/struo-frontend/src/analysis/globals/` (actions, file actions,
+host probes, codecs), name it for what it does rather than for the
+toolchain that asked, and call it from the prelude. For example,
+`rust.star` reads `Cargo.toml` through the generic `toml_decode`, and
+`xcode.star` caches host probes through `host_cached_command`; neither
+primitive knows about Cargo or Xcode. Cover a new primitive with a
+prelude test under `crates/struo-frontend/tests/prelude/` and document
+it in the Starlark modules reference.
 
 Target kind actions should not shell out to `/bin/sh -c` to do
 filesystem or environment setup. A hand-built shell script bakes in
