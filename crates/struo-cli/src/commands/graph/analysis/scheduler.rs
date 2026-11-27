@@ -146,14 +146,17 @@ impl<'a> BuildScheduler<'a> {
 
             let context = self.context.clone();
             let build = build_one(self.context.clone(), target, inputs);
+            let materialize = self.retained.contains(&target_id);
             // Restoration stays in the task so unrelated completions can be joined.
             running.spawn(async move {
                 let bus = context.event_bus.clone();
                 let finish = Box::pin(async {
                     let (target_id, outcome) = build.await?;
-                    materialize_completed(&context, &target_id, &outcome).await?;
+                    if materialize {
+                        materialize_completed(&context, &target_id, &outcome).await?;
+                    }
                     if let Some(pipeline) = &context.pipeline {
-                        pipeline.complete(&target_id, &outcome)?;
+                        pipeline.complete(&target_id, &outcome, materialize)?;
                     }
                     Ok((target_id, outcome))
                 });

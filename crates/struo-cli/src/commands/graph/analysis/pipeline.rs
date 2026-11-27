@@ -203,7 +203,7 @@ impl Pipeline {
         Ok(())
     }
 
-    pub fn complete(&self, id: &str, outcome: &BuildOutcome) -> Result<()> {
+    pub fn complete(&self, id: &str, outcome: &BuildOutcome, restored: bool) -> Result<()> {
         self.validate(id, &outcome.result.outputs)?;
         let mut targets = self.targets.lock().unwrap();
         if let Some(target) = targets.get_mut(id) {
@@ -216,7 +216,7 @@ impl Pipeline {
                 if let Some(input) = outcome.available_inputs.get(path) {
                     let mut input = *input;
                     input.same_target = false;
-                    if outcome.outputs.contains(path) {
+                    if restored && outcome.outputs.contains(path) {
                         input.materialized = true;
                     }
                     state.send_replace(Some(input));

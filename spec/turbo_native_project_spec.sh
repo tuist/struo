@@ -51,7 +51,7 @@ turbo_workspace turbo"
     printf '%s ' "$(struo --format json build hello__build | jq -r .cache)" || return
     rm -rf "$WORKSPACE/apps/hello/dist" "$WORKSPACE/packages/greeting/dist"
     printf '%s ' "$(struo --format json build hello__build | jq -r .cache)" || return
-    test -f "$WORKSPACE/packages/greeting/dist/index.js" || return
+    test ! -e "$WORKSPACE/packages/greeting/dist/index.js" || return
     sed -i.bak "s/Hello, /Hi, /" "$WORKSPACE/packages/greeting/build.js" && rm "$WORKSPACE/packages/greeting/build.js.bak"
     printf '%s ' "$(struo --format json build hello__build | jq -r .cache)" || return
     cat "$WORKSPACE/apps/hello/dist/message.txt"
@@ -136,6 +136,8 @@ turbo_workspace turbo _acme_core__build _acme_web__build"
     struo --format json build _acme_web__build | jq -r .cache || return
     rm -rf "$WORKSPACE/apps/web/build" "$WORKSPACE/packages/core/dist" "$WORKSPACE/packages/core/.cache"
     struo --format json build _acme_web__build | jq -r .cache || return
+    test ! -e "$WORKSPACE/packages/core/.cache/build-info.json" || return
+    struo --format json build _acme_core__build >/dev/null || return
     cat "$WORKSPACE/apps/web/build/index.html" "$WORKSPACE/packages/core/.cache/build-info.json"
     test ! -e "$WORKSPACE/apps/web/build/cache" && echo 'cache directory not restored'
   }

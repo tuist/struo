@@ -113,6 +113,37 @@ overlap = target_kind(
     capabilities = [capability("build", ["default"])],
     impl = _overlap_impl,
 )
+
+def _chain_impl(ctx):
+    name = ctx["label"]["name"]
+    out = ctx["build_dir"] + "/value"
+    unused = ctx["build_dir"] + "/unused"
+    source = "source-" + name
+    inputs = [source]
+    if name == "middle":
+        inputs.append(".struo/out/leaf/value")
+    elif name == "app":
+        inputs.append(".struo/out/middle/value")
+    run_action(
+        argv = ["/bin/sh", "-c", "cat \"$@\" > " + out + "; printf unused > " + unused + "; printf " + name + " >> runs.log", "sh"] + inputs,
+        inputs = inputs,
+        outputs = [out, unused],
+        create_dirs = [ctx["build_dir"]],
+    )
+    return {}
+
+chain = target_kind(
+    capabilities = [capability("build", ["default"])],
+    impl = _chain_impl,
+)
+
+def _group_impl(ctx):
+    return {}
+
+group = target_kind(
+    capabilities = [capability("build", ["default"])],
+    impl = _group_impl,
+)
 "#;
 
 struct Workspace {
@@ -250,6 +281,74 @@ fn a_restarted_build_restores_removed_outputs_without_rerunning_actions() {
         !workspace.output("main.o").exists(),
         "the intermediate stays in the cache when nothing needs it on disk"
     );
+}
+
+#[test]
+fn cached_dependencies_materialize_only_when_an_action_reads_them() {
+    let workspace = Workspace::new("chain");
+    std::fs::write(
+        workspace.path().join("struo.toml"),
+        "[modules]\npaths = [\"modules/*.star\"]\n\
+         [[target]]\nname = \"leaf\"\nkind = \"chain\"\n\
+         [[target]]\nname = \"middle\"\nkind = \"chain\"\ndeps = [\"leaf\"]\n\
+         [[target]]\nname = \"app\"\nkind = \"chain\"\ndeps = [\"middle\"]\n\
+         [[target]]\nname = \"all\"\nkind = \"group\"\ndeps = [\"app\"]\n",
+    )
+    .unwrap();
+    for name in ["leaf", "middle", "app"] {
+        std::fs::write(workspace.path().join(format!("source-{name}")), name).unwrap();
+    }
+    workspace.build_succeeds();
+    assert_eq!(workspace.runs(), "leafmiddleapp");
+
+    std::fs::remove_dir_all(workspace.path().join(".struo/out")).unwrap();
+    let record = workspace.build_succeeds();
+    assert_eq!(record["cache"], "hit");
+    assert_eq!(workspace.runs(), "leafmiddleapp");
+    assert_eq!(
+        std::fs::read(workspace.output("value")).unwrap(),
+        b"appmiddleleaf"
+    );
+    assert_eq!(
+        std::fs::read(workspace.output("unused")).unwrap(),
+        b"unused"
+    );
+    assert!(!workspace.path().join(".struo/out/middle/value").exists());
+    assert!(!workspace.path().join(".struo/out/leaf/value").exists());
+
+    std::fs::remove_dir_all(workspace.path().join(".struo/out")).unwrap();
+    std::fs::write(workspace.path().join("source-app"), "changed").unwrap();
+    workspace.build_succeeds();
+    assert_eq!(workspace.runs(), "leafmiddleappapp");
+    assert_eq!(
+        std::fs::read(workspace.output("value")).unwrap(),
+        b"changedmiddleleaf"
+    );
+    assert_eq!(
+        std::fs::read(workspace.path().join(".struo/out/middle/value")).unwrap(),
+        b"middleleaf"
+    );
+    assert!(!workspace.path().join(".struo/out/middle/unused").exists());
+    assert!(!workspace.path().join(".struo/out/leaf/value").exists());
+
+    std::fs::remove_dir_all(workspace.path().join(".struo/out")).unwrap();
+    let output = workspace.command().args(["build", "all"]).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(workspace.runs(), "leafmiddleappapp");
+    for (name, expected) in [
+        ("leaf", "leaf"),
+        ("middle", "middleleaf"),
+        ("app", "changedmiddleleaf"),
+    ] {
+        assert_eq!(
+            std::fs::read(workspace.path().join(format!(".struo/out/{name}/value"))).unwrap(),
+            expected.as_bytes()
+        );
+    }
 }
 
 #[test]

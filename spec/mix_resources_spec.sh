@@ -46,6 +46,7 @@ EOF
 
   build_and_restore_resources() {
     struo --format json build greeting > "$WORKSPACE/build.json" || return
+    struo --format json build mix-locked-greeting >/dev/null || return
     app_dir="$WORKSPACE/.struo/out/mix-locked-greeting/mix/prod/lib/locked_greeting"
     [ "$(cat "$app_dir/priv/native/generated.txt")" = generated ] || return
     if [ "${1:-}" != generated-only ]; then
@@ -53,6 +54,7 @@ EOF
     fi
     rm -rf "$WORKSPACE/.struo/out"
     struo --format json build greeting > "$WORKSPACE/restored.json" || return
+    struo --format json build mix-locked-greeting >/dev/null || return
     [ "$(cat "$app_dir/priv/native/generated.txt")" = generated ] || return
     if [ "${1:-}" != generated-only ]; then
       [ "$(cat "$app_dir/priv/static.txt")" = static ] || return

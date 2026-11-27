@@ -176,7 +176,7 @@ hit'
     test "$(cat "$WORKSPACE/result.txt")" = second || return
     rm "$WORKSPACE/generated.txt" "$WORKSPACE/result.txt"
     SEED=second struo --format json build consumer >/dev/null || return
-    test "$(cat "$WORKSPACE/generated.txt")" = second || return
+    test ! -e "$WORKSPACE/generated.txt" || return
     cat "$WORKSPACE/result.txt"
   }
 

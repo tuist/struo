@@ -1065,6 +1065,20 @@ async fn intermediate_outputs_cached(
 /// replaces part of an earlier one. The rest touch disjoint paths and restore
 /// concurrently, bounded by how many actions may run at once.
 async fn materialize_cached_outputs(outcome: &BuildOutcome, repair: Repair<'_>) -> Result<()> {
+    if outcome.cache_keys.is_empty() {
+        // Actionless workspace roots select their dependency outputs.
+        let results = outcome
+            .available_inputs
+            .iter()
+            .map(|(path, input)| ActionResult {
+                exit_code: 0,
+                stdout: None,
+                stderr: None,
+                outputs: BTreeMap::from([(path.clone(), input.blob_digest)]),
+            })
+            .collect::<Vec<_>>();
+        return materialization::restore_recovering(&results, repair).await;
+    }
     materialization::restore_recovering(&outcome.cached_results, repair).await
 }
 

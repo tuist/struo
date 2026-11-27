@@ -63,7 +63,6 @@ TOML
 
   build_and_run() {
     struo build cargo_app_bin_app --quiet >/dev/null || return
-    test -f "$WORKSPACE/.struo/out/gen-1.0.0/source/build.rs" || return
     "$WORKSPACE/.struo/out/cargo_app_bin_app/app"
   }
 

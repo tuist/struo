@@ -170,7 +170,7 @@ fn metadata_overlaps_but_link_and_ordinary_analysis_wait_and_cache_restores() {
             std::fs::remove_dir_all(path).unwrap();
         }
     }
-    for path in ["consumer-mode", "producer-finished", "linked"] {
+    for path in ["consumer-mode", "linked"] {
         std::fs::remove_file(workspace.root.path().join(path)).unwrap();
     }
     success(&workspace.build(&[]));
@@ -184,6 +184,35 @@ fn missing_readiness_event_falls_back_to_completion() {
     let workspace = Workspace::new("fallback");
     success(&workspace.build(&[]));
     assert_eq!(workspace.read("consumer-mode"), "complete");
+}
+
+#[test]
+fn cached_ready_producer_restores_inputs_for_changed_consumer() {
+    let workspace = Workspace::new("fallback");
+    let manifest = workspace.root.path().join("struo.toml");
+    let contents = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(
+        &manifest,
+        contents.replace(
+            "deps = [\"consumer\", \"link\", \"ordinary\"]",
+            "deps = [\"link\"]",
+        ),
+    )
+    .unwrap();
+    success(&workspace.build(&[]));
+    std::fs::remove_dir_all(workspace.root.path().join("artifacts")).unwrap();
+    std::fs::remove_file(workspace.root.path().join("linked")).unwrap();
+    let module = workspace.root.path().join("modules/kinds.star");
+    std::fs::write(
+        module,
+        MODULE.replace(
+            "cat artifacts/full > linked",
+            "cat artifacts/full > linked; printf changed >> linked",
+        ),
+    )
+    .unwrap();
+    success(&workspace.build(&[]));
+    assert_eq!(workspace.read("linked"), "linkedchanged");
 }
 
 #[test]
