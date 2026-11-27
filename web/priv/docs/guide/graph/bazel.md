@@ -43,8 +43,10 @@ struo test
 ```
 
 `struo query targets` lists every rule returned by
-`bazel query 'kind("rule", //...)'`. `struo build` builds the workspace's
-non-test rules, and `struo test` runs its test rules. Discovery skips the
+`bazel query 'kind("rule", //...)'`. Like `bazel build //...` and
+`bazel test //...`, `struo build` builds every rule, tests included, and
+`struo test` runs every test rule, both skipping rules tagged `manual`. Those
+still build and test when you name them. Discovery skips the
 generated `bazel-bin`, `bazel-out`, and `bazel-testlogs` directories and does
 not write a Struo manifest.
 

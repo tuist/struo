@@ -111,6 +111,15 @@ def _bazel_workspace_resolver(ctx):
         env = _bazel_env(ctx),
     )
     rules = _bazel_parse_query_output(raw)
+    # Target pattern wildcards skip rules tagged `manual` in `bazel build` and
+    # `bazel test`, while `bazel query` still returns them. Keep them in the
+    # graph so they build by name, but out of the default roots.
+    manual = host_command(
+        [bazel, "query", "attr(tags, \"[\\[ ]manual[,\\]]\", " + expression + ")", "--output=label_kind", "--noshow_progress"],
+        cwd = workspace_dir,
+        env = _bazel_env(ctx),
+    )
+    manual_labels = {entry["label"]: True for entry in _bazel_parse_query_output(manual)}
     test_labels = None
     test_query = ctx["attr"].get("test_query")
     if test_query:
@@ -151,12 +160,17 @@ def _bazel_workspace_resolver(ctx):
                 "_bazel_resolved": True,
             },
         })
-        # Every buildable rule is a root: users can build any of them
-        # directly. Tests remain reachable through the `test` capability but do
-        # not become build roots automatically, matching cargo_workspace.
-        if kind != "bazel_test":
+        # `bazel build //...` builds every rule the wildcard selects, tests
+        # included, so each is a root of the workspace build. Tests are also
+        # the default test roots unless `test_query` narrows them.
+        if entry["label"] not in manual_labels:
             roots.append(name)
-        elif test_labels == None or entry["label"] in test_labels:
+        if kind != "bazel_test":
+            continue
+        if test_labels != None:
+            if entry["label"] in test_labels:
+                test_roots.append(name)
+        elif entry["label"] not in manual_labels:
             test_roots.append(name)
     return {
         "targets": targets,
@@ -255,6 +269,7 @@ def _bazel_parse_aquery(text):
             "outputs": sorted(outputs),
             "env": env,
             "file_contents": action.get("fileContents"),
+            "is_executable": action.get("isExecutable") or False,
             "no_cache": any([entry.get("key") == "no-cache" for entry in action.get("executionInfo") or []]),
         })
     return actions
@@ -491,9 +506,13 @@ def _bazel_emit_symlink_action(ctx, action, index, shadow_rel):
     destination = action["outputs"][0]
     # Materialize aliases by value so their bytes, executable mode and restore
     # are owned by Struo rather than a link into Bazel's mutable output tree.
+    # Bazel marks every generated file executable, so an ExecutableSymlink
+    # always yields an executable output, even when its target came from a
+    # genrule that never set the mode.
     copy_path(
         shadow_rel + "/" + source,
         shadow_rel + "/" + destination,
+        kind = "executable_file" if action["mnemonic"] == "ExecutableSymlink" else "file",
         source_files = _action_source_files([_package_relative(ctx, source)]),
     )
 
@@ -532,10 +551,18 @@ def _bazel_manifest_content(entries, shadow_abs):
             lines.append(name + " " + target)
     return "\n".join(lines) + "\n"
 
-def _bazel_emit_symlink_tree_action(ctx, action, index, shadow_rel, manifests):
+def _bazel_runfiles_tree(action):
+    # Bazel 9 names a runfiles tree directly; Bazel 8's SymlinkTree names the
+    # MANIFEST inside the tree it creates.
     destination = action["outputs"][0]
     if action["mnemonic"] == "SymlinkTree":
-        copy_path(shadow_rel + "/" + action["inputs"][0], shadow_rel + "/" + destination)
+        return _parent_dir(destination) if destination.endswith(".runfiles/MANIFEST") else None
+    return destination
+
+def _bazel_emit_symlink_tree_action(ctx, action, index, shadow_rel, manifests):
+    destination = _bazel_runfiles_tree(action)
+    if action["mnemonic"] == "SymlinkTree" and (destination == None or manifests.get(destination + "_manifest") == None):
+        copy_path(shadow_rel + "/" + action["inputs"][0], shadow_rel + "/" + action["outputs"][0])
         return
     entries = manifests.get(destination + "_manifest")
     if entries == None:
@@ -555,13 +582,18 @@ def _bazel_emit_write_action(ctx, action, index, shadow_rel):
     # FileWrite, RepoMappingManifest, and SourceSymlinkManifest emit a fixed
     # payload aquery exposes via `--include_file_write_contents`.
     destination = action["outputs"][0]
-    write_path(shadow_rel + "/" + destination, action["file_contents"] or "")
+    if not action.get("is_executable"):
+        write_path(shadow_rel + "/" + destination, action["file_contents"] or "")
+        return
+    staging = shadow_rel + "/.writes/" + content_sha256(destination)
+    write_path(staging, action["file_contents"] or "")
+    copy_path(staging, shadow_rel + "/" + destination, kind = "executable_file")
 
 def _bazel_emit_empty_write_action(ctx, action, index, shadow_rel):
     destination = action["outputs"][0]
     write_path(shadow_rel + "/" + destination, "")
 
-def _bazel_emit_test_action(ctx, bazel, action, shadow_rel, manifests):
+def _bazel_emit_test_action(ctx, bazel, action, shadow_rel, manifests, actions):
     label = ctx["attr"]["bazel_label"]
     rule = json_decode(host_command(
         [bazel, "query", label, "--output=streamed_jsonproto", "--noshow_progress"],
@@ -577,7 +609,15 @@ def _bazel_emit_test_action(ctx, bazel, action, shadow_rel, manifests):
     timeout_tool = host_which_optional("timeout") or host_which_optional("gtimeout")
     if not timeout_tool:
         fail("Struo Bazel tests require GNU timeout (timeout or gtimeout) on PATH")
-    trees = [path for path in action["inputs"] if path.endswith(".runfiles")]
+    # Bazel 8 hands a test its runfiles tree through a middleman.
+    middlemen = {output: candidate for candidate in actions if candidate["mnemonic"] == "Middleman" for output in candidate["outputs"]}
+    trees = [path for path in action["inputs"] if path.endswith(".runfiles")] + [
+        _parent_dir(path)
+        for input in action["inputs"]
+        if input in middlemen
+        for path in middlemen[input]["inputs"]
+        if path.endswith(".runfiles/MANIFEST")
+    ]
     if len(trees) != 1:
         fail("Bazel test needs exactly one exposed runfiles tree: " + label)
     runfiles = trees[0]
@@ -590,9 +630,25 @@ def _bazel_emit_test_action(ctx, bazel, action, shadow_rel, manifests):
             workspace = name.split("/")[0]
     native_env = dict(ctx["attr"].get("env") or {})
     native_env.update(action["env"])
-    for pair in attrs.get("env", {}).get("stringDictValue") or []:
-        native_env[pair["key"]] = pair["value"]
-    for name in attrs.get("env_inherit", {}).get("stringListValue") or []:
+    # The rule's `env` attribute is raw text; Bazel runs the test with the
+    # analyzed RunEnvironmentInfo, whose make variables and locations are
+    # already expanded.
+    run_environment = json_decode(host_command(
+        [bazel, "cquery", label, "--output=starlark", "--starlark:expr=" +
+         "json.encode({'environment': providers(target)['RunEnvironmentInfo'].environment, " +
+         "'inherited': providers(target)['RunEnvironmentInfo'].inherited_environment} " +
+         "if 'RunEnvironmentInfo' in providers(target) else {})", "--noshow_progress"] + _bazel_bazel_flags(),
+        cwd = _bazel_workspace_absolute_dir(ctx),
+        env = _bazel_env(ctx),
+    ))
+    if not run_environment:
+        # Rules without the provider run with their raw attributes.
+        run_environment = {
+            "environment": {pair["key"]: pair["value"] for pair in attrs.get("env", {}).get("stringDictValue") or []},
+            "inherited": attrs.get("env_inherit", {}).get("stringListValue") or [],
+        }
+    native_env.update(run_environment.get("environment") or {})
+    for name in run_environment.get("inherited") or []:
         native_env[name] = host_env(name) or ""
     native_env.update(ctx["attr"].get("test_env") or {})
     for shard in range(shards):
@@ -729,6 +785,14 @@ def _bazel_own_execution_or_fallback(ctx, bazel, workspace_abs, capability):
             entries = _bazel_manifest_entries(action["file_contents"], prep, workspace_abs)
             manifests[action["outputs"][0]] = entries
             action["file_contents"] = _bazel_manifest_content(entries, prep["shadow_abs"])
+    # A Bazel 8 SymlinkTree names only its manifest as input, yet the tree it
+    # stands for copies every runfile, so those runfiles' producers must run
+    # first.
+    for action in actions:
+        tree = _bazel_runfiles_tree(action) if action["mnemonic"] == "SymlinkTree" else None
+        entries = manifests.get(tree + "_manifest") if tree else None
+        if entries:
+            action["inputs"] = sorted(_unique(action["inputs"] + [source for name, source in entries if source]))
     _bazel_stage_inputs(ctx, actions, shadow_rel, prep)
     order = _bazel_topological_sort(actions)
     for index in order:
@@ -756,7 +820,7 @@ def _bazel_own_execution_or_fallback(ctx, bazel, workspace_abs, capability):
                 if key in emitted_tests:
                     continue
                 emitted_tests[key] = True
-                _bazel_emit_test_action(ctx, bazel, action, shadow_rel, manifests)
+                _bazel_emit_test_action(ctx, bazel, action, shadow_rel, manifests, actions)
     return {"mode": "own", "action_count": len(actions)}
 
 def _bazel_common_impl(ctx, providers):

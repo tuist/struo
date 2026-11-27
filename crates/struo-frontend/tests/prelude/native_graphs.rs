@@ -9,6 +9,8 @@ def host_which_optional(name):
 def host_command(argv, cwd = None, env = None):
     if argv[1] == "--version":
         return "bazel 9"
+    if "manual" in argv[2]:
+        return ""
     if argv[2] == "selected":
         return "cc_test rule //:unit\ncc_test rule //:outside_graph"
     return "cc_library rule //:library\ncc_test rule //:unit\ncc_test rule //:benchmark"
@@ -19,7 +21,7 @@ result = repr([graph["roots"], graph["attrs"]["_default_test_roots"], [target["n
     );
     assert_eq!(
         eval_prelude_source_to_repr(source).unwrap(),
-        r#"[["bz_library"], ["bz_unit"], ["bz_library", "bz_unit", "bz_benchmark"]]"#
+        r#"[["bz_library", "bz_unit", "bz_benchmark"], ["bz_unit"], ["bz_library", "bz_unit", "bz_benchmark"]]"#
     );
 }
 
@@ -40,6 +42,8 @@ def host_command(argv, cwd = None, env = None):
         fail("missing declared environment")
     if argv[0] != "/tools/bazelisk" or cwd != "/workspace/project":
         fail("wrong tool or workspace")
+    if argv[1] == "query" and "manual" in argv[2]:
+        return ""
     return "bazel 9" if argv[1] == "--version" else "cc_library rule //lib:core\ncc_test rule //lib:core_test"
 ctx = {{"label": {{"id": "project/bazel", "package": "project"}}, "attr": {{"env": {{"SDK_ROOT": "", "CUSTOM": "declared"}}}}}}
 graph = _bazel_workspace_resolver(ctx)
@@ -49,7 +53,7 @@ result = repr([graph["roots"], graph["attrs"]["_default_test_roots"], [target["a
     );
     assert_eq!(
         eval_prelude_source_to_repr(source).unwrap(),
-        r#"[["bz_lib_core"], ["bz_lib_core_test"], [{"SDK_ROOT": "", "CUSTOM": "declared"}, {"SDK_ROOT": "", "CUSTOM": "declared"}]]"#
+        r#"[["bz_lib_core", "bz_lib_core_test"], ["bz_lib_core_test"], [{"SDK_ROOT": "", "CUSTOM": "declared"}, {"SDK_ROOT": "", "CUSTOM": "declared"}]]"#
     );
 }
 

@@ -4,7 +4,10 @@ case "${1:-}" in
     printf '%s\n' 'bazel 9.0.0'
     ;;
   query)
-    printf '%s\n' 'cc_library rule //:support' 'cc_test rule //:support_test'
+    case "${2:-}" in
+      *manual*) ;;
+      *) printf '%s\n' 'cc_library rule //:support' 'cc_test rule //:support_test' ;;
+    esac
     ;;
   aquery)
     printf '%s\n' '{}'
