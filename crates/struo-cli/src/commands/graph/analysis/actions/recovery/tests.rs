@@ -772,3 +772,42 @@ async fn a_repair_is_reported_as_another_attempt_of_the_same_action() {
         first.per_action_outcomes[0].action_digest.to_string()
     );
 }
+
+#[tokio::test]
+async fn shared_uncached_result_is_reused_only_while_its_outputs_are_unchanged() {
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = directory.path();
+    let cache = CacheProvider::Local(struo_cas::Cas::open(workspace.join("cas")));
+    let write = struo_core::Action::WriteFile {
+        path: struo_core::WorkspacePath::try_from("out/shared").unwrap(),
+        bytes: bytes::Bytes::from_static(b"shared"),
+        input_digest: None,
+    };
+    let producers = Producers::default();
+    let runs = AtomicUsize::new(0);
+    let run = || async {
+        runs.fetch_add(1, Ordering::SeqCst);
+        super::super::uncached::run_uncached_action(&write, workspace, &cache, false).await
+    };
+    let digest = write.digest();
+    producers
+        .run_uncached_once(workspace, digest, run)
+        .await
+        .unwrap();
+    producers
+        .run_uncached_once(workspace, digest, run)
+        .await
+        .unwrap();
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
+
+    std::fs::write(workspace.join("out/shared"), "replaced").unwrap();
+    producers
+        .run_uncached_once(workspace, digest, run)
+        .await
+        .unwrap();
+    assert_eq!(runs.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("out/shared")).unwrap(),
+        "shared"
+    );
+}

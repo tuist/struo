@@ -530,7 +530,9 @@ async fn dispatch_build(
     // `Err`; a `?` here fails the fan-out fast. If that contract ever weakens
     // to "may return Ok(ExitCode::from(nonzero))", the loop needs to inspect
     // the exit code and short-circuit on the first non-success value.
-    for target in &targets {
+    // Publishing still covers every requested target, including those the
+    // resolver roots build.
+    for target in &without_targets_built_by_selected_resolvers(workspace, targets.clone()) {
         Box::pin(commands::graph::build(
             workspace,
             &cache,
@@ -1333,6 +1335,43 @@ fn resolve_build_targets(
     all: bool,
 ) -> Result<Vec<String>> {
     resolve_capability_targets(workspace, target, all, "build")
+}
+
+/// Building a resolver root builds every target it materialized, so building
+/// those targets again on their own only repeats their uncached actions.
+fn without_targets_built_by_selected_resolvers(
+    workspace: &Path,
+    targets: Vec<String>,
+) -> Vec<String> {
+    if targets.len() < 2 {
+        return targets;
+    }
+    let (Ok(graph), Ok(schemas)) = (
+        struo_frontend::load_graph_workspace(workspace),
+        struo_frontend::target_kind_schemas_for_workspace(workspace),
+    ) else {
+        return targets;
+    };
+    let resolver_kinds = schemas
+        .into_iter()
+        .filter(struo_frontend::TargetKindSchema::has_resolver)
+        .map(|schema| schema.kind)
+        .collect::<std::collections::BTreeSet<_>>();
+    let selected = targets
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    let built = graph
+        .iter()
+        .filter(|target| {
+            resolver_kinds.contains(&target.kind) && selected.contains(target.label.id.as_str())
+        })
+        .flat_map(|root| root.dependency_ids().cloned())
+        .collect::<std::collections::BTreeSet<_>>();
+    targets
+        .into_iter()
+        .filter(|target| !built.contains(target))
+        .collect()
 }
 
 fn resolve_lint_targets(

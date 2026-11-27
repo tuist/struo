@@ -1603,27 +1603,38 @@ async fn run_uncacheable_declared_action(
     let action_digest = action.digest();
     let resources = context.producers.executors(context.resources)?;
     let executor = struo_core::Executor::resolve(&action)?;
-    let result = recovery::with_action_lock_and_permit(
-        context.workspace,
-        action_digest,
-        declared
-            .outputs
-            .iter()
-            .chain(&declared.clean_paths)
-            .map(String::as_str),
-        action.resource_request(),
-        || resources.acquire(executor, action.resource_request()),
-        |lease| {
-            let context = &context;
-            let action = &action;
-            async move {
-                context.claim_worker().await;
-                preparation::setup(context, action, declared, &lease).await?;
-                uncached::execute_declared(context, action, declared, &lease).await
-            }
-        },
-    )
-    .await
+    let run = || {
+        recovery::with_action_lock_and_permit(
+            context.workspace,
+            action_digest,
+            declared
+                .outputs
+                .iter()
+                .chain(&declared.clean_paths)
+                .map(String::as_str),
+            action.resource_request(),
+            || resources.acquire(executor, action.resource_request()),
+            |lease| {
+                let context = &context;
+                let action = &action;
+                async move {
+                    context.claim_worker().await;
+                    preparation::setup(context, action, declared, &lease).await?;
+                    uncached::execute_declared(context, action, declared, &lease).await
+                }
+            },
+        )
+    };
+    // An action without outputs exists for its side effect, so each
+    // declaration runs it.
+    let result = if declared.outputs.is_empty() {
+        run().await
+    } else {
+        context
+            .producers
+            .run_uncached_once(context.workspace, action_digest, run)
+            .await
+    }
     .with_context(|| {
         format!(
             "executing action {} for {} ({})",

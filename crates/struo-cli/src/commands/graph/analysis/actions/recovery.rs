@@ -170,6 +170,12 @@ struct ProducersInner {
     executors: OnceLock<struo_core::ExecutorResources>,
     execution: OnceLock<struo_core::RemoteExecution>,
     remote_concurrency: OnceLock<usize>,
+    /// Uncached producers that succeeded in this invocation, by action
+    /// digest. Targets that declare the same action share one execution, as
+    /// a native build graph shares one action between the targets that need
+    /// it, instead of rewriting outputs another target may be reading. A
+    /// declaration waits while the same action runs for another target.
+    uncached: Mutex<HashMap<Digest, Arc<tokio::sync::Mutex<Option<ActionResult>>>>>,
 }
 
 impl Default for Producers {
@@ -194,6 +200,7 @@ impl Producers {
                 executors: OnceLock::new(),
                 execution: OnceLock::new(),
                 remote_concurrency: OnceLock::new(),
+                uncached: Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -247,6 +254,46 @@ impl Producers {
                 workers: workers.clone(),
             });
         }
+    }
+
+    /// Run an uncached action once per invocation, or return the result of
+    /// the identical action that already succeeded while every output it
+    /// recorded is still on disk unchanged. A failed run is not remembered,
+    /// so it fails every target that declares it.
+    pub(super) async fn run_uncached_once<F, Fut>(
+        &self,
+        workspace: &Path,
+        digest: Digest,
+        run: F,
+    ) -> Result<ActionResult>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<ActionResult>>,
+    {
+        let cell = Arc::clone(lock(&self.inner.uncached).entry(digest).or_default());
+        let mut slot = cell.lock().await;
+        if let Some(result) = slot.take() {
+            let outputs = result
+                .outputs
+                .iter()
+                .map(|(path, digest)| (workspace.join(path), *digest))
+                .collect::<Vec<_>>();
+            let unchanged = tokio::task::spawn_blocking(move || {
+                outputs
+                    .iter()
+                    .all(|(path, digest)| struo_core::existing_output_matches_digest(path, *digest))
+            })
+            .await?;
+            if unchanged {
+                *slot = Some(result.clone());
+                return Ok(result);
+            }
+        }
+        let result = run().await?;
+        if result.exit_code == 0 {
+            *slot = Some(result.clone());
+        }
+        Ok(result)
     }
 
     pub(in crate::commands::graph::analysis) fn record(&self, producer: Producer) {
