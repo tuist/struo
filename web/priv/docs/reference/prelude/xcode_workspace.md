@@ -13,6 +13,11 @@ settings, and file membership are read from it rather than restated in
 `PROJECT_NAME` expands to the owning project's name, including when a workspace
 contains several projects. Products using it retain their native module names.
 
+When resolving compiler settings such as `HEADER_SEARCH_PATHS`, `$(SRCROOT)`
+defaults to the directory containing the `.xcodeproj`. A relative `SRCROOT`
+override is resolved from that directory, while `$(PROJECT_DIR)` still names
+the project directory.
+
 `build_settings` supplies native command-line overrides after project, target,
 and xcconfig settings. For example, `build_settings = { MACOSX_DEPLOYMENT_TARGET = "13.0" }`
 applies the same deployment target to every lowered native target without

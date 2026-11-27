@@ -738,6 +738,75 @@ result = repr([app["srcs"], _package_relative(target, app["attrs"]["info_plist"]
 }
 
 #[test]
+fn xcode_remote_package_header_search_paths_follow_srcroot() {
+    let project_dir = "app/Tuist/.build/tuist-derived/Projects/CLib";
+    let checkout_dir = "app/Tuist/.build/checkouts/CLib";
+    for (srcroot, header_root) in [
+        (None, project_dir),
+        (Some("../../../checkouts/CLib"), checkout_dir),
+        (Some("$(PROJECT_DIR)/../../../checkouts/CLib"), checkout_dir),
+        (Some("/repo/app/Tuist/.build/checkouts/CLib"), checkout_dir),
+    ] {
+        let mut pbxproj = serde_json::json!({
+            "rootObject": "ROOT",
+            "objects": {
+                "ROOT": {"isa": "PBXProject", "buildConfigurationList": "PROJECT_CONFIGS", "targets": ["LIB"], "mainGroup": "GROUP"},
+                "GROUP": {"isa": "PBXGroup", "sourceTree": "<group>", "children": ["FILE"]},
+                "FILE": {"isa": "PBXFileReference", "sourceTree": "<group>", "path": "../../../checkouts/CLib/Sources/CLib/clib.c"},
+                "BUILD_FILE": {"isa": "PBXBuildFile", "fileRef": "FILE"},
+                "SOURCES": {"isa": "PBXSourcesBuildPhase", "files": ["BUILD_FILE"]},
+                "PROJECT_CONFIGS": {"isa": "XCConfigurationList", "buildConfigurations": ["PROJECT_DEBUG"], "defaultConfigurationName": "Debug"},
+                "PROJECT_DEBUG": {"isa": "XCBuildConfiguration", "name": "Debug", "buildSettings": {"SDKROOT": "iphonesimulator"}},
+                "TARGET_CONFIGS": {"isa": "XCConfigurationList", "buildConfigurations": ["TARGET_DEBUG"], "defaultConfigurationName": "Debug"},
+                "TARGET_DEBUG": {"isa": "XCBuildConfiguration", "name": "Debug", "buildSettings": {
+                    "HEADER_SEARCH_PATHS": ["$(inherited)", "$(SRCROOT)/Sources/CLib/include", "$(PROJECT_DIR)/OtherHeaders", "LocalHeaders"],
+                }},
+                "LIB": {"isa": "PBXNativeTarget", "name": "CLib", "productType": "com.apple.product-type.library.static", "buildConfigurationList": "TARGET_CONFIGS", "buildPhases": ["SOURCES"], "dependencies": []},
+            },
+        });
+        if let Some(srcroot) = srcroot {
+            pbxproj["objects"]["PROJECT_DEBUG"]["buildSettings"]["SRCROOT"] = srcroot.into();
+        }
+        let pbxproj = pbxproj.to_string();
+        let source = format!(
+            r#"{}
+def workspace_root():
+    return "/repo"
+def host_command(argv, env = None, cwd = None, merge_stderr = None, check = True):
+    return {pbxproj:?} if argv[0] == "plutil" else "/sdk"
+ctx = {{"label": {{"package": "", "name": "xcode", "id": "xcode"}}, "attr": {{"project": "{project_dir}/CLib.xcodeproj"}}}}
+lib = [spec for spec in _xcode_workspace_resolver(ctx)["targets"] if spec["name"] == "CLib"][0]
+result = _json_encode([lib["srcs"], lib["attrs"]["clang_flags"], lib["attrs"]["private_header_dirs"]])
+"#,
+            xcode_prelude_source()
+        );
+        let result = eval_prelude_source_to_repr(source).unwrap();
+        let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(
+            result,
+            serde_json::json!([
+                [format!("{checkout_dir}/Sources/CLib/clib.c")],
+                [
+                    "-I",
+                    &format!("{header_root}/Sources/CLib/include"),
+                    "-I",
+                    &format!("{project_dir}/OtherHeaders"),
+                    "-I",
+                    &format!("{project_dir}/LocalHeaders")
+                ],
+                [
+                    format!("{checkout_dir}/Sources/CLib"),
+                    format!("{header_root}/Sources/CLib/include"),
+                    format!("{project_dir}/OtherHeaders"),
+                    format!("{project_dir}/LocalHeaders")
+                ],
+            ]),
+            "SRCROOT = {srcroot:?}"
+        );
+    }
+}
+
+#[test]
 fn apple_inputs_outside_the_workspace_are_snapshotted_into_the_build_directory() {
     let root = TempDir::new().unwrap();
     let workspace = root.path().join("app");

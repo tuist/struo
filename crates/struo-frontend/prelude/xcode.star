@@ -1418,6 +1418,11 @@ def _xcode_setting_subs(ctx, target_name, product_name, sdkroot, settings = None
         subs.setdefault("DT_TOOLCHAIN_DIR", host_env("DT_TOOLCHAIN_DIR") or default_toolchain)
     for key, value in _xcode_sdk_recommended_deployment_targets(sdkroot).items():
         subs.setdefault(key, value)
+    srcroot_override = _xcode_scalar((settings or {}).get("SRCROOT"))
+    if srcroot_override:
+        project_root = _xcode_abs(source_root)
+        resolved = _xcode_resolve_vars(srcroot_override, dict(subs, PROJECT_DIR = project_root, SRCROOT = project_root))
+        subs["SRCROOT"] = _xcode_workspace_relative(_xcode_join(project_root, resolved)) or "."
     return subs
 
 def _xcode_sdk_recommended_deployment_targets(sdkroot):
@@ -4724,13 +4729,19 @@ def _xcode_clang_flags(settings, subs):
 def _xcode_header_search_dirs(settings, subs):
     paths = []
     project_dir = subs.get("PROJECT_DIR") or ""
+    srcroot = subs.get("SRCROOT") or ""
+    overridden_root = srcroot and srcroot != project_dir
+    # Keep expanded checkout paths distinct from paths relative to the project.
+    if overridden_root:
+        subs = dict(subs, SRCROOT = _xcode_abs(srcroot))
     for key in ["HEADER_SEARCH_PATHS", "USER_HEADER_SEARCH_PATHS"]:
         for path in _xcode_setting_to_list(settings.get(key)):
             resolved = _xcode_resolve_vars(path, subs).replace('"', "")
             if resolved and resolved != "$(inherited)" and not resolved.startswith("$("):
                 if not resolved.startswith("/") and project_dir and resolved != project_dir and not resolved.startswith(project_dir + "/"):
                     resolved = _xcode_join(project_dir, resolved)
-                paths.append(_xcode_normalize_path(resolved))
+                resolved = _xcode_normalize_path(resolved)
+                paths.append(_xcode_workspace_relative(resolved) if overridden_root else resolved)
     return _unique(paths)
 
 def _xcode_auxiliary_modulemaps(settings, subs, primary_modulemap):
