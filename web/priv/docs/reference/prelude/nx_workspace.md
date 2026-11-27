@@ -15,8 +15,9 @@ emits without shelling back into `nx run`. Tasks whose executor is
 `nx:run-commands` (or its `@nx/` / `@nrwl/` aliases) or `nx:run-script`
 run their underlying command directly. Other executors run through the
 installed Nx `runExecutor` API with the resolved graph and default
-configuration, without Nx's scheduler or cache. Tasks named `test` become
-`nx_test` targets with cacheable suite-level batches through `struo test`.
+configuration, without Nx's scheduler or cache. Tasks named in
+`test_targets`, `test` by default, become `nx_test` targets with cacheable
+suite-level batches through `struo test`.
 
 The default task filter emits every `build`, `test`, and `lint` task in
 the graph, together with their transitive `dependsOn` tasks. For example,
@@ -30,6 +31,7 @@ the empty list to include every task Nx reports.
 | --- | --- | --- | --- | --- |
 | `node` | string | no | `node` | Node.js executable name, absolute path, or workspace-relative path |
 | `targets` | list&lt;string&gt; | no | `["build", "test", "lint"]` | Nx task names to emit with their transitive task dependencies; empty list includes every task |
+| `test_targets` | list&lt;string&gt; | no | `["test"]` | Nx task names that run test suites, such as `test:lib`; emitted as `nx_test` targets even when `targets` leaves them out. Replaces the default, so include `test` to keep tasks named `test` as suites |
 | `resolver_inputs` | list&lt;string&gt; | no | `srcs` | Text inputs available while deriving the graph |
 | `graph_file` | string | no |  | Optional workspace-relative Nx project-graph JSON snapshot; include external package nodes for plugin execution. Struo reads it directly instead of invoking Nx |
 | `coverage_per_test` | bool | no | `false` | Forward isolated coverage opt-in to generated test targets running one native Jest or Vitest command |

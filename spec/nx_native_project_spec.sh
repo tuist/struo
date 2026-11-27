@@ -360,6 +360,80 @@ TOML
     The line 3 of stdout should equal 'tools__test '
   End
 
+  It 'runs test tasks that are not named test, such as test:lib, when test_targets names them'
+    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    mkdir -p "$WORKSPACE/libs/core"
+    printf x > "$WORKSPACE/libs/core/index.ts"
+    cat > "$WORKSPACE/graph.json" <<'JSON'
+{"graph": {"nodes": {"core": {"type": "lib", "data": {"root": "libs/core", "targets": {
+  "build": {"executor": "nx:run-commands", "options": {"command": "true"}},
+  "test:lib": {"executor": "nx:run-commands", "dependsOn": ["build"], "options": {"command": "printf tested > tested.txt", "cwd": "libs/core"}},
+  "test:lib:dev": {"executor": "nx:run-commands", "options": {"command": "sleep 600"}}
+}}}}, "dependencies": {"core": []}}}
+JSON
+    cat > "$WORKSPACE/struo.toml" <<'TOML'
+[[target]]
+name = "nx"
+kind = "nx_workspace"
+[target.attrs]
+graph_file = "graph.json"
+test_targets = ["test:lib"]
+TOML
+
+    named_tests() {
+      target_ids | grep core__ || return
+      affected_by libs/core/index.ts && echo
+      struo --format json test core__test_lib | jq -r .status || return
+      cat "$WORKSPACE/libs/core/tested.txt"
+    }
+    When call named_tests
+    The status should be success
+    The line 1 of stdout should equal 'nx_task core__build'
+    The line 2 of stdout should equal 'nx_test core__test_lib'
+    The line 3 of stdout should equal 'core__test_lib '
+    The line 4 of stdout should equal 'completed'
+    The line 5 of stdout should equal 'tested'
+  End
+
+  It 'applies every upstream dependsOn entry past a project that lacks one of the targets, like Nx'
+    cat > "$WORKSPACE/graph.json" <<'JSON'
+{"graph": {"nodes": {
+  "app": {"type": "app", "data": {"root": "app", "targets": {"build": {"executor": "nx:run-commands", "dependsOn": ["^build", "^compile"], "options": {"command": "true"}}}}},
+  "mid": {"type": "lib", "data": {"root": "mid", "targets": {
+    "build": {"executor": "nx:run-commands", "dependsOn": [{"target": "compile", "dependencies": true}], "options": {"command": "true"}},
+    "lint": {"executor": "nx:run-commands", "dependsOn": [{"target": "build", "projects": ["app"], "dependencies": true}], "options": {"command": "true"}}
+  }}},
+  "base": {"type": "lib", "data": {"root": "base", "targets": {
+    "build": {"executor": "nx:run-commands", "options": {"command": "true"}},
+    "compile": {"executor": "nx:run-commands", "options": {"command": "true"}}
+  }}}
+}, "dependencies": {
+  "app": [{"source": "app", "target": "mid", "type": "static"}],
+  "mid": [{"source": "mid", "target": "base", "type": "static"}],
+  "base": []
+}}}
+JSON
+    cat > "$WORKSPACE/struo.toml" <<'TOML'
+[[target]]
+name = "nx"
+kind = "nx_workspace"
+[target.attrs]
+graph_file = "graph.json"
+targets = []
+TOML
+
+    edges_of() {
+      struo query "MATCH (a:Target)-[:DEPENDS_ON]->(b:Target) WHERE a.id = \"$1\" RETURN b.id" --format json |
+        jq -r '.rows[][0]' | sort | tr '\n' ' '
+    }
+    both_edges() { edges_of app__build && echo && edges_of mid__build && echo && edges_of mid__lint; }
+    When call both_edges
+    The status should be success
+    The line 1 of stdout should equal 'base__build base__compile mid__build '
+    The line 2 of stdout should equal 'base__compile '
+    The line 3 of stdout should equal 'app__build '
+  End
+
   build_cache() { struo --format json build "$1" | jq -r .cache; }
 
   It 'keeps outputs declared with a trailing slash out of other tasks inputs'
@@ -388,6 +462,39 @@ TOML
     The status should be success
     The stdout should equal 'miss
 hit'
+  End
+
+  It 'keeps TypeScript build info that tools write into node_modules out of task inputs'
+    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    mkdir -p "$WORKSPACE/app" "$WORKSPACE/node_modules/vitest/dist"
+    printf x > "$WORKSPACE/app/index.ts"
+    printf '%s\n' 'module.exports = 1' > "$WORKSPACE/node_modules/vitest/dist/index.js"
+    cat > "$WORKSPACE/graph.json" <<'JSON'
+{"graph": {"nodes": {"app": {"type": "app", "data": {"root": "app", "targets": {
+  "lint": {"executor": "nx:run-commands", "options": {"command": "true"}}
+}}}}, "dependencies": {}}}
+JSON
+    cat > "$WORKSPACE/struo.toml" <<'TOML'
+[[target]]
+name = "nx"
+kind = "nx_workspace"
+[target.attrs]
+graph_file = "graph.json"
+TOML
+
+    typecheck_writes() {
+      build_cache app__lint || return
+      # Vitest's typecheck leaves an incremental build file in its package.
+      printf '{"v":1}' > "$WORKSPACE/node_modules/vitest/dist/tsconfig.tmp.tsbuildinfo"
+      build_cache app__lint || return
+      printf '%s\n' 'module.exports = 2' > "$WORKSPACE/node_modules/vitest/dist/index.js"
+      build_cache app__lint
+    }
+    When call typecheck_writes
+    The status should be success
+    The stdout should equal 'miss
+hit
+miss'
   End
 
   It 'keeps gitignored and nxignored files out of task inputs, as Nx does'

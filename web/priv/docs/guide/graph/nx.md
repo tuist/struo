@@ -74,7 +74,9 @@ projects that depend on it, because it would otherwise claim every file.
 By default Struo emits the `build`, `test`, and `lint` tasks of every project,
 plus every task they depend on. A build that depends on `compile` keeps that
 prerequisite even though `compile` is not in the list. Upstream `^`
-dependencies skip projects that do not define the task.
+dependencies, and the equivalent `{"target": "build", "dependencies": true}`,
+pass through projects that do not define the task, as Nx does: every upstream
+entry of the task applies again from that project's dependencies.
 
 To change the selection, declare an [`nx_workspace`](/reference/prelude/nx_workspace)
 target and set `targets`. An empty list includes every task:
@@ -88,6 +90,22 @@ srcs = ["nx.json", "package.json"]
 [target.attrs]
 resolver_inputs = ["nx.json", "package.json", "**/project.json", "**/package.json"]
 targets = []
+```
+
+Tasks named `test` are test suites that `struo test` and
+`struo query affected-tests` select. When a workspace names its suites
+differently, such as `test:lib` or `test:unit`, list them in `test_targets`.
+The list replaces the default, so include `test` if some projects still use it:
+
+```toml
+[[target]]
+name = "nx"
+kind = "nx_workspace"
+srcs = ["nx.json", "package.json"]
+
+[target.attrs]
+resolver_inputs = ["nx.json", "package.json", "**/project.json", "**/package.json"]
+test_targets = ["test", "test:lib"]
 ```
 
 Set `graph_file` to a checked-in Nx project-graph JSON snapshot to load the
@@ -116,7 +134,8 @@ coverage directory when coverage is off, is not an error.
 ## Inputs and environment
 
 Struo hashes the workspace sources and installed dependencies, excluding
-declared outputs, runtime caches such as `node_modules/.vite`, and files that
+declared outputs, runtime caches such as `node_modules/.vite` and TypeScript
+`.tsbuildinfo` files inside `node_modules`, and files that
 `.nxignore` or `.gitignore` exclude, as Nx's file map does. A test that writes
 gitignored fixtures into the source tree therefore stays cached. Ignored files
 are neither hashed nor sent to remote workers, so a task that reads one, such

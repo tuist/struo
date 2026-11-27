@@ -184,7 +184,11 @@ def _nx_affected_deps(project_name, nodes, project_dependencies, emitted):
         pending = next_projects
     return sorted(out)
 
-def _nx_upstream_tasks(project_name, task_name, nodes, project_dependencies):
+# Upstream tasks for a task's `^` dependsOn entries, as Nx's task graph
+# resolves them. A dependency project that lacks one of the targets stands in
+# for the task itself: every upstream entry is applied again from that
+# project's dependencies, not only the missing one.
+def _nx_upstream_tasks(project_name, task_names, nodes, project_dependencies):
     pending = project_dependencies.get(project_name) or []
     seen = {project_name: True}
     out = []
@@ -196,10 +200,11 @@ def _nx_upstream_tasks(project_name, task_name, nodes, project_dependencies):
             if project in seen:
                 continue
             seen[project] = True
-            data = (nodes.get(project) or {}).get("data") or {}
-            if task_name in (data.get("targets") or {}):
-                out.append("./" + _nx_task_name(project, task_name))
-            else:
+            targets = ((nodes.get(project) or {}).get("data") or {}).get("targets") or {}
+            for task_name in task_names:
+                if task_name in targets:
+                    out.append("./" + _nx_task_name(project, task_name))
+            if [task_name for task_name in task_names if task_name not in targets]:
                 next_projects.extend(project_dependencies.get(project) or [])
         pending = next_projects
     return out
@@ -212,11 +217,11 @@ def _nx_upstream_tasks(project_name, task_name, nodes, project_dependencies):
 def _nx_dependencies_for_target(project_name, task_name, project_data, project_dependencies, nodes):
     depends_on = ((project_data.get("targets") or {}).get(task_name) or {}).get("dependsOn") or []
     out = []
+    upstream = []
     for entry in depends_on:
         if type(entry) == type(""):
             if entry.startswith("^"):
-                inner = entry[1:]
-                out.extend(_nx_upstream_tasks(project_name, inner, nodes, project_dependencies))
+                upstream.append(entry[1:])
             else:
                 out.append("./" + _nx_task_name(project_name, entry))
         elif type(entry) == type({}):
@@ -224,16 +229,19 @@ def _nx_dependencies_for_target(project_name, task_name, project_data, project_d
             projects = entry.get("projects")
             if not target:
                 continue
-            if projects == None or projects == "self":
-                out.append("./" + _nx_task_name(project_name, target))
-            elif projects == "dependencies":
-                out.extend(_nx_upstream_tasks(project_name, target, nodes, project_dependencies))
-            elif type(projects) == type([]):
+            # Like Nx, a `projects` list wins over `dependencies`.
+            if type(projects) == type([]):
                 for project in projects:
                     if project == "self":
                         out.append("./" + _nx_task_name(project_name, target))
                     else:
                         out.append("./" + _nx_task_name(project, target))
+            elif entry.get("dependencies") or projects == "dependencies":
+                upstream.append(target)
+            elif projects == None or projects == "self":
+                out.append("./" + _nx_task_name(project_name, target))
+    if upstream:
+        out.extend(_nx_upstream_tasks(project_name, _unique(upstream), nodes, project_dependencies))
     return _unique(out)
 
 # Extract the shell commands from an `nx:run-commands` executor task. Nx's
@@ -278,9 +286,12 @@ def _nx_workspace_resolver(ctx):
     nodes = graph.get("nodes") or {}
     project_dependencies = _nx_project_dependencies(graph_root)
     task_filter = _nx_attr(ctx, "targets", _NX_DEFAULT_TASKS)
+    test_tasks = {name: True for name in _nx_attr(ctx, "test_targets", ["test"])}
     task_filter_set = {}
     for name in task_filter:
         task_filter_set[name] = True
+    if task_filter_set:
+        task_filter_set.update(test_tasks)
 
     targets = []
     roots = []
@@ -337,12 +348,13 @@ def _nx_workspace_resolver(ctx):
                 executor_graph = executor_graph or _json_encode(graph)
                 attrs["runnable"] = True
                 attrs["executor_graph"] = executor_graph
-            if task_name == "test" and _nx_attr(ctx, "coverage_per_test", False):
+            is_test = test_tasks.get(task_name, False)
+            if is_test and _nx_attr(ctx, "coverage_per_test", False):
                 attrs["coverage_per_test"] = True
                 attrs["coverage_sources"] = _nx_attr(ctx, "coverage_sources", [])
             targets.append({
                 "name": _nx_task_name(project_name, task_name),
-                "kind": "nx_test" if task_name == "test" else "nx_task",
+                "kind": "nx_test" if is_test else "nx_task",
                 "deps": deps,
                 "srcs": srcs,
                 "attrs": attrs,
@@ -392,7 +404,7 @@ def _nx_workspace_resolver(ctx):
     return {
         "targets": targets,
         "roots": _unique(roots),
-        "attrs": {"_default_test_roots": [target["name"] for target in targets if target["attrs"]["task"] == "test"]},
+        "attrs": {"_default_test_roots": [target["name"] for target in targets if target["kind"] == "nx_test"]},
     }
 
 def _nx_workspace_impl(ctx):
@@ -548,7 +560,15 @@ def _nx_task_impl(ctx, is_test = False):
         _file_globs(_nx_attr(ctx, "config", ["nx.json", "package.json", "pnpm-lock.yaml", "yarn.lock", "package-lock.json"])) +
         _file_globs(_nx_attr(ctx, "dependencies", ["node_modules/**/*"])),
     )
-    inputs = [path for path in inputs if "/node_modules/.vite/" not in "/" + path + "/"]
+    # Tools write caches into installed packages while tasks run, such as
+    # Vite's prebundles and the incremental build info of Vitest's typecheck.
+    # Nx identifies packages by their lockfile version and never sees them.
+    inputs = [
+        path
+        for path in inputs
+        if "/node_modules/.vite/" not in "/" + path + "/" and
+           not ("/node_modules/" in "/" + path and path.endswith(".tsbuildinfo"))
+    ]
     dependency_artifacts = _unique([path for dep in ctx["deps"] for path in dep.get("artifact_inputs", [])])
     inputs = _unique(inputs + dependency_artifacts)
 
@@ -653,6 +673,7 @@ nx_workspace = target_kind(
     attrs = [
         attr("node", "string", default = "\"node\"", docs = "Node.js executable name, absolute path, or workspace-relative path.", configurable = False),
         attr("targets", "list<string>", default = "[\"build\", \"test\", \"lint\"]", docs = "Nx task names to emit, together with their transitive task dependencies. Defaults to build, test, and lint. Set an empty list to include every task in the graph.", configurable = False),
+        attr("test_targets", "list<string>", default = "[\"test\"]", docs = "Nx task names that run test suites, such as `test:lib`. They are emitted as `nx_test` targets, even when `targets` leaves them out, so `struo test` and `struo query affected-tests` select them. Setting it replaces the default; include `test` to keep tasks named `test` as suites.", configurable = False),
         attr("resolver_inputs", "list<string>", default = "[]", docs = "Package-relative text globs supplied to native integration resolution. Defaults to srcs when empty.", configurable = False),
         attr("graph_file", "string", default = "\"\"", docs = "Optional workspace-relative path to a checked-in Nx project-graph JSON snapshot. Include external package nodes for plugin execution. Struo reads it directly instead of invoking Nx, allowing graph inspection without Node.js or node_modules/nx.", configurable = False),
         attr("coverage_per_test", "bool", default = "false", docs = "Forward isolated coverage opt-in to generated native Jest or Vitest test command targets.", configurable = False),
