@@ -2530,6 +2530,18 @@ unless File.regular?(app_file), do: raise("Rebar compilation did not produce #{a
 File.write!(marker, "ok\\n")
 """
 
+# Copies the package's priv into the output application, then runs Rebar
+# with this action's standard streams and exits with its status.
+def _mix_rebar_seed_priv_source():
+    return """
+[source, destination, rebar | args] = System.argv()
+File.cp_r!(source, destination)
+port = Port.open({:spawn_executable, rebar}, [:nouse_stdio, :exit_status, args: args])
+receive do
+  {^port, {:exit_status, status}} -> System.halt(status)
+end
+"""
+
 def _mix_stage_package_tree(ctx, source_root, source_name, destination, identifier):
     inputs = glob([source_root + "/" + source_name + "/**/*"])
     if inputs:
@@ -2601,12 +2613,13 @@ def _mix_rebar_package_action(ctx, source_root, app_name, mix_env, apps, app_dir
             compiled_app_dir + "/include",
             ctx["label"]["id"] + ":rebar-include",
         )
+    package_priv_stage = script_dir + "/priv"
     if package_priv:
         _mix_stage_package_tree(
             ctx,
             source_root,
             "priv",
-            metadata_stage + "/priv",
+            package_priv_stage,
             ctx["label"]["id"] + ":rebar-priv",
         )
     if package_ebin:
@@ -2634,9 +2647,20 @@ def _mix_rebar_package_action(ctx, source_root, app_name, mix_env, apps, app_dir
     if package_include:
         resource_inputs.append(compiled_app_dir + "/include")
     # Compile hooks such as NIF Makefiles write into the output application's
-    # priv, so it is a compile output and the package's own priv merges with
-    # it when the application is assembled.
+    # priv, so it is a compile output. The package's own priv is copied into
+    # it before Rebar runs: Rebar leaves an existing priv alone, and parse
+    # transforms read package files there while compiling.
     compiled_priv_dir = compiled_app_dir + "/priv"
+    if package_priv:
+        resource_inputs.append(package_priv_stage)
+        argv = [
+            toolchain["elixir"],
+            "-e",
+            _mix_rebar_seed_priv_source(),
+            "--",
+            execution_path(package_priv_stage),
+            execution_path(compiled_priv_dir),
+        ] + argv
     run_action(
         display_name = "Compile Rebar dependency · " + ctx["label"]["name"],
         presentation = _mix_action_metadata(ctx, mix_env, app_name),
@@ -2664,14 +2688,15 @@ def _mix_rebar_package_action(ctx, source_root, app_name, mix_env, apps, app_dir
     )
     app_sources = []
     app_inputs = []
-    if package_ebin or package_priv:
-        app_sources.append(metadata_stage)
     if package_ebin:
+        app_sources.append(metadata_stage)
         app_inputs.append(metadata_stage + "/ebin")
-    if package_priv:
-        app_inputs.append(metadata_stage + "/priv")
     app_sources.append(compiled_app_dir)
-    app_inputs.extend([compiled_ebin_dir, compiled_priv_dir] + resource_inputs)
+    app_inputs.extend([compiled_ebin_dir, compiled_priv_dir] + [
+        path
+        for path in resource_inputs
+        if path != package_priv_stage
+    ])
     copy_path(
         app_sources,
         app_dir,

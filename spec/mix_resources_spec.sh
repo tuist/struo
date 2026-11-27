@@ -209,6 +209,11 @@ TOML
 mkdir -p "\$REBAR_BARE_COMPILER_OUTPUT_DIR/priv/native"
 cat "$SPEC_ROOT/native.txt" > "\$REBAR_BARE_COMPILER_OUTPUT_DIR/priv/native/generated.txt"
 EOF
+    if [ "${1:-}" != generated-only ]; then
+      # Like a parse transform reading a certificate bundle, the compile reads
+      # the package's own priv from the output application.
+      printf 'cat "$REBAR_BARE_COMPILER_OUTPUT_DIR/priv/static.txt" > "$REBAR_BARE_COMPILER_OUTPUT_DIR/priv/native/static-at-compile.txt"\n' >> "$package/generate.sh"
+    fi
     printf '{pre_hooks, [{compile, "sh generate.sh"}]}.\n' > "$package/rebar.config"
     printf '{application, locked_greeting, [{vsn, "0.1.0"}, {applications, [kernel, stdlib]}, {modules, []}, {registered, []}]}.\n' > "$package/src/locked_greeting.app.src"
     printf -- '-module(locked_greeting).\n-export([message/1]).\nmessage(Name) -> Name.\n' > "$package/src/locked_greeting.erl"
@@ -231,6 +236,7 @@ PY
     struo --format json build mix-locked-greeting > "$WORKSPACE/build.json" || return
     app_dir="$WORKSPACE/.struo/out/mix-locked-greeting/mix/prod/lib/locked_greeting"
     [ "$(cat "$app_dir/priv/native/generated.txt")" = generated ] || return
+    [ "$(cat "$app_dir/priv/native/static-at-compile.txt")" = static ] || return
     [ "$(cat "$app_dir/priv/static.txt")" = static ] || return
     rm -rf "$WORKSPACE/.struo/out"
     struo --format json build mix-locked-greeting > "$WORKSPACE/restored.json" || return
