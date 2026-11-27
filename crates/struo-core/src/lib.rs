@@ -73,8 +73,8 @@ pub use evidence::{
     EvidenceCacheState, EvidenceRecord, EvidenceStatus, EvidenceStore, EvidenceSubject,
 };
 pub use execution_path::{
-    command_path, resolve_execution_argv, resolve_execution_env, resolve_execution_value,
-    EXECUTION_ROOT_MARKER,
+    command_path, portable_host_value, resolve_execution_argv, resolve_execution_env,
+    resolve_execution_value, EXECUTION_ROOT_MARKER,
 };
 pub use executor::{ExecutionPermit, Executor, ExecutorResources, RemoteIoLimits, ResourceDomain};
 pub use fingerprint_store::{

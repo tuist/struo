@@ -31,8 +31,30 @@ pub fn portable_host_value(value: &str) -> String {
     directories
         .into_iter()
         .fold(value.to_string(), |value, (marker, path)| {
-            value.replace(&command_path(&path), marker)
+            replace_path(&value, &command_path(&path), marker)
         })
+}
+
+/// Replace `path` where it names that directory or something inside it, so
+/// `/data/struo` leaves a sibling such as `/data/struo2` alone.
+fn replace_path(value: &str, path: &str, marker: &str) -> String {
+    if path.is_empty() {
+        return value.to_string();
+    }
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(index) = rest.find(path) {
+        let after = &rest[index + path.len()..];
+        let bounded = after
+            .chars()
+            .next()
+            .is_none_or(|next| !(next.is_alphanumeric() || matches!(next, '.' | '-' | '_')));
+        out.push_str(&rest[..index]);
+        out.push_str(if bounded { marker } else { path });
+        rest = after;
+    }
+    out.push_str(rest);
+    out
 }
 
 fn host_directories() -> Vec<(&'static str, std::path::PathBuf)> {
@@ -118,6 +140,16 @@ mod tests {
         assert_eq!(
             resolve_execution_value("plain", Path::new("/sandbox")),
             "plain"
+        );
+    }
+
+    #[test]
+    fn portable_values_leave_sibling_directories_alone() {
+        let data = command_path(&crate::Xdg::from_env().struo_data());
+        let value = format!("{data}/tools:{data}2/tools:{data}");
+        assert_eq!(
+            portable_host_value(&value),
+            format!("{DATA_DIR_MARKER}/tools:{data}2/tools:{DATA_DIR_MARKER}")
         );
     }
 

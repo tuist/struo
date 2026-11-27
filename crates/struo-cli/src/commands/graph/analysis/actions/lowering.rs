@@ -120,8 +120,16 @@ pub(super) fn prepare_declared_action_with_inputs(
         .map(Box::new);
     let action = match &declared.operation {
         None => Action::RunCommand {
-            argv: declared.argv.to_vec(),
-            env: declared.env.clone(),
+            argv: declared
+                .argv
+                .iter()
+                .map(|value| struo_core::portable_host_value(value))
+                .collect(),
+            env: declared
+                .env
+                .iter()
+                .map(|(key, value)| (key.clone(), struo_core::portable_host_value(value)))
+                .collect(),
             cwd: declared
                 .cwd
                 .as_deref()
@@ -669,10 +677,14 @@ pub(super) fn push_declared_action_metadata(
     declared: &DeclaredAction,
     workspace: &Path,
 ) -> Result<()> {
-    let identities = serde_json::to_vec(&(&declared.toolchain_identity, &declared.identifier))
+    let toolchain_identity = declared
+        .toolchain_identity
+        .as_deref()
+        .map(|identity| canonical_action_value(identity, workspace));
+    let identities = serde_json::to_vec(&(&toolchain_identity, &declared.identifier))
         .context("serializing declared action identities")?;
     builder.push_bytes(&identities);
-    if let Some(identity) = &declared.toolchain_identity {
+    if let Some(identity) = &toolchain_identity {
         builder.record_bytes("toolchain", "identity", identity.as_bytes());
     }
     if let Some(identifier) = &declared.identifier {
@@ -683,9 +695,14 @@ pub(super) fn push_declared_action_metadata(
             serde_json::to_vec(operation).context("serializing declared action operation")?;
         builder.push_bytes_component("command", "operation", &encoded);
     }
-    let encoded_argv =
-        serde_json::to_string(&declared.argv).context("serializing declared action arguments")?;
-    let canonical_argv = canonical_action_value(&encoded_argv, workspace);
+    let canonical_argv = serde_json::to_string(
+        &declared
+            .argv
+            .iter()
+            .map(|value| canonical_action_value(value, workspace))
+            .collect::<Vec<_>>(),
+    )
+    .context("serializing declared action arguments")?;
     builder.push_bytes(canonical_argv.as_bytes());
     if !declared.argv.is_empty() {
         builder.record_bytes("command", "arguments", canonical_argv.as_bytes());
@@ -747,10 +764,13 @@ pub(super) fn push_declared_action_metadata(
     Ok(())
 }
 
+/// Spell workspace paths and paths inside Struo's own data and cache
+/// directories with markers, so one action has one key on every host and
+/// for every user.
 pub(super) fn canonical_action_value(value: &str, workspace: &Path) -> String {
     let workspace = workspace.to_string_lossy();
     if workspace.is_empty() {
-        return value.to_owned();
+        return struo_core::portable_host_value(value);
     }
-    value.replace(workspace.as_ref(), "{{struo.execution_root}}")
+    struo_core::portable_host_value(&value.replace(workspace.as_ref(), "{{struo.execution_root}}"))
 }
