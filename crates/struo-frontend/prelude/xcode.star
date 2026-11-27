@@ -1351,9 +1351,9 @@ def _xcode_toolchain_version(ctx):
     _XCODE_TOOLCHAIN_VERSION_STATE["parsed"] = parsed
     return parsed
 
-def _xcode_setting_subs(ctx, target_name, product_name, sdkroot, settings = None, project_dir = "", configuration = "", project_name = "", sdk_name = ""):
+def _xcode_setting_subs(ctx, target_name, product_name, sdkroot, settings = None, project_dir = "", configuration = "", project_name = "", sdk_name = "", output_name = ""):
     package = (ctx.get("label") or {}).get("package") or ""
-    target_build_dir = ".struo/out/" + ((package + "/") if package else "") + _xcode_sanitized_target_name(target_name)
+    target_build_dir = ".struo/out/" + ((package + "/") if package else "") + _xcode_sanitized_target_name(output_name or target_name)
     source_root = project_dir or "."
     subs = {
         "SRCROOT": source_root,
@@ -1457,11 +1457,11 @@ def _xcode_variable_names(text):
             names.append(name)
     return names
 
-def _xcode_effective_settings(ctx, objects, config_list, default_name, project_settings, target_name, path_maps):
+def _xcode_effective_settings(ctx, objects, config_list, default_name, project_settings, target_name, path_maps, configuration = ""):
     # Resolve the active configuration from a build configuration list, then
     # layer project settings < target xcconfig < target settings.
     configs = (config_list or {}).get("buildConfigurations") or []
-    config_id = _xcode_choose_config(objects, configs, default_name, ctx["attr"].get("configuration") or "Debug")
+    config_id = _xcode_choose_config(objects, configs, default_name, configuration or ctx["attr"].get("configuration") or "Debug")
     config = objects.get(config_id) or {}
     xcconfig_settings = _xcode_base_config_xcconfig(ctx, objects, config, path_maps)
     target_settings = config.get("buildSettings") or {}
@@ -2263,7 +2263,7 @@ def _xcode_intent_sources(ctx, definitions, target_name):
         sources.extend(outputs)
     return {"actions": actions, "sources": _unique(sources)}
 
-def _xcode_shell_script_phases(ctx, objects, target, subs, project_dir, target_name):
+def _xcode_shell_script_phases(ctx, objects, target, subs, project_dir, target_name, output_name = ""):
     # Shell phases run in the native target's declared order. Dependency
     # analysis is safe to cache only when the project declares both sides of
     # the action contract and does not require the phase to run every time.
@@ -2277,7 +2277,7 @@ def _xcode_shell_script_phases(ctx, objects, target, subs, project_dir, target_n
     workspace_root_path = _xcode_workspace_root()
     project_bundle = _basename(_xcode_project_path(ctx))
     project_name = project_bundle[:-len(".xcodeproj")] if project_bundle.endswith(".xcodeproj") else project_bundle
-    target_build_dir = ".struo/out/" + ((ctx["label"]["package"] + "/") if ctx["label"]["package"] else "") + _xcode_sanitized_target_name(target_name)
+    target_build_dir = ".struo/out/" + ((ctx["label"]["package"] + "/") if ctx["label"]["package"] else "") + _xcode_sanitized_target_name(output_name or target_name)
     derived_dir = workspace_root_path + target_build_dir
     source_root = workspace_root()
     if project_dir:
@@ -5280,6 +5280,36 @@ def _xcode_referenced_test_plan_paths(ctx):
             paths.append(selected)
     return paths
 
+def _xcode_scheme_test_configurations(ctx):
+    # `xcodebuild test` builds a scheme's test bundles and everything they
+    # depend on with the TestAction's configuration. A test target keeps that
+    # configuration only when every scheme that tests it agrees on one.
+    choices = {}
+    for path in _xcode_scheme_paths(ctx):
+        contents = host_file_read(path)
+        if "<TestAction" not in contents:
+            continue
+        block = contents.split("<TestAction", 1)[1].split("</TestAction>", 1)[0]
+        configuration = _xcode_xml_attribute(block.split(">", 1)[0].replace(" = ", "="), "buildConfiguration")
+        if not configuration:
+            continue
+        names = []
+        for testable in block.split("<TestableReference")[1:]:
+            reference = testable.split("</TestableReference>", 1)[0].split("<BuildableReference", 1)
+            if len(reference) == 2:
+                names.append(_xcode_xml_attribute(reference[1].split(">", 1)[0].replace(" = ", "="), "BlueprintName"))
+        for plan_block in block.split("<TestPlanReference")[1:]:
+            reference = _xcode_xml_attribute(plan_block.split(">", 1)[0].replace(" = ", "="), "reference")
+            if reference.startswith("container:"):
+                reference = reference[len("container:"):]
+            if reference and host_file_exists(_xcode_abs(reference)):
+                for test_target in json_decode(host_file_read(_xcode_abs(reference))).get("testTargets") or []:
+                    names.append((test_target.get("target") or {}).get("name") or "")
+        for name in names:
+            if name:
+                choices[name] = _unique((choices.get(name) or []) + [configuration])
+    return {name: configurations[0] for name, configurations in choices.items() if len(configurations) == 1}
+
 def _xcode_test_plan_settings(ctx):
     settings = {}
     for path in _xcode_scheme_paths(ctx):
@@ -5389,7 +5419,8 @@ def _xcode_workspace_resolver(ctx):
     # diagnostic instead of executing an incompatible `plutil`.
     host_which("xcrun")
     entry_path = _xcode_project_path(ctx)
-    configuration = ctx["attr"].get("configuration") or "Debug"
+    explicit_configuration = ctx["attr"].get("configuration") or ""
+    configuration = explicit_configuration or "Debug"
 
     # A `.xcworkspace` groups several `.xcodeproj` files: an application project
     # plus, for example, the `Pods.xcodeproj` CocoaPods generates. Resolve every
@@ -5445,6 +5476,11 @@ def _xcode_workspace_resolver(ctx):
             "project_path": project_path,
             "native_targets": native_targets,
             "native_by_name": native_by_name,
+            "root": project["rootObject"],
+            "configurations": [
+                (objects.get(config_id) or {}).get("name") or ""
+                for config_id in (objects.get(root_project.get("buildConfigurationList")) or {}).get("buildConfigurations") or []
+            ],
         })
 
     # Pass two: lower every project's native targets, resolving dependencies and
@@ -5453,6 +5489,7 @@ def _xcode_workspace_resolver(ctx):
     import_deps = {}
     native_spec_names = {}
     test_plan_settings = _xcode_test_plan_settings(ctx)
+    scheme_test_configurations = _xcode_scheme_test_configurations(ctx)
     workspace_platforms = []
     for project in projects:
         project["platforms"] = _xcode_package_platforms(ctx, project, configuration)
@@ -5537,10 +5574,7 @@ def _xcode_workspace_resolver(ctx):
         group_walk_cache = {}
         project_bundle = _parent_dir(project_path) if _ends_with(project_path, "/project.pbxproj") or _ends_with(project_path, "/project.xcproj") else project_path
         project_name = _basename(project_bundle)[:-len(".xcodeproj")]
-        for target in native_targets:
-            spec = _xcode_lower_target(ctx, objects, target, project_settings, name_to_id, dep_closure, configuration, file_paths, project_dir, path_maps, test_plan_settings, group_walk_cache = group_walk_cache, project_name = project_name)
-            if spec == None:
-                continue
+        def add_spec(target, spec, rename = {}):
             package_platform = spec["attrs"].get("platform") or project["platforms"][0]
             package_graph = package_graphs[package_platform]
             xcframework_names = framework_graphs[package_platform]["names"]
@@ -5567,8 +5601,127 @@ def _xcode_workspace_resolver(ctx):
                         import_deps[spec["name"]] = (import_deps.get(spec["name"]) or []) + ["./" + dep_id]
             if spec["kind"] == "apple_library":
                 spec["attrs"]["exported_deps"] = list(spec["deps"])
+            for field in ["exported_deps", "_declared_deps"]:
+                if field in spec["attrs"]:
+                    spec["attrs"][field] = [dep for dep in _xcode_renamed_deps(spec["attrs"][field], rename) if dep != "./" + spec["name"]]
+            spec["deps"] = [dep for dep in _xcode_renamed_deps(spec["deps"], rename) if dep != "./" + spec["name"]]
+            if spec["name"] in import_deps:
+                import_deps[spec["name"]] = _xcode_renamed_deps(import_deps[spec["name"]], rename)
             all_specs.append(spec)
-            native_spec_names[spec["name"]] = True
+
+        settings_by_configuration = {configuration: project_settings}
+
+        def lower(target, target_configuration, output_name = ""):
+            if target_configuration not in settings_by_configuration:
+                settings_by_configuration[target_configuration] = _xcode_project_settings(ctx, objects, project["root"], target_configuration, path_maps)
+            return _xcode_lower_target(ctx, objects, target, settings_by_configuration[target_configuration], name_to_id, dep_closure, target_configuration, file_paths, project_dir, path_maps, test_plan_settings, group_walk_cache = group_walk_cache, project_name = project_name, output_name = output_name)
+
+        base_specs = {}
+        for target in native_targets:
+            base_specs[target.get("name") or ""] = lower(target, configuration)
+
+        # `xcodebuild test -scheme` builds a test bundle and everything it
+        # reaches with the scheme's TestAction configuration. When that differs
+        # from the project configuration, the test is lowered with it, along
+        # with each target it reaches whose settings differ or that reaches one
+        # that does. Those copies get a configuration suffix, so build roots
+        # keep the project configuration. An explicit `configuration` applies
+        # to tests too, as `-configuration` does for `xcodebuild`.
+        names_by_id = {(name_to_id.get(name) or ""): name for name in native_by_name.keys()}
+        workspace_ids = {value: True for value in name_to_id.values()}
+        package_ids = {spec["name"]: True for graph in package_graphs.values() + framework_graphs.values() for spec in graph["specs"]}
+        test_configurations = {}
+        if not explicit_configuration:
+            for name, spec in base_specs.items():
+                test_configuration = scheme_test_configurations.get(name) or ""
+                if spec != None and spec["kind"] == "apple_test_bundle" and test_configuration and test_configuration != configuration and test_configuration in project["configurations"]:
+                    test_configurations[name] = test_configuration
+        variant_tests = {}
+        for test_configuration in sorted(_unique(test_configurations.values())):
+            tests = sorted([name for name, value in test_configurations.items() if value == test_configuration])
+            lowered = {}
+            edge_cache = {}
+            reach_cache = {}
+
+            def edges(name):
+                # Declared dependencies, the test host, and imports of project
+                # targets, which become dependency edges below.
+                if name in edge_cache:
+                    return edge_cache[name]
+                if name not in lowered:
+                    lowered[name] = lower(native_by_name[name], test_configuration)
+                spec = lowered[name]
+                ids = []
+                if spec != None:
+                    ids = [dep[2:] for dep in spec["deps"] if dep.startswith("./")]
+                    ids = ids + [name_to_id.get(module) or "" for module in _xcode_swift_imports(spec["srcs"])]
+                    ids = _unique([dep_id for dep_id in ids if dep_id in workspace_ids and dep_id != spec["name"]])
+                edge_cache[name] = ids
+                return ids
+
+            def reach(name):
+                if name in reach_cache:
+                    return reach_cache[name]
+                seen = {}
+                frontier = [name]
+                for _ in range(len(workspace_ids) + 1):
+                    next_frontier = []
+                    for current in frontier:
+                        for dep_id in edges(current):
+                            if dep_id not in seen:
+                                seen[dep_id] = True
+                                if dep_id in names_by_id:
+                                    next_frontier.append(names_by_id[dep_id])
+                    frontier = next_frontier
+                reach_cache[name] = list(seen.keys())
+                return reach_cache[name]
+
+            # A test with no sources in this configuration, or that reaches a
+            # target in another project or one with no sources in this
+            # configuration, keeps the project configuration, since those
+            # targets cannot be swapped for copies.
+            for name in tests:
+                edges(name)
+            tests = [
+                name
+                for name in tests
+                if lowered[name] != None and not [
+                    dep_id
+                    for dep_id in reach(name)
+                    if dep_id not in names_by_id or (base_specs[names_by_id[dep_id]] != None and lowered[names_by_id[dep_id]] == None)
+                ]
+            ]
+            members = _unique([dep_id for name in tests for dep_id in reach(name)])
+            suffix = "_" + _xcode_sanitized_target_name(test_configuration)
+            changed = {dep_id: True for dep_id in members if lowered[names_by_id[dep_id]] != base_specs[names_by_id[dep_id]]}
+            rename = {}
+            for dep_id in members:
+                if lowered[names_by_id[dep_id]] != None and [changed_id for changed_id in [dep_id] + reach(names_by_id[dep_id]) if changed.get(changed_id)]:
+                    rename[dep_id] = dep_id + suffix
+            if [variant for variant in rename.values() if variant in workspace_ids or variant in package_ids]:
+                continue
+            for name in tests:
+                variant_tests[name] = (lowered[name], rename)
+            for dep_id in members:
+                if dep_id not in rename:
+                    continue
+                name = names_by_id[dep_id]
+                spec = lower(native_by_name[name], test_configuration, output_name = rename[dep_id])
+                if spec["kind"] in ["apple_library", "apple_framework"] and not spec["attrs"].get("module_name"):
+                    spec["attrs"]["module_name"] = spec["name"]
+                spec["name"] = rename[dep_id]
+                add_spec(native_by_name[name], spec, rename)
+
+        for target in native_targets:
+            name = target.get("name") or ""
+            if name in variant_tests:
+                spec, rename = variant_tests[name]
+                add_spec(target, spec, rename)
+            elif base_specs[name] != None:
+                add_spec(target, base_specs[name])
+            else:
+                continue
+            native_spec_names[name_to_id.get(name) or _xcode_sanitized_target_name(name)] = True
         for package_graph in package_graphs.values():
             for spec in package_graph["specs"]:
                 if spec["kind"] in ["apple_library", "apple_framework", "apple_application", "apple_executable", "apple_test_bundle", "swift_macro"]:
@@ -5781,7 +5934,7 @@ def _xcode_roots(specs):
         return products
     return [spec["name"] for spec in specs]
 
-def _xcode_lower_target(ctx, objects, target, project_settings, name_to_id, dep_closure, configuration, file_paths, project_dir, path_maps, test_plan_settings = {}, group_walk_cache = None, project_name = ""):
+def _xcode_lower_target(ctx, objects, target, project_settings, name_to_id, dep_closure, configuration, file_paths, project_dir, path_maps, test_plan_settings = {}, group_walk_cache = None, project_name = "", output_name = ""):
     product_type = target.get("productType") or ""
     kind = _xcode_product_kind(product_type)
     if not kind:
@@ -5791,7 +5944,7 @@ def _xcode_lower_target(ctx, objects, target, project_settings, name_to_id, dep_
     default_name = config_list.get("defaultConfigurationName") or "Release"
     selected_config_id = _xcode_choose_config(objects, config_list.get("buildConfigurations") or [], default_name, configuration)
     selected_configuration = (objects.get(selected_config_id) or {}).get("name") or configuration
-    settings = _xcode_effective_settings(ctx, objects, config_list, selected_configuration, project_settings, target.get("name") or "", path_maps)
+    settings = _xcode_effective_settings(ctx, objects, config_list, selected_configuration, project_settings, target.get("name") or "", path_maps, configuration = selected_configuration)
 
     target_name = target.get("name") or ""
     sanitized = _xcode_sanitized_target_name(target_name)
@@ -5816,7 +5969,10 @@ def _xcode_lower_target(ctx, objects, target, project_settings, name_to_id, dep_
     if not product_name_seed or product_name_seed.startswith("$("):
         product_name_seed = target_name
     resolved_sdkroot = host_command([host_which("xcrun"), "--sdk", sdk_name, "--show-sdk-path"], env = _developer_env(ctx["attr"].get("xcode_developer_dir") or "")).strip() if sdk_name else sdkroot
-    subs = _xcode_setting_subs(ctx, target_name, product_name_seed, resolved_sdkroot, settings, project_dir, selected_configuration, project_name, sdk_name)
+    # Generated files land in the directory of the emitted target, which is
+    # a configuration copy's own name.
+    output_name = output_name or target_name
+    subs = _xcode_setting_subs(ctx, target_name, product_name_seed, resolved_sdkroot, settings, project_dir, selected_configuration, project_name, sdk_name, output_name = output_name)
     wrapper_suffix = {"test": ".xctest", "application": ".app", "extension": ".appex", "watch_app": ".app", "framework": ".framework", "bundle": ".bundle"}.get(kind) or ""
     static_library = kind == "library" or (kind == "framework" and _xcode_framework_is_static(settings, product_type))
     if static_library:
@@ -5856,16 +6012,16 @@ def _xcode_lower_target(ctx, objects, target, project_settings, name_to_id, dep_
     subs["EXPANDED_CODE_SIGN_IDENTITY"] = signing_identity
 
     files = _xcode_target_files(ctx, objects, target, file_paths, project_dir, path_maps, platform, group_walk_cache = group_walk_cache)
-    shell_scripts = _xcode_shell_script_phases(ctx, objects, target, subs, project_dir, target_name)
+    shell_scripts = _xcode_shell_script_phases(ctx, objects, target, subs, project_dir, target_name, output_name)
     files["resources"] = _unique(files["resources"] + shell_scripts["resource_inputs"])
     files["structured_resources"] = _unique(files["structured_resources"] + shell_scripts["structured_resource_inputs"])
     for file_kind in ["sources", "headers", "exported_headers", "private_visibility_headers", "resources", "structured_resources", "asset_catalogs", "intent_definitions"]:
         files[file_kind] = [_xcode_script_path(path, subs) if "$(" in path or "${" in path else path for path in files[file_kind]]
         files[file_kind] = _xcode_filter_excluded_files(files[file_kind], settings)
     swift_version = _xcode_scalar(settings.get("SWIFT_VERSION"))
-    data_models = _xcode_datamodel_sources(ctx, files["resources"], product_name_seed, swift_version, target_name)
-    intents = _xcode_intent_sources(ctx, files["intent_definitions"], target_name)
-    string_symbols = _xcode_string_catalog_sources(ctx, files["resources"], files["sources"] if kind != "bundle" else [], settings, target_name)
+    data_models = _xcode_datamodel_sources(ctx, files["resources"], product_name_seed, swift_version, output_name)
+    intents = _xcode_intent_sources(ctx, files["intent_definitions"], output_name)
+    string_symbols = _xcode_string_catalog_sources(ctx, files["resources"], files["sources"] if kind != "bundle" else [], settings, output_name)
     files["sources"] = _unique(files["sources"] + data_models["sources"] + intents["sources"] + string_symbols["sources"])
     direct_deps = _unique(_xcode_target_dependencies(objects, target) + _xcode_framework_product_dependencies(objects, target, name_to_id))
     is_test = kind == "test"
@@ -5971,6 +6127,9 @@ def _xcode_lower_target(ctx, objects, target, project_settings, name_to_id, dep_
         "attrs": attrs,
     }
 
+def _xcode_renamed_deps(deps, rename):
+    return [("./" + rename[dep[2:]]) if dep.startswith("./") and dep[2:] in rename else dep for dep in deps]
+
 def _xcode_dep_ref(name_to_id, name):
     target_name = name_to_id.get(name) or _xcode_sanitized_target_name(name)
     if not target_name:
@@ -5988,7 +6147,7 @@ xcode_workspace = target_kind(
     docs = "Native Xcode project seed. Its resolver reads `project.pbxproj` through `plutil`, flattens `.xcconfig` includes and layered build settings, resolves file references including Xcode file-system synchronized groups, and lowers every native target into the existing Apple target kinds so Struo can compile and test the project directly.",
     attrs = [
         attr("project", "string", docs = "Package-relative path to the `.xcodeproj` or `.xcworkspace` directory, such as `App.xcodeproj`. Inferred when omitted from the single top-level `*.xcworkspace`, or else the single top-level `*.xcodeproj`.", configurable = False),
-        attr("configuration", "string", default = "Debug", docs = "Xcode build configuration whose settings drive target lowering.", configurable = False),
+        attr("configuration", "string", docs = "Xcode build configuration whose settings drive target lowering. Defaults to `Debug`, with test bundles and the targets they reach built with their schemes' Test action configuration; when set, it applies to tests too.", configurable = False),
         attr("build_settings", "map<string,string>", default = "{}", docs = "Native command-line build-setting overrides applied after project, target, and xcconfig settings.", configurable = False),
         attr("coverage_per_test", "bool", default = "false", docs = "Instrument reachable native products and measure each complete test bundle as an atomic LLVM coverage unit.", configurable = False),
         attr("sdk_variant", "string", default = "simulator", docs = "`simulator` or `device` SDK selection applied to lowered Apple targets on non-macOS platforms.", configurable = False),

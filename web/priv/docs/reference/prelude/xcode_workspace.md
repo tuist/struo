@@ -73,7 +73,7 @@ for native propagation, dependency errors, and current limitations.
 | --- | --- | --- | --- | --- |
 | `coverage_per_test` | bool | no | `false` | Instrument reachable product dependencies and measure complete test bundles as atomic LLVM coverage units |
 | `project` | string | no | single top-level `*.xcworkspace`, else single top-level `*.xcodeproj` | Package-relative path to the `.xcodeproj` or `.xcworkspace` |
-| `configuration` | string | no | `Debug` | Xcode build configuration whose settings drive target lowering |
+| `configuration` | string | no | `Debug`, with test bundles built with their schemes' Test action configuration | Xcode build configuration whose settings drive target lowering. When set, it applies to test bundles too |
 | `build_settings` | map&lt;string,string&gt; | no | `{}` | Native build-setting overrides applied after project, target, and xcconfig settings |
 | `sdk_variant` | string | no | `simulator` | `simulator` or `device` selection applied to lowered targets on non-macOS platforms |
 | `xcode_developer_dir` | string | no | active Xcode | `DEVELOPER_DIR` override folded into lowered targets' cache keys |

@@ -90,6 +90,17 @@ target:
 struo test ClientTests
 ```
 
+Like `xcodebuild test -scheme`, a test bundle builds with the configuration of
+its schemes' Test action, such as a `Test` configuration that defines `TEST`.
+The bundle and everything it reaches whose settings differ under that
+configuration are built as separate targets named with the configuration as a
+suffix, such as `App_Test`, so `struo build` still builds the project
+configuration. Targets with script phases count as differing, since scripts
+receive `CONFIGURATION`. A bundle builds with the project configuration when
+the schemes that test it name different configurations, when it reaches a
+target in another project, or when it or a target it reaches has no sources
+in the Test action configuration.
+
 `struo test` with no target runs the first-party test bundles of the discovered
 project. `struo test --all` includes tests from the complete resolved graph.
 See [Testing and Scheduling](/guide/graph/testing) for selection and reporting.
@@ -201,7 +212,9 @@ configuration = "Release"
 sdk_variant = "device"
 ```
 
-- `configuration` picks the Xcode build configuration. It defaults to `Debug`.
+- `configuration` picks the Xcode build configuration. It defaults to `Debug`,
+  with test bundles built with their schemes' Test action configuration. When
+  set, it applies to test bundles too, as `xcodebuild -configuration` does.
 - `sdk_variant` selects `simulator` or `device` for targets on platforms other
   than macOS.
 - `xcode_developer_dir` pins a `DEVELOPER_DIR` and includes it in the derived

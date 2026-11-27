@@ -502,6 +502,171 @@ result = repr([settings["Tests"]["skipped_tests"], settings["OtherTests"]["skipp
 }
 
 #[test]
+fn scheme_test_configurations_apply_only_when_every_scheme_agrees() {
+    let source = package_source(
+        r#"
+def _xcode_scheme_paths(ctx):
+    return ["app.xcscheme", "rtl.xcscheme", "other.xcscheme", "launch.xcscheme"]
+def _xcode_abs(path):
+    return path
+def host_file_exists(path):
+    return path == "Plans/App.xctestplan"
+def host_file_read(path):
+    if path == "Plans/App.xctestplan":
+        return '{"testTargets": [{"target": {"name": "PlanTests"}}]}'
+    if path == "app.xcscheme":
+        return '<TestAction buildConfiguration = "Test" shouldUseLaunchSchemeArgsEnv = "YES"><TestPlans><TestPlanReference reference = "container:Plans/App.xctestplan" default = "YES"></TestPlanReference></TestPlans><Testables><TestableReference skipped = "NO"><BuildableReference BlueprintName = "AppTests"></BuildableReference></TestableReference></Testables></TestAction><LaunchAction buildConfiguration = "Debug"></LaunchAction>'
+    if path == "rtl.xcscheme":
+        return '<TestAction buildConfiguration = "Test"><Testables><TestableReference><BuildableReference BlueprintName = "AppTests"></BuildableReference></TestableReference><TestableReference><BuildableReference BlueprintName = "SharedTests"></BuildableReference></TestableReference></Testables></TestAction>'
+    if path == "other.xcscheme":
+        return '<TestAction buildConfiguration = "Debug"><Testables><TestableReference><BuildableReference BlueprintName = "SharedTests"></BuildableReference></TestableReference></Testables></TestAction>'
+    return '<LaunchAction buildConfiguration = "Release"><BuildableReference BlueprintName = "LaunchOnly"></BuildableReference></LaunchAction>'
+configurations = _xcode_scheme_test_configurations({})
+result = repr(sorted(configurations.items()))
+"#,
+    );
+    assert_eq!(
+        eval_prelude_source_to_repr(source).unwrap(),
+        r#"[("AppTests", "Test"), ("PlanTests", "Test")]"#
+    );
+}
+
+fn native_target(
+    id: &str,
+    name: &str,
+    product: &str,
+    deps: &[&str],
+    test_settings: &[(&str, &str)],
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut entries = serde_json::Map::new();
+    let configs = format!("{id}_CONFIGS");
+    let mut debug = serde_json::json!({"PRODUCT_NAME": name, "PRODUCT_BUNDLE_IDENTIFIER": format!("dev.example.{name}"), "GENERATE_INFOPLIST_FILE": "YES", "DEFINES_MODULE": "YES"});
+    if name == "ReaderTests" {
+        debug["TEST_HOST"] = "$(BUILT_PRODUCTS_DIR)/Reader.app/Contents/MacOS/Reader".into();
+    }
+    let mut test = debug.clone();
+    for (key, value) in test_settings {
+        test[*key] = (*value).into();
+    }
+    entries.insert(
+        format!("{id}_DEBUG"),
+        serde_json::json!({"isa": "XCBuildConfiguration", "name": "Debug", "buildSettings": debug}),
+    );
+    entries.insert(
+        format!("{id}_TEST"),
+        serde_json::json!({"isa": "XCBuildConfiguration", "name": "Test", "buildSettings": test}),
+    );
+    entries.insert(configs.clone(), serde_json::json!({"isa": "XCConfigurationList", "buildConfigurations": [format!("{id}_DEBUG"), format!("{id}_TEST")], "defaultConfigurationName": "Debug"}));
+    entries.insert(format!("{id}_FILE"), serde_json::json!({"isa": "PBXFileReference", "sourceTree": "<group>", "path": format!("{name}.swift")}));
+    entries.insert(
+        format!("{id}_BUILD_FILE"),
+        serde_json::json!({"isa": "PBXBuildFile", "fileRef": format!("{id}_FILE")}),
+    );
+    entries.insert(
+        format!("{id}_SOURCES"),
+        serde_json::json!({"isa": "PBXSourcesBuildPhase", "files": [format!("{id}_BUILD_FILE")]}),
+    );
+    let mut dependencies = Vec::new();
+    for dep in deps {
+        entries.insert(
+            format!("{id}_DEP_{dep}"),
+            serde_json::json!({"isa": "PBXTargetDependency", "target": dep}),
+        );
+        dependencies.push(format!("{id}_DEP_{dep}"));
+    }
+    entries.insert(id.to_string(), serde_json::json!({"isa": "PBXNativeTarget", "name": name, "productType": product, "buildConfigurationList": configs, "buildPhases": [format!("{id}_SOURCES")], "dependencies": dependencies}));
+    entries
+}
+
+fn test_configuration_project(explicit_configuration: Option<&str>) -> String {
+    let mut objects = serde_json::Map::new();
+    objects.insert("ROOT".into(), serde_json::json!({"isa": "PBXProject", "buildConfigurationList": "PROJECT_CONFIGS", "targets": ["APP", "UTIL", "STORE", "OTHER", "TESTS", "OTHER_TESTS"], "mainGroup": "GROUP"}));
+    objects.insert("GROUP".into(), serde_json::json!({"isa": "PBXGroup", "sourceTree": "<group>", "children": ["APP_FILE", "UTIL_FILE", "STORE_FILE", "OTHER_FILE", "TESTS_FILE", "OTHER_TESTS_FILE"]}));
+    objects.insert("PROJECT_CONFIGS".into(), serde_json::json!({"isa": "XCConfigurationList", "buildConfigurations": ["PROJECT_DEBUG", "PROJECT_TEST"], "defaultConfigurationName": "Debug"}));
+    objects.insert("PROJECT_DEBUG".into(), serde_json::json!({"isa": "XCBuildConfiguration", "name": "Debug", "buildSettings": {"SDKROOT": "macosx", "MACOSX_DEPLOYMENT_TARGET": "14.0"}}));
+    objects.insert("PROJECT_TEST".into(), serde_json::json!({"isa": "XCBuildConfiguration", "name": "Test", "buildSettings": {"SDKROOT": "macosx", "MACOSX_DEPLOYMENT_TARGET": "14.0"}}));
+    let framework = "com.apple.product-type.framework";
+    // The test reaches its host only through TEST_HOST, the host reaches Util
+    // only through an import, and only Store's settings differ under Test.
+    // OtherTests has no sources under Test, so it keeps the project
+    // configuration without holding ReaderTests back.
+    objects.extend(native_target(
+        "APP",
+        "Reader",
+        "com.apple.product-type.application",
+        &["STORE"],
+        &[],
+    ));
+    objects.extend(native_target("UTIL", "Util", framework, &["STORE"], &[]));
+    objects.extend(native_target(
+        "STORE",
+        "Store",
+        framework,
+        &[],
+        &[("SWIFT_ACTIVE_COMPILATION_CONDITIONS", "TEST")],
+    ));
+    objects.extend(native_target("OTHER", "Other", framework, &[], &[]));
+    objects.extend(native_target(
+        "TESTS",
+        "ReaderTests",
+        "com.apple.product-type.bundle.unit-test",
+        &[],
+        &[],
+    ));
+    objects.extend(native_target(
+        "OTHER_TESTS",
+        "OtherTests",
+        "com.apple.product-type.bundle.unit-test",
+        &["OTHER"],
+        &[("EXCLUDED_SOURCE_FILE_NAMES", "OtherTests.swift")],
+    ));
+    let pbxproj = serde_json::json!({"rootObject": "ROOT", "objects": objects}).to_string();
+    let attrs = match explicit_configuration {
+        Some(configuration) => {
+            format!(r#"{{"project": "Reader.xcodeproj", "configuration": "{configuration}"}}"#)
+        }
+        None => r#"{"project": "Reader.xcodeproj"}"#.to_string(),
+    };
+    let source = package_source(&format!(
+        r#"
+def workspace_root():
+    return "/repo"
+def host_command(argv, env = None, cwd = None, merge_stderr = None, check = True):
+    return {pbxproj:?}
+def _xcode_scheme_paths(ctx):
+    return ["Reader.xcscheme"]
+SOURCES = {{"/repo/Reader.swift": "import Util\n", "/repo/ReaderTests.swift": "import XCTest\n@testable import Reader\n"}}
+def host_file_exists(path):
+    return path in SOURCES or path.endswith(".swift")
+def host_file_read(path):
+    if path == "Reader.xcscheme":
+        return '<TestAction buildConfiguration = "Test"><Testables><TestableReference><BuildableReference BlueprintName = "ReaderTests"></BuildableReference></TestableReference><TestableReference><BuildableReference BlueprintName = "OtherTests"></BuildableReference></TestableReference></Testables></TestAction>'
+    return SOURCES.get(path, "")
+ctx = {{"label": {{"package": "", "name": "xcode", "id": "xcode"}}, "attr": {attrs}}}
+resolved = _xcode_workspace_resolver(ctx)
+result = repr([resolved["roots"], resolved["attrs"]["_default_test_roots"], [[spec["name"], sorted(spec["deps"]), spec["attrs"].get("module_name")] for spec in resolved["targets"]]])
+"#
+    ));
+    eval_prelude_source_to_repr(source).unwrap()
+}
+
+#[test]
+fn tests_build_with_their_scheme_test_configuration() {
+    assert_eq!(
+        test_configuration_project(None),
+        r#"[["Reader"], ["ReaderTests", "OtherTests"], [["Reader_Test", ["./Store_Test", "./Util_Test"], None], ["Store_Test", [], "Store"], ["Util_Test", ["./Store_Test"], "Util"], ["Reader", ["./Store", "./Util"], None], ["Util", ["./Store"], None], ["Store", [], None], ["Other", [], None], ["ReaderTests", ["./Reader_Test"], None], ["OtherTests", ["./Other"], None]]]"#
+    );
+}
+
+#[test]
+fn an_explicit_configuration_applies_to_tests() {
+    assert_eq!(
+        test_configuration_project(Some("Debug")),
+        r#"[["Reader"], ["ReaderTests", "OtherTests"], [["Reader", ["./Store", "./Util"], None], ["Util", ["./Store"], None], ["Store", [], None], ["Other", [], None], ["ReaderTests", ["./Reader"], None], ["OtherTests", ["./Other"], None]]]"#
+    );
+}
+
+#[test]
 fn generated_only_package_targets_keep_their_build_tool_dependency() {
     let source = package_source(
         r#"
