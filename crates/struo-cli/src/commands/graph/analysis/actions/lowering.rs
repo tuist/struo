@@ -293,6 +293,7 @@ pub(super) fn operation_to_action(
             destination: workspace_path(&destination, "copy_path destination")?,
             mode: match mode {
                 DeclaredCopyPathMode::File => CopyPathMode::File,
+                DeclaredCopyPathMode::ExecutableFile => CopyPathMode::ExecutableFile,
                 DeclaredCopyPathMode::Tree => CopyPathMode::Tree,
                 DeclaredCopyPathMode::Files { strip_prefix } => CopyPathMode::Files {
                     strip_prefix: workspace_path(&strip_prefix, "copy_path strip_prefix")?,
@@ -744,8 +745,15 @@ pub(super) fn push_declared_action_metadata(
         builder.record_bytes("action", "identifier", identifier.as_bytes());
     }
     if let Some(operation) = &declared.operation {
+        // Host snapshots are keyed by content, as in `Action::digest`.
+        let mut operation = operation.clone();
+        if let DeclaredActionOperation::MaterializeHostFile { source, .. }
+        | DeclaredActionOperation::MaterializeHostTree { source, .. } = &mut operation
+        {
+            source.clear();
+        }
         let encoded =
-            serde_json::to_vec(operation).context("serializing declared action operation")?;
+            serde_json::to_vec(&operation).context("serializing declared action operation")?;
         builder.push_bytes_component("command", "operation", &encoded);
     }
     let canonical_argv = serde_json::to_string(

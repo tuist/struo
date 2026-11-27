@@ -154,7 +154,8 @@ impl FromStr for NetworkPolicy {
 ///
 /// The wire format of this enum is part of the action digest (see
 /// `ACTION_DIGEST_DOMAIN`). Field additions, renames, or reorderings
-/// that affect the JSON encoding require a digest version bump.
+/// that affect the JSON encoding require a digest version bump. Host
+/// snapshots hash with their `source` path blanked.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Action {
@@ -367,6 +368,8 @@ pub enum ArchiveEntryKind {
 pub enum CopyPathMode {
     /// Copy a single file.
     File,
+    /// Copy a single file and mark the copy executable.
+    ExecutableFile,
     /// Copy a directory and everything beneath it.
     Tree,
     /// Copy each source to the destination directory, at its path relative
@@ -486,11 +489,27 @@ impl Action {
             }
             _ => ACTION_DIGEST_DOMAIN,
         };
+        // A host snapshot's output is fixed by its verified content digest
+        // and mode, so where the host keeps the file does not change the
+        // result. Leaving the location out lets checkouts whose toolchains or
+        // external repositories live at different paths share entries.
+        let keyed = match self {
+            Action::MaterializeHostFile { .. } | Action::MaterializeHostTree { .. } => {
+                let mut action = self.clone();
+                if let Action::MaterializeHostFile { source, .. }
+                | Action::MaterializeHostTree { source, .. } = &mut action
+                {
+                    *source = PathBuf::new();
+                }
+                std::borrow::Cow::Owned(action)
+            }
+            _ => std::borrow::Cow::Borrowed(self),
+        };
         let mut hasher = blake3::Hasher::new();
         hasher.update(domain);
         {
             let mut writer = std::io::BufWriter::with_capacity(16 * 1024, &mut hasher);
-            serde_json::to_writer(&mut writer, self).expect("Action is serializable");
+            serde_json::to_writer(&mut writer, keyed.as_ref()).expect("Action is serializable");
             std::io::Write::flush(&mut writer).expect("hash writes cannot fail");
         }
         Digest::from_bytes(*hasher.finalize().as_bytes())
@@ -799,5 +818,43 @@ mod tests {
         let decoded: Action =
             serde_json::from_value(serde_json::to_value(&second).unwrap()).unwrap();
         assert_eq!(decoded.digest(), second.digest());
+    }
+
+    #[test]
+    fn host_snapshot_keys_ignore_source_location_but_not_content_or_mode() {
+        let file = |source: &str, sha: &str, mode: Option<u32>| Action::MaterializeHostFile {
+            source: PathBuf::from(source),
+            source_sha256: sha.to_string(),
+            source_mode: mode,
+            destination: WorkspacePath::try_from("out/tool").unwrap(),
+            input_digest: None,
+        };
+        let tree = |source: &str, sha: &str| Action::MaterializeHostTree {
+            source: PathBuf::from(source),
+            source_sha256: sha.to_string(),
+            destination: WorkspacePath::try_from("out/repo").unwrap(),
+            input_digest: None,
+        };
+        let base = file("/one/external/tool", "aa", Some(0o100_755)).digest();
+        assert_eq!(
+            base,
+            file("/two/deeper/external/tool", "aa", Some(0o100_755)).digest()
+        );
+        assert_ne!(
+            base,
+            file("/one/external/tool", "aa", Some(0o100_644)).digest()
+        );
+        assert_ne!(
+            base,
+            file("/one/external/tool", "bb", Some(0o100_755)).digest()
+        );
+        assert_eq!(
+            tree("/one/repo", "aa").digest(),
+            tree("/two/repo", "aa").digest()
+        );
+        assert_ne!(
+            tree("/one/repo", "aa").digest(),
+            tree("/one/repo", "bb").digest()
+        );
     }
 }

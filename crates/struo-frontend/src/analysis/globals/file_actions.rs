@@ -77,7 +77,9 @@ pub(super) fn file_action_globals(builder: &mut GlobalsBuilder) {
     }
 
     /// Declare a portable copy action. The default copies one path by value,
-    /// materializing a directory symlink at the destination. `kind = "tree"`
+    /// materializing a directory symlink at the destination.
+    /// `kind = "executable_file"` copies one file and marks the copy
+    /// executable. `kind = "tree"`
     /// copies directory contents and preserves their symlink layout. Tree
     /// copies accept one source string or a list of source directories.
     /// `kind = "files"` copies a list of files into the `destination`

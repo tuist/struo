@@ -131,6 +131,7 @@ pub enum DeclaredArchiveFormat {
 #[serde(rename_all = "snake_case")]
 pub enum DeclaredCopyPathMode {
     File,
+    ExecutableFile,
     Tree,
     Files { strip_prefix: String },
 }

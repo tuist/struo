@@ -208,9 +208,10 @@ fn parse_copy_path_mode(
             "`strip_prefix` applies only to `copy_path` with kind `files`"
         )),
         ("file", None) => Ok(DeclaredCopyPathMode::File),
+        ("executable_file", None) => Ok(DeclaredCopyPathMode::ExecutableFile),
         ("tree", None) => Ok(DeclaredCopyPathMode::Tree),
         (other, None) => Err(anyhow!(
-            "expected `kind` to be `file`, `tree`, or `files`, got `{other}`"
+            "expected `kind` to be `file`, `executable_file`, `tree`, or `files`, got `{other}`"
         )),
     }
 }
@@ -246,9 +247,11 @@ fn unpack_copy_sources(source: Value<'_>, mode: &DeclaredCopyPathMode) -> Result
         unpack_string_list(source, "source")?
     };
     match mode {
-        DeclaredCopyPathMode::File if sources.len() != 1 => Err(anyhow!(
-            "`copy_path` with kind `file` requires exactly one source"
-        )),
+        DeclaredCopyPathMode::File | DeclaredCopyPathMode::ExecutableFile if sources.len() != 1 => {
+            Err(anyhow!(
+                "`copy_path` with kind `file` or `executable_file` requires exactly one source"
+            ))
+        }
         DeclaredCopyPathMode::Tree if sources.is_empty() => Err(anyhow!(
             "`copy_path` with kind `tree` requires at least one source"
         )),

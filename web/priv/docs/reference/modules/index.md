@@ -1048,6 +1048,9 @@ Built-in history currently covers Rust compilation/build scripts/test-runner com
   path by value. A directory symlink is materialized at the destination.
   Source paths are always action inputs; `inputs` adds any other paths read
   while deciding what to copy.
+- `copy_path(source, destination, kind = "executable_file")` copies one file
+  and marks the copy executable, for tools whose source file was generated
+  without an executable mode.
 - `copy_path(source, destination, kind = "tree", inputs = [])` copies
   one or more directory contents while preserving their symlink layout. Each
   source tree is automatically hashed as an input.

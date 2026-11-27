@@ -242,7 +242,15 @@ async fn execute_portable_action(
                             reason: "file copy requires exactly one source".to_string(),
                         });
                     }
-                    copy_file(&sources[0], destination, workspace_root, lease).await?;
+                    copy_file(&sources[0], destination, workspace_root, lease, false).await?;
+                }
+                CopyPathMode::ExecutableFile => {
+                    if sources.len() != 1 {
+                        return Err(Error::InvalidCopyPath {
+                            reason: "executable file copy requires exactly one source".to_string(),
+                        });
+                    }
+                    copy_file(&sources[0], destination, workspace_root, lease, true).await?;
                 }
                 CopyPathMode::Tree => {
                     copy_tree(sources, destination, workspace_root, lease).await?;
@@ -252,7 +260,7 @@ async fn execute_portable_action(
                         crate::action::copy_files_destinations(sources, destination, strip_prefix)
                             .map_err(|reason| Error::InvalidCopyPath { reason })?;
                     for (source, target) in sources.iter().zip(&destinations) {
-                        copy_file(source, target, workspace_root, lease).await?;
+                        copy_file(source, target, workspace_root, lease, false).await?;
                     }
                     return capture_file_action_outputs(
                         &destinations,
@@ -676,6 +684,7 @@ async fn copy_file(
     destination: &WorkspacePath,
     workspace_root: &Path,
     lease: Option<&ExecutionPermit>,
+    executable: bool,
 ) -> Result<()> {
     let absolute_source = source.resolve(workspace_root);
     let absolute_destination = destination.resolve(workspace_root);
@@ -687,10 +696,24 @@ async fn copy_file(
         }
         remove_path_blocking(&absolute_destination)?;
         if metadata.is_dir() {
+            if executable {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "an executable file copy needs a file source",
+                ));
+            }
             std::fs::create_dir_all(&absolute_destination)?;
             copy_directory_contents_blocking(&absolute_source, &absolute_destination)
         } else {
-            std::fs::copy(&absolute_source, &absolute_destination).map(|_| ())
+            std::fs::copy(&absolute_source, &absolute_destination)?;
+            #[cfg(unix)]
+            if executable {
+                use std::os::unix::fs::PermissionsExt as _;
+                let mut permissions = std::fs::metadata(&absolute_destination)?.permissions();
+                permissions.set_mode(permissions.mode() | 0o111);
+                std::fs::set_permissions(&absolute_destination, permissions)?;
+            }
+            Ok(())
         }
     })
     .await
