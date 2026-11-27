@@ -81,6 +81,46 @@ fn replace_whole_path(value: &str, path: &str, replacement: &str) -> String {
     replaced
 }
 
+/// A cacheable action that inherits the parent environment, with that
+/// environment resolved into its declared `env`; `None` for any other action.
+fn with_inherited_env(
+    workspace: &Path,
+    declared: &DeclaredAction,
+    sandbox_override: SandboxMode,
+) -> Result<Option<DeclaredAction>> {
+    if !(declared.cacheable && declared.inherit_parent_env) {
+        return Ok(None);
+    }
+    anyhow::ensure!(
+        effective_sandbox(declared.sandbox.as_deref(), sandbox_override)? == SandboxMode::Off,
+        "inherit_parent_env requires sandbox = \"off\""
+    );
+    let mut effective = declared.clone();
+    // The action key hashes the environment as declared, so an inherited
+    // value that names the checkout, such as `PWD`, is spelled through the
+    // execution root, which resolves to the checkout at launch.
+    let roots = std::iter::once(struo_core::command_path(workspace))
+        .chain(shell_workspace_spelling(workspace))
+        .collect::<Vec<_>>();
+    effective.env = env::vars_os()
+        .map(|(key, value)| {
+            let value = value
+                .into_string()
+                .map_err(|_| anyhow::anyhow!("inherited environment values must be UTF-8"))?;
+            let value = roots.iter().fold(value, |value, root| {
+                replace_whole_path(&value, root, struo_core::EXECUTION_ROOT_MARKER)
+            });
+            Ok((
+                key.into_string()
+                    .map_err(|_| anyhow::anyhow!("inherited environment names must be UTF-8"))?,
+                value,
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    effective.env.extend(declared.env.clone());
+    Ok(Some(effective))
+}
+
 pub(super) fn prepare_declared_action_with_inputs(
     workspace: &Path,
     declared: &DeclaredAction,
@@ -90,41 +130,8 @@ pub(super) fn prepare_declared_action_with_inputs(
     source_digest_cache: Option<&SourceDigestCache>,
     sandbox_override: SandboxMode,
 ) -> Result<PreparedDeclaredAction> {
-    let inherited;
-    let declared = if declared.cacheable && declared.inherit_parent_env {
-        anyhow::ensure!(
-            effective_sandbox(declared.sandbox.as_deref(), sandbox_override)? == SandboxMode::Off,
-            "inherit_parent_env requires sandbox = \"off\""
-        );
-        let mut effective = declared.clone();
-        // The action key hashes the environment as declared, so an inherited
-        // value that names the checkout, such as `PWD`, is spelled through the
-        // execution root, which resolves to the checkout at launch.
-        let roots = std::iter::once(struo_core::command_path(workspace))
-            .chain(shell_workspace_spelling(workspace))
-            .collect::<Vec<_>>();
-        effective.env = env::vars_os()
-            .map(|(key, value)| {
-                let value = value
-                    .into_string()
-                    .map_err(|_| anyhow::anyhow!("inherited environment values must be UTF-8"))?;
-                let value = roots.iter().fold(value, |value, root| {
-                    replace_whole_path(&value, root, struo_core::EXECUTION_ROOT_MARKER)
-                });
-                Ok((
-                    key.into_string().map_err(|_| {
-                        anyhow::anyhow!("inherited environment names must be UTF-8")
-                    })?,
-                    value,
-                ))
-            })
-            .collect::<Result<BTreeMap<_, _>>>()?;
-        effective.env.extend(declared.env.clone());
-        inherited = effective;
-        &inherited
-    } else {
-        declared
-    };
+    let inherited = with_inherited_env(workspace, declared, sandbox_override)?;
+    let declared = inherited.as_ref().unwrap_or(declared);
     let env_keys = declared.env.keys().cloned().collect::<Vec<_>>();
     tracing::trace!(
         identifier = ?declared.identifier,
