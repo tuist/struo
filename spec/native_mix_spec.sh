@@ -229,7 +229,9 @@ PY
     cp -R "$WORKSPACE/app" "$WORKSPACE/helper" "$destination/"
     WORKSPACE="$destination"
     native_struo build > "$SPEC_ROOT/location-second.json" 2> "$SPEC_ROOT/location-second.err" || return
-    (cd "$WORKSPACE/app" && elixir -pa "$WORKSPACE/.struo/out/app/mix_application_dev/mix/dev/lib/app/ebin" -e 'unless App.source_root() == File.cwd!(), do: raise("cached bytecode retained a different source directory")')
+    (cd "$WORKSPACE/app" && elixir -pa "$WORKSPACE/.struo/out/app/mix_application_dev/mix/dev/lib/app/ebin" -e 'unless App.source_root() == File.cwd!(), do: raise("cached bytecode retained a different source directory")') || return
+    # Path dependencies record their absolute source paths in bytecode too.
+    (cd "$WORKSPACE/helper" && elixir -pa "$WORKSPACE/.struo/out/app/mix-dev-helper/mix/prod/lib/helper/ebin" -e 'unless Path.dirname(to_string(Helper.module_info(:compile)[:source])) == Path.join(File.cwd!(), "lib"), do: raise("cached path dependency bytecode retained a different source directory")')
   }
 
   prepare_staged_tests() {
@@ -556,11 +558,13 @@ end
 EX
     for child in greeter helper; do
       deps='[]'
+      module=Helper
+      [ "$child" = greeter ] && module=Greeter
       [ "$child" = greeter ] && deps='[{:locked_greeting, "0.1.0"}, {:helper, in_umbrella: true}]'
       # Mix leaves a dependency for another target out of the host build.
       [ "$child" = helper ] && deps='[{:locked_greeting, "0.1.0", targets: :rpi}]'
       cat > "$umbrella/apps/$child/mix.exs" <<EX
-defmodule ${child^}.MixProject do
+defmodule ${module}.MixProject do
   use Mix.Project
   def project do
     [app: :$child, version: "0.1.0", build_path: "../../_build", config_path: "../../config/config.exs",

@@ -2775,7 +2775,7 @@ def _mix_package_impl(ctx):
             }),
             stdout = compile_log,
             stderr = compile_warnings,
-            toolchain_identity = toolchain["identity"] + "\x00mix-package-compile.v5\x00" + mix_env + "\x00" + identity + "\x00" + _elixir_abs_workspace_path(workspace_source_root),
+            toolchain_identity = toolchain["identity"] + "\x00mix-package-compile.v5\x00" + mix_env + "\x00" + identity + "\x00" + content_sha256(_elixir_abs_workspace_path(workspace_source_root)),
             identifier = ctx["label"]["id"] + ":mix-compile",
         )
     else:
@@ -3151,7 +3151,10 @@ def _mix_project_impl(ctx):
         # Mix compiles modules on every scheduler, so the project compile asks
         # for a wide slot; Struo clamps it to the host or the worker VM.
         resources = {"cpu_slots": 8, "memory_bytes": 4 * 1024 * 1024 * 1024},
-        toolchain_identity = toolchain["identity"] + "\x00mix-project-compile.v3\x00" + paths["mix_env"] + "\x00" + _mix_workspace_path(ctx, "."),
+        # Mix embeds absolute source paths in bytecode, so each checkout keys
+        # its own compile. Action keys spell the checkout portably, so the
+        # identity carries a digest of its path instead.
+        toolchain_identity = toolchain["identity"] + "\x00mix-project-compile.v3\x00" + paths["mix_env"] + "\x00" + content_sha256(_mix_workspace_path(ctx, ".")),
         identifier = ctx["label"]["id"] + ":mix-compile",
     )
     _elixir_copy_files(ctx, priv, paths["priv_dir"], _elixir_priv_destination, toolchain["identity"] + "\x00mix-project-priv.v2", ctx["label"]["id"] + ":mix-project-priv")
