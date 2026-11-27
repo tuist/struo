@@ -92,8 +92,20 @@ def _android_source_inputs(ctx, attrs, include_implicit_resources):
 def _android_java_sources(ctx):
     return _filter_by_extensions(glob(ctx["srcs"]), [".java"])
 
+def _android_kotlin_fragments(ctx):
+    attrs = ctx.get("attr") or {}
+    return _kotlin_source_set_fragments(
+        ctx["label"]["id"],
+        attrs.get("source_sets") or {},
+        attrs.get("source_set_depends_on") or {},
+        _filter_by_extensions(glob(ctx["srcs"]), [".kt"]),
+        "android",
+        [".kt"],
+    )
+
 def _android_kotlin_sources(ctx):
-    return _filter_by_extensions(glob(ctx["srcs"]), [".kt"])
+    sources, _ = _android_kotlin_fragments(ctx)
+    return sources
 
 def _android_resource_files(attrs, include_implicit_resources):
     patterns = attrs.get("resource_files")
@@ -214,8 +226,50 @@ def _android_asset_roots(ctx, attrs, asset_files):
                 break
     return _unique(out)
 
-def _android_manifest(ctx, attrs):
+def _android_manifest_source(ctx, attrs):
     return _package_relative(ctx, _android_attr(attrs, "manifest", "AndroidManifest.xml"))
+
+_ANDROID_EMPTY_MANIFEST = "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\" />\n"
+
+# The Android Gradle plugin takes the manifest package from `namespace`: a
+# module may omit the source manifest, as Kotlin Multiplatform Android
+# libraries do, or leave out its `package` attribute. aapt2 requires one, so
+# the package is written into a generated manifest when the source lacks it.
+# The offset of the `<manifest` element, skipping comments that mention it.
+def _android_manifest_element(content):
+    position = 0
+    for _ in range(len(content)):
+        start = content.find("<manifest", position)
+        comment = content.find("<!--", position)
+        if start < 0 or comment < 0 or comment > start:
+            return start
+        close = content.find("-->", comment)
+        if close < 0:
+            return -1
+        position = close + 3
+    return -1
+
+def _android_manifest(ctx, attrs, fallback_package = ""):
+    source = _android_manifest_source(ctx, attrs)
+    package = _android_namespace(attrs) or fallback_package
+    if not package:
+        return source
+    absolute = workspace_root() + "/" + source if workspace_root() else source
+    if host_file_exists(absolute):
+        content = host_file_read(absolute)
+    else:
+        content = _ANDROID_EMPTY_MANIFEST
+    start = _android_manifest_element(content)
+    if start < 0:
+        return source
+    tag = content[start:content.find(">", start)]
+    for token in tag.replace("=", " = ").split():
+        if token == "package":
+            return source
+    insert = start + len("<manifest")
+    generated = declare_output("manifest/AndroidManifest.xml")
+    write_path(generated, content[:insert] + " package=\"" + package + "\"" + content[insert:])
+    return generated
 
 def _android_namespace(attrs):
     return _android_attr(attrs, "custom_package", "") or _android_attr(attrs, "namespace", "") or _android_attr(attrs, "package", "")
@@ -639,7 +693,7 @@ def _android_compile_resources(ctx, attrs, tools, resource_files, resource_dirs)
         )
     return compiled_zips
 
-def _android_link_resources(ctx, attrs, tools, manifest, compiled_zips, dep_compiled_zips, static_lib, asset_roots, asset_files):
+def _android_link_resources(ctx, attrs, tools, manifest, compiled_zips, dep_compiled_zips, static_lib, asset_roots, asset_files, rename_package = ""):
     label_id = ctx["label"]["id"]
     resource_apk = declare_output("resources.apk")
     r_src_dir = declare_output("generated/r")
@@ -664,6 +718,8 @@ def _android_link_resources(ctx, attrs, tools, manifest, compiled_zips, dep_comp
         base_args.append("--static-lib")
     if namespace:
         base_args.extend(["--custom-package", namespace])
+    if rename_package:
+        base_args.extend(["--rename-manifest-package", rename_package])
     if not static_lib:
         version_code = _android_attr(attrs, "version_code", 1)
         version_name = _android_attr(attrs, "version_name", "1.0")
@@ -892,7 +948,8 @@ def _android_compile_kotlin(ctx, attrs, tools, kotlin_sources, classes_dir, clas
         identifier = "android_kotlin_copy_java_classes:" + ctx["label"]["id"],
         source_files = _action_source_files([classes_dir]),
     )
-    write_path(source_list, "\n".join(kotlin_sources) + "\n")
+    _, fragment_args = _android_kotlin_fragments(ctx)
+    write_path(source_list, "\n".join(fragment_args + kotlin_sources) + "\n")
     run_action(
         display_name = "Compile Kotlin classes · " + ctx["label"]["name"],
         source_files = _action_source_files(kotlin_sources),
@@ -952,15 +1009,15 @@ def _android_compile_local_test_runner(ctx, attrs, tools, runtime_jars):
     classes = declare_output("test_runner/classes")
     classes_hash = declare_output("test_runner/classes.sha256")
     framework = _android_attr(attrs, "test_framework", "reflection")
-    if framework not in ["reflection", "junit4"]:
-        fail("unsupported Android local test_framework `" + framework + "`; use `reflection` or `junit4`")
-    jars = runtime_jars if framework == "junit4" else []
+    if framework not in ["reflection", "junit4", "junit5"]:
+        fail("unsupported Android local test_framework `" + framework + "`; use `reflection`, `junit4`, or `junit5`")
+    jars = runtime_jars if framework != "reflection" else []
     argv = [tools["javac"], "-encoding", "UTF-8", "-d", classes]
     if jars:
         argv.extend(["-classpath", _android_classpath_sep().join(jars)])
     prepare_path(classes, kind = "remove", identifier = "android_local_test_runner_clean:" + ctx["label"]["id"])
     prepare_path(classes, kind = "directory", identifier = "android_local_test_runner_prepare:" + ctx["label"]["id"])
-    write_path(source, _jvm_test_runner_source(junit4 = framework == "junit4"))
+    write_path(source, _jvm_test_runner_source(junit4 = framework == "junit4", junit5 = framework == "junit5"))
     run_action(
         display_name = "Compile JVM test runner · " + ctx["label"]["name"],
         source_files = _action_source_files([source]),
@@ -977,6 +1034,12 @@ def _android_compile_local_test_runner(ctx, attrs, tools, runtime_jars):
         identifier = "android_local_test_runner_digest:" + ctx["label"]["id"],
     )
     return (classes, classes_hash)
+
+def _android_local_test_coverage_classfiles(ctx, attrs, tools, classes_dir, runtime_jars):
+    deps = ctx["deps"] + _android_dependency_role(ctx, "runtime_deps")
+    own = [tools["android_jar"]] + ([tools["kotlin_stdlib"]] if "kotlin_stdlib" in tools else [])
+    imported = _collect_transitive(deps, "transitive_imported_jars", own + _android_attr(attrs, "classpath", []) + _android_attr(attrs, "runtime_classpath", []))
+    return _unique([classes_dir] + [jar for jar in runtime_jars if jar not in imported])
 
 def _android_local_test_env(attrs, tools, test_dir):
     return _android_test_env(attrs, tools, test_dir)
@@ -1894,7 +1957,7 @@ def _android_resource_impl(ctx):
         "transitive_compiled_resource_zips": _unique(compiled_zips + dep_compiled_zips),
         "transitive_asset_roots": _unique(asset_roots + dep_asset_roots),
         "transitive_asset_files": _unique(asset_files + dep_asset_files),
-        "affected_inputs": _android_source_inputs(ctx, attrs, True) + [manifest],
+        "affected_inputs": _unique(_android_source_inputs(ctx, attrs, True) + _android_kotlin_sources(ctx) + [_android_manifest_source(ctx, attrs)]),
     }
 
 def _android_library_impl(ctx):
@@ -1937,13 +2000,14 @@ def _android_library_impl(ctx):
         "aar": aar,
         "transitive_compile_jars": _unique(local_compile_jars + dep_jars),
         "transitive_runtime_jars": _android_library_runtime_jars(attrs, ctx["deps"], local_compile_jars),
+        "transitive_imported_jars": _collect_transitive(ctx["deps"], "transitive_imported_jars", [tools["kotlin_stdlib"]] if len(kotlin_sources) > 0 else []),
         "transitive_resource_apks": _unique([resource_apk] + dep_resource_apks),
         "compiled_resource_zips": compiled_zips,
         "transitive_compiled_resource_zips": _unique(compiled_zips + dep_compiled_zips),
         "transitive_asset_roots": _unique(asset_roots + dep_asset_roots),
         "transitive_asset_files": _unique(asset_files + dep_asset_files),
         "transitive_android_native_libraries": dep_native_libraries,
-        "affected_inputs": _android_source_inputs(ctx, attrs, True) + [manifest],
+        "affected_inputs": _unique(_android_source_inputs(ctx, attrs, True) + _android_kotlin_sources(ctx) + [_android_manifest_source(ctx, attrs)]),
     }
 
 def _android_local_test_impl(ctx):
@@ -1974,7 +2038,7 @@ def _android_local_test_impl(ctx):
     results = test_dir + "/test_results.json"
     log = test_dir + "/android-local-test.log"
     native_results = test_dir + "/native_results.txt"
-    command_argv = [tools["java"]] + _android_attr(attrs, "jvm_flags", []) + [
+    command_argv = [tools["java"], "-ea"] + _android_attr(attrs, "jvm_flags", []) + [
         "-cp", _android_classpath_sep().join(runtime_classpath),
         "StruoJvmTestRunner",
         classes_dir,
@@ -1995,14 +2059,14 @@ def _android_local_test_impl(ctx):
         "target_kind": "android_local_test",
         "classes_dir": classes_dir,
         "classes_hash": classes_hash,
-        "affected_inputs": _android_source_inputs(ctx, attrs, False) + _android_workspace_inputs(extra_classpath + _android_attr(attrs, "runtime_classpath", [])),
+        "affected_inputs": _unique(_android_source_inputs(ctx, attrs, False) + _android_kotlin_sources(ctx)) + _android_workspace_inputs(extra_classpath + _android_attr(attrs, "runtime_classpath", [])),
         "test_info": _android_local_test_info(ctx, attrs, command_argv, command_env, results, log, native_results),
     }
     measured = _android_attr(attrs, "coverage_per_test", False)
     configuration = None
     if measured:
         prefix = command_argv[:command_argv.index("StruoJvmTestRunner") + 2]
-        configuration = _jvm_coverage_configuration(ctx, provider, prefix, command_env, _android_source_inputs(ctx, attrs, False), [classes_dir] + [path for path in runtime_jars if path != tools["android_jar"]], "android_local")
+        configuration = _jvm_coverage_configuration(ctx, provider, prefix, command_env, _unique(_android_source_inputs(ctx, attrs, False) + _android_kotlin_sources(ctx)), _android_local_test_coverage_classfiles(ctx, attrs, tools, classes_dir, runtime_jars), "android_local")
         provider["test_info"]["execution"]["cacheable"] = False
     discovery = ctx["capability"] == "test-discovery"
     provider["test_inventory"] = test_dir + "/inventory.json"
@@ -2108,7 +2172,7 @@ def _android_binary_impl(ctx):
     java_sources = _android_java_sources(ctx)
     kotlin_sources = _android_kotlin_sources(ctx)
     tools = _android_tools(ctx, attrs, True, True, len(kotlin_sources) > 0)
-    manifest = _android_manifest(ctx, attrs)
+    manifest = _android_manifest(ctx, attrs, _android_attr(attrs, "application_id", ""))
     dep_compiled_zips = _android_compiled_resource_zips(ctx["deps"])
     resource_files = _android_resource_files(attrs, True)
     asset_files = _android_asset_files(attrs)
@@ -2124,7 +2188,7 @@ def _android_binary_impl(ctx):
     dep_asset_files = _android_asset_files_from_deps(ctx["deps"])
     native_libraries = _android_native_libraries(ctx, ctx["deps"])
     compiled_zips = _android_compile_resources(ctx, attrs, tools, resource_files, resource_dirs)
-    resource_apk, r_src_dir, r_src_hash, _ = _android_link_resources(ctx, attrs, tools, manifest, compiled_zips, dep_compiled_zips, False, _unique(asset_roots + dep_asset_roots), _unique(asset_files + dep_asset_files))
+    resource_apk, r_src_dir, r_src_hash, _ = _android_link_resources(ctx, attrs, tools, manifest, compiled_zips, dep_compiled_zips, False, _unique(asset_roots + dep_asset_roots), _unique(asset_files + dep_asset_files), rename_package = _android_attr(attrs, "application_id", "") if manifest != _android_manifest_source(ctx, attrs) else "")
     classes_dir, classes_hash = _android_compile_java(ctx, attrs, tools, java_sources, r_src_dir, r_src_hash, dep_jars)
     classes_dir, classes_hash = _android_compile_kotlin(ctx, attrs, tools, kotlin_sources, classes_dir, classes_hash, dep_jars)
     classes_jar = _android_jar_classes(ctx, tools, classes_dir, classes_hash)
@@ -2148,7 +2212,7 @@ def _android_binary_impl(ctx):
         "instrumentation_target": _android_attr(attrs, "instruments", ""),
         "instrumentation_target_id": _android_target_id(ctx, _android_attr(attrs, "instruments", "")),
         "android_native_libraries": native_libraries,
-        "affected_inputs": _android_source_inputs(ctx, attrs, True) + [manifest],
+        "affected_inputs": _unique(_android_source_inputs(ctx, attrs, True) + _android_kotlin_sources(ctx) + [_android_manifest_source(ctx, attrs)]),
     }
     if ctx["capability"] == "artifact":
         metadata = declare_output("artifact/metadata.json")
@@ -2241,7 +2305,7 @@ def _android_artifact_icon(spec, badging):
     copy_path(extracted, spec["icon"], inputs = [extracted], identifier = "android_artifact_icon:" + spec["icon"])
 
 _ANDROID_RESOURCE_ATTRS = [
-    attr("manifest", "string", default = "AndroidManifest.xml", docs = "Package-relative AndroidManifest.xml path.", configurable = False),
+    attr("manifest", "string", default = "AndroidManifest.xml", docs = "Package-relative AndroidManifest.xml path. When it is missing or has no `package` attribute, the package comes from `namespace` (or `application_id` on binaries), as in the Android Gradle plugin.", configurable = False),
     attr("resource_files", "list<string>", default = "[]", docs = "Android resource file glob patterns. Defaults to files under res when omitted."),
     attr("resource_dirs", "list<string>", default = "[\"res\"]", docs = "Package-relative resource roots passed to aapt2.", configurable = False),
     attr("assets", "list<string>", default = "[]", docs = "Android asset file glob patterns."),
@@ -2260,6 +2324,8 @@ _ANDROID_JAVA_ATTRS = [
     attr("javac_opts", "list<string>", default = "[]", docs = "Additional javac flags appended after Struo-managed flags.", configurable = False),
     attr("javacopts", "list<string>", default = "[]", docs = "Bazel-compatible alias for additional javac flags.", configurable = False),
     attr("kotlinc_opts", "list<string>", default = "[]", docs = "Additional kotlinc flags appended after Struo-managed flags.", configurable = False),
+    attr("source_sets", "map<string, list<string>>", default = "{}", docs = "Kotlin Multiplatform source set name, such as `commonMain`, to package-relative Kotlin source patterns compiled as its own fragment so `expect` and `actual` declarations match. Kotlin sources in `srcs` outside every source set form the Android fragment, which refines every declared source set.", configurable = False),
+    attr("source_set_depends_on", "map<string, list<string>>", default = "{}", docs = "Source set name to the source sets it depends on, mirroring `dependsOn` between intermediate source sets.", configurable = False),
     attr("javac", "string", docs = "Override javac path.", configurable = False),
     attr("jar", "string", docs = "Override jar path.", configurable = False),
     attr("java", "string", docs = "Override java runtime path used by Android SDK tools.", configurable = False),
@@ -2277,7 +2343,7 @@ _ANDROID_APK_ATTRS = [
 ]
 
 _ANDROID_LOCAL_TEST_ATTRS = _JVM_COVERAGE_ATTRS + [
-    attr("test_framework", "string", default = "\"reflection\"", docs = "`reflection` for convention-based tests or `junit4` for native JUnit lifecycle and runners such as Robolectric. Declare the framework and its runtime inputs explicitly.", configurable = False),
+    attr("test_framework", "string", default = "\"reflection\"", docs = "`reflection` for convention-based tests, `junit4` for native JUnit lifecycle and runners such as Robolectric, or `junit5` to run every JUnit Platform engine on the classpath, such as Jupiter, as Gradle's `useJUnitPlatform()` does. Declare the framework, for `junit5` the JUnit Platform launcher, and their runtime inputs explicitly.", configurable = False),
     attr("compile_sdk", "int", docs = "Android Software Development Kit platform level used for android.jar. Defaults to the highest installed platform.", configurable = False),
     attr("build_tools_version", "string", docs = "Android Software Development Kit build-tools version. Defaults to the highest installed version.", configurable = False),
     attr("android_sdk", "string", docs = "Android Software Development Kit root. Defaults to ANDROID_HOME or ANDROID_SDK_ROOT.", configurable = False),
@@ -2286,6 +2352,8 @@ _ANDROID_LOCAL_TEST_ATTRS = _JVM_COVERAGE_ATTRS + [
     attr("javac_opts", "list<string>", default = "[]", docs = "Additional javac flags appended after Struo-managed flags.", configurable = False),
     attr("javacopts", "list<string>", default = "[]", docs = "Bazel-compatible alias for additional javac flags.", configurable = False),
     attr("kotlinc_opts", "list<string>", default = "[]", docs = "Additional kotlinc flags appended after Struo-managed flags.", configurable = False),
+    attr("source_sets", "map<string, list<string>>", default = "{}", docs = "Kotlin Multiplatform test source set name, such as `commonTest`, to package-relative Kotlin source patterns compiled as its own fragment. Kotlin sources in `srcs` outside every source set form the Android fragment, which refines every declared source set.", configurable = False),
+    attr("source_set_depends_on", "map<string, list<string>>", default = "{}", docs = "Source set name to the source sets it depends on, mirroring `dependsOn` between intermediate source sets.", configurable = False),
     attr("javac", "string", docs = "Override javac path.", configurable = False),
     attr("java", "string", docs = "Override java runtime path used by Android SDK tools.", configurable = False),
     attr("java_home", "string", docs = "Override JAVA_HOME passed to Android SDK tools.", configurable = False),
@@ -2301,7 +2369,7 @@ _ANDROID_LOCAL_TEST_ATTRS = _JVM_COVERAGE_ATTRS + [
     attr("custom_package", "string", docs = "Reserved for generated Android package overrides on local tests.", configurable = False, implemented = False),
     attr("densities", "list<string>", default = "[]", docs = "Reserved for density filtering.", configurable = False, implemented = False),
     attr("enable_data_binding", "bool", default = "false", docs = "Reserved for Android data binding support.", configurable = False, implemented = False),
-    attr("jvm_flags", "list<string>", default = "[]", docs = "Additional flags passed to the host Java virtual machine before the test classpath.", configurable = False),
+    attr("jvm_flags", "list<string>", default = "[]", docs = "Additional flags passed to the host Java virtual machine before the test classpath. Tests run with `-ea`, as the Android Gradle plugin's unit test tasks enable assertions by default; pass `-da` to disable them.", configurable = False),
     attr("manifest", "string", docs = "Reserved for AndroidManifest.xml handling on local tests.", configurable = False, implemented = False),
     attr("manifest_values", "map<string,string>", default = "{}", docs = "Reserved for manifest placeholder expansion.", configurable = False, implemented = False),
     attr("nocompress_extensions", "list<string>", default = "[]", docs = "Reserved for no-compress packaging options.", configurable = False, implemented = False),

@@ -1,4 +1,4 @@
-def _jvm_test_runner_source(junit4 = False):
+def _jvm_test_runner_source(junit4 = False, junit5 = False):
     source = """import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.annotation.Annotation;
@@ -63,7 +63,10 @@ public final class StruoJvmTestRunner {
     if (inventory != null) {
       java.util.Set<String> units = new java.util.TreeSet<>();
       for (TestCase testCase : cases) {
-        if ("failed".equals(testCase.status) || !units.add(testCase.id)) System.exit(2);
+        if ("failed".equals(testCase.status) || !units.add(testCase.id)) {
+          System.err.println("ambiguous or unresolved test unit: " + testCase.id);
+          System.exit(2);
+        }
       }
       StringBuilder encoded = new StringBuilder();
       for (String unit : units) {
@@ -382,7 +385,318 @@ public final class StruoJvmTestRunner {
     if junit4:
         source = source.replace("runTests(classes, target, filters, logText)", "runJUnit4(classes, target, filters, logText)")
         source = source.replace("  private static boolean matchesFilter(", _jvm_junit4_methods() + "  private static boolean matchesFilter(")
+    if junit5:
+        source = source.replace("import java.util.stream.Stream;\n", "import java.util.stream.Stream;\n" + _JVM_JUNIT_PLATFORM_IMPORTS)
+        source = source.replace("runTests(classes, target, filters, logText)", "runJUnitPlatform(classes, target, filters, logText)")
+        source = source.replace("  private static boolean matchesFilter(", _jvm_junit_platform_methods() + "  private static boolean matchesFilter(")
     return source
+
+_JVM_JUNIT_PLATFORM_IMPORTS = """import org.junit.platform.engine.TestExecutionResult;
+import org.junit.platform.engine.UniqueId;
+import org.junit.platform.engine.support.descriptor.ClassSource;
+import org.junit.platform.engine.support.descriptor.MethodSource;
+import org.junit.platform.launcher.TestIdentifier;
+import org.junit.platform.launcher.TestPlan;
+"""
+
+def _jvm_junit_platform_methods():
+    return """  private static List<TestCase> runJUnitPlatform(Path classes, String target, List<String> filters, StringBuilder logText) throws Exception {
+    List<TestCase> cases = new ArrayList<>();
+    String exact = System.getenv("STRUO_TEST_UNIT");
+    org.junit.platform.launcher.Launcher launcher = org.junit.platform.launcher.core.LauncherFactory.create();
+    TestPlan plan = launcher.discover(org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder.request()
+        .selectors(org.junit.platform.engine.discovery.DiscoverySelectors.selectClasspathRoots(Collections.singleton(classes.toAbsolutePath())))
+        .build());
+    java.util.Set<String> overloaded = platformOverloads(plan);
+    List<UniqueId> selected = filters.isEmpty() ? null : platformFilterSelection(plan, filters, overloaded);
+    if (selected != null && selected.isEmpty()) return cases;
+    String[] exactUnit = null;
+    String exactRoot = null;
+    if (exact != null) {
+      TestPlan scope = selected == null ? plan : launcher.discover(platformRequest(selected));
+      UniqueId root = null;
+      for (TestIdentifier id : platformIdentifiers(scope)) {
+        if (!isPlatformUnit(scope, id)) continue;
+        String[] name = platformUnit(scope, id, overloaded);
+        if (exact.equals(target + "::" + name[0] + "." + name[1])) {
+          root = UniqueId.parse(id.getUniqueId());
+          exactUnit = name;
+          break;
+        }
+      }
+      if (root == null) return cases;
+      List<UniqueId> narrowed = new ArrayList<>();
+      for (UniqueId selector : selected == null ? Collections.singletonList(root) : selected) {
+        UniqueId kept = selector.hasPrefix(root) ? selector : root.hasPrefix(selector) ? root : null;
+        if (kept != null && !narrowed.contains(kept)) narrowed.add(kept);
+      }
+      selected = narrowed;
+      exactRoot = root.toString();
+    }
+    if (selected != null) plan = launcher.discover(platformRequest(selected));
+    java.util.Map<String, TestCase> byId = new java.util.TreeMap<>();
+    if (System.getenv("STRUO_TEST_INVENTORY") != null) {
+      for (TestIdentifier id : platformIdentifiers(plan)) {
+        if (!isPlatformUnit(plan, id)) continue;
+        String[] name = platformUnit(plan, id, overloaded);
+        TestCase unit = new TestCase(target + "::" + name[0] + "." + name[1], name[1], name[0]);
+        if (byId.put(unit.id, unit) != null) unit.status = "failed";
+      }
+      for (TestIdentifier id : platformIdentifiers(plan)) {
+        if (!id.isContainer() || isPlatformUnit(plan, id) || !plan.getParent(id).isPresent() || !plan.getChildren(id).isEmpty()) continue;
+        Object source = id.getSource().orElse(null);
+        String suite = source instanceof ClassSource ? ((ClassSource) source).getClassName() : id.getLegacyReportingName();
+        TestCase unresolved = new TestCase(target + "::" + suite, suite, suite);
+        unresolved.status = "failed";
+        byId.put(unresolved.id + "\\u0000" + id.getUniqueId(), unresolved);
+      }
+      cases.addAll(byId.values());
+      return cases;
+    }
+    java.util.Set<String> reported = new java.util.HashSet<>();
+    java.util.Map<String, Long> started = new java.util.HashMap<>();
+    String[] rootOutcome = new String[1];
+    String rootId = exactRoot;
+    launcher.execute(plan, new org.junit.platform.launcher.TestExecutionListener() {
+      TestPlan current;
+
+      @Override public synchronized void testPlanExecutionStarted(TestPlan testPlan) {
+        current = testPlan;
+      }
+
+      private void record(TestIdentifier id, String suite, String name, String status, String failure) {
+        reported.add(id.getUniqueId());
+        TestCase result = byId.computeIfAbsent(target + "::" + suite + "." + name, key -> new TestCase(key, name, suite));
+        if (!"failed".equals(result.status) && !("passed".equals(result.status) && "skipped".equals(status))) result.status = status;
+        result.failure += failure;
+        Long start = started.remove(id.getUniqueId());
+        if (start != null) result.durationMs = Math.max(result.durationMs, 0) + (System.nanoTime() - start) / 1_000_000L;
+      }
+
+      private void record(TestIdentifier id, String status, String failure) {
+        String[] name = platformCase(current, id, overloaded);
+        record(id, name[0], name[1], status, failure);
+      }
+
+      private void skipUnreported(TestIdentifier id) {
+        if (reported.contains(id.getUniqueId())) return;
+        java.util.Set<TestIdentifier> children = current.getChildren(id);
+        if (id.isTest() || (isPlatformUnit(current, id) && children.isEmpty())) {
+          record(id, "skipped", "");
+          return;
+        }
+        for (TestIdentifier child : children) skipUnreported(child);
+      }
+
+      @Override public synchronized void executionStarted(TestIdentifier id) {
+        if (id.isTest()) started.put(id.getUniqueId(), System.nanoTime());
+      }
+
+      @Override public synchronized void executionSkipped(TestIdentifier id, String reason) {
+        skipUnreported(id);
+      }
+
+      @Override public synchronized void executionFinished(TestIdentifier id, TestExecutionResult result) {
+        TestExecutionResult.Status outcome = result.getStatus();
+        if (id.getUniqueId().equals(rootId)) rootOutcome[0] = outcome.name();
+        String failure = result.getThrowable().map(StruoJvmTestRunner::stackTrace).orElse("");
+        if (id.isTest()) {
+          String status = outcome == TestExecutionResult.Status.SUCCESSFUL ? "passed"
+              : outcome == TestExecutionResult.Status.ABORTED ? "skipped" : "failed";
+          record(id, status, outcome == TestExecutionResult.Status.FAILED ? failure : "");
+          return;
+        }
+        if (outcome == TestExecutionResult.Status.ABORTED) {
+          skipUnreported(id);
+        } else if (outcome == TestExecutionResult.Status.FAILED) {
+          if (isPlatformUnit(current, id)) {
+            record(id, "failed", failure);
+          } else {
+            Object source = id.getSource().orElse(null);
+            String suite = source instanceof ClassSource ? ((ClassSource) source).getClassName() : id.getLegacyReportingName();
+            record(id, suite, "classMethod", "failed", failure);
+          }
+        }
+      }
+    });
+    if (exactUnit != null) {
+      if (byId.isEmpty() && rootOutcome[0] == null) return cases;
+      TestCase unit = new TestCase(exact, exactUnit[1], exactUnit[0]);
+      unit.status = byId.isEmpty() ? ("SUCCESSFUL".equals(rootOutcome[0]) ? "passed" : "failed") : "skipped";
+      for (TestCase result : byId.values()) {
+        boolean classLevel = "classMethod".equals(result.name) && byId.size() > 1;
+        if (!classLevel && ("failed".equals(result.status) || ("passed".equals(result.status) && !"failed".equals(unit.status)))) unit.status = result.status;
+        unit.failure += result.failure;
+        if (result.durationMs >= 0) unit.durationMs = Math.max(unit.durationMs, 0) + result.durationMs;
+      }
+      cases.add(unit);
+    } else {
+      cases.addAll(byId.values());
+    }
+    for (TestCase result : cases) {
+      logText.append(result.status).append(" ").append(result.suite).append(".").append(result.name).append(System.lineSeparator());
+      if (!result.failure.isEmpty()) logText.append(result.failure);
+    }
+    return cases;
+  }
+
+  private static org.junit.platform.launcher.LauncherDiscoveryRequest platformRequest(List<UniqueId> ids) {
+    List<org.junit.platform.engine.DiscoverySelector> selectors = new ArrayList<>();
+    for (UniqueId id : ids) selectors.add(org.junit.platform.engine.discovery.DiscoverySelectors.selectUniqueId(id));
+    return org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder.request().selectors(selectors).build();
+  }
+
+  private static List<UniqueId> platformFilterSelection(TestPlan plan, List<String> filters, java.util.Set<String> overloaded) {
+    List<UniqueId> selected = new ArrayList<>();
+    for (TestIdentifier id : platformIdentifiers(plan)) {
+      Object source = id.getSource().orElse(null);
+      boolean unit = isPlatformUnit(plan, id);
+      String[] name = unit ? platformUnit(plan, id, overloaded) : null;
+      for (String filter : filters) {
+        int separator = filter.indexOf('#');
+        String filterClass = separator < 0 ? filter : filter.substring(0, separator);
+        String filterMethod = separator < 0 ? "" : filter.substring(separator + 1);
+        List<UniqueId> matches = new ArrayList<>();
+        if (filterMethod.isEmpty()) {
+          if (source instanceof ClassSource) {
+            String className = ((ClassSource) source).getClassName();
+            if (className.equals(filterClass) || className.startsWith(filterClass + "$")) matches.add(UniqueId.parse(id.getUniqueId()));
+          } else if (unit && name[0].equals(filterClass)) {
+            matches.add(UniqueId.parse(id.getUniqueId()));
+          }
+        } else if (unit && (filterClass.isEmpty() || filterClass.equals(name[0]))) {
+          matches = platformMethodMatches(id, name[1], filterMethod);
+        }
+        for (UniqueId match : matches) if (!selected.contains(match)) selected.add(match);
+      }
+    }
+    return selected;
+  }
+
+  private static List<UniqueId> platformMethodMatches(TestIdentifier id, String unitName, String filterMethod) {
+    List<UniqueId> out = new ArrayList<>();
+    UniqueId uniqueId = UniqueId.parse(id.getUniqueId());
+    String method = isPlatformMethod(id) ? ((MethodSource) id.getSource().get()).getMethodName() : unitName;
+    if (filterMethod.equals(unitName) || filterMethod.equals(method)) {
+      out.add(uniqueId);
+      return out;
+    }
+    int bracket = filterMethod.indexOf('[');
+    if (bracket <= 0 || !isPlatformMethod(id) || unitName.contains("[")) return out;
+    String base = filterMethod.substring(0, bracket);
+    if (!base.equals(unitName) && !base.equals(method)) return out;
+    String type = uniqueId.getLastSegment().getType();
+    if (!"test-template".equals(type) && !"test-factory".equals(type)) return out;
+    List<String> indexes = new ArrayList<>();
+    for (int at = bracket; at < filterMethod.length();) {
+      int close = filterMethod.indexOf(']', at);
+      if (filterMethod.charAt(at) != '[' || close < 0) return out;
+      indexes.add(filterMethod.substring(at + 1, close));
+      at = close + 1;
+    }
+    if ("test-template".equals(type) && indexes.size() != 1) return out;
+    for (int i = 0; i < indexes.size(); i++) {
+      String segment = "test-template".equals(type) ? "test-template-invocation"
+          : i + 1 < indexes.size() ? "dynamic-container" : "dynamic-test";
+      if (i + 1 == indexes.size() && "test-factory".equals(type)) out.add(uniqueId.append("dynamic-container", "#" + indexes.get(i)));
+      uniqueId = uniqueId.append(segment, "#" + indexes.get(i));
+    }
+    out.add(uniqueId);
+    return out;
+  }
+
+  private static List<TestIdentifier> platformIdentifiers(TestPlan plan) {
+    List<TestIdentifier> out = new ArrayList<>();
+    List<TestIdentifier> pending = new ArrayList<>(plan.getRoots());
+    while (!pending.isEmpty()) {
+      TestIdentifier id = pending.remove(pending.size() - 1);
+      out.add(id);
+      pending.addAll(plan.getChildren(id));
+    }
+    return out;
+  }
+
+  private static boolean isPlatformMethod(TestIdentifier id) {
+    return id.getSource().filter(source -> source instanceof MethodSource).isPresent();
+  }
+
+  private static boolean isPlatformUnit(TestPlan plan, TestIdentifier id) {
+    if (isPlatformMethod(id)) return !plan.getParent(id).filter(StruoJvmTestRunner::isPlatformMethod).isPresent();
+    if (!id.isTest()) return false;
+    for (TestIdentifier at = plan.getParent(id).orElse(null); at != null; at = plan.getParent(at).orElse(null)) {
+      if (isPlatformMethod(at)) return false;
+    }
+    return true;
+  }
+
+  private static String platformBaseName(TestIdentifier id) {
+    String method = ((MethodSource) id.getSource().get()).getMethodName();
+    String legacy = id.getLegacyReportingName();
+    return legacy.startsWith(method + "[") ? legacy : method;
+  }
+
+  private static java.util.Set<String> platformOverloads(TestPlan plan) {
+    java.util.Map<String, java.util.Set<String>> parameters = new java.util.HashMap<>();
+    for (TestIdentifier id : platformIdentifiers(plan)) {
+      if (!isPlatformMethod(id) || !isPlatformUnit(plan, id)) continue;
+      MethodSource source = (MethodSource) id.getSource().get();
+      parameters.computeIfAbsent(source.getClassName() + "#" + platformBaseName(id), key -> new java.util.HashSet<>())
+          .add(source.getMethodParameterTypes());
+    }
+    java.util.Set<String> out = new java.util.HashSet<>();
+    for (java.util.Map.Entry<String, java.util.Set<String>> entry : parameters.entrySet()) {
+      if (entry.getValue().size() > 1) out.add(entry.getKey());
+    }
+    return out;
+  }
+
+  private static String[] platformUnit(TestPlan plan, TestIdentifier id, java.util.Set<String> overloaded) {
+    if (isPlatformMethod(id)) {
+      MethodSource source = (MethodSource) id.getSource().get();
+      String name = platformBaseName(id);
+      if (overloaded.contains(source.getClassName() + "#" + name)) name += "(" + source.getMethodParameterTypes() + ")";
+      return new String[] {source.getClassName(), name};
+    }
+    List<TestIdentifier> chain = new ArrayList<>();
+    for (TestIdentifier at = id; at != null; at = plan.getParent(at).orElse(null)) chain.add(at);
+    if (chain.size() > 1) chain.remove(chain.size() - 1);
+    int top = -1;
+    for (int i = 0; i < chain.size(); i++) {
+      if (chain.get(i).getSource().filter(source -> source instanceof ClassSource).isPresent()) top = i;
+    }
+    String suite;
+    if (top >= 0) {
+      suite = ((ClassSource) chain.get(top).getSource().get()).getClassName();
+    } else {
+      top = chain.size() - 1;
+      suite = chain.get(top).getLegacyReportingName();
+    }
+    StringBuilder name = new StringBuilder();
+    for (int i = top - 1; i >= 0; i--) {
+      if (name.length() > 0) name.append('/');
+      name.append(chain.get(i).getLegacyReportingName());
+    }
+    return new String[] {suite, name.length() == 0 ? id.getLegacyReportingName() : name.toString()};
+  }
+
+  private static String[] platformCase(TestPlan plan, TestIdentifier id, java.util.Set<String> overloaded) {
+    TestIdentifier root = null;
+    for (TestIdentifier at = id; at != null; at = plan.getParent(at).orElse(null)) {
+      if (isPlatformMethod(at)) root = at;
+    }
+    if (root == null) return platformUnit(plan, id, overloaded);
+    String[] unit = platformUnit(plan, root, overloaded);
+    StringBuilder name = new StringBuilder(unit[1]);
+    List<UniqueId.Segment> rootSegments = UniqueId.parse(root.getUniqueId()).getSegments();
+    List<UniqueId.Segment> segments = UniqueId.parse(id.getUniqueId()).getSegments();
+    for (int i = rootSegments.size(); i < segments.size(); i++) {
+      String value = segments.get(i).getValue();
+      name.append('[').append(value.startsWith("#") ? value.substring(1) : value).append(']');
+    }
+    return new String[] {unit[0], name.toString()};
+  }
+
+"""
 
 def _jvm_junit4_methods():
     return """  private static List<TestCase> runJUnit4(Path classes, String target, List<String> filters, StringBuilder logText) throws Exception {

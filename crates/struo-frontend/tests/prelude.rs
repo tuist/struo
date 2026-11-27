@@ -9849,8 +9849,10 @@ fn assert_android_local_test_actions(store: &AnalysisStore, out: &str) {
         assert!(runner_compile.inputs.iter().any(|input| input == jar));
     }
     let run = action_by_identifier(store, "android_local_test:apps/hello/GreetingTests");
-    assert_eq!(run.argv[0], "/jdk/bin/java");
-    assert_eq!(run.argv[1], "-Duser.language=en");
+    assert_eq!(
+        run.argv[..3],
+        ["/jdk/bin/java", "-ea", "-Duser.language=en"]
+    );
     assert_eq!(
         run.env.get("ANDROID_HOST_FLAG").map(String::as_str),
         Some("host-value")

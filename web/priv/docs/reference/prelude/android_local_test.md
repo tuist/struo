@@ -38,6 +38,13 @@ Android resource tests also need the linked test resource package, its matching
 runtime R classes, and the runner configuration as declared inputs. A static
 library's unassigned resource IDs are not a substitute for linked runtime IDs.
 
+Set `test_framework = "junit5"` to run tests on the JUnit Platform, as
+Gradle's `useJUnitPlatform()` does. Declare the engines, such as Jupiter, the
+JUnit Platform launcher, and their dependencies through `classpath` or
+dependency providers. Cases, filters and per-test coverage units are named as
+described for
+[`kotlin_jvm_test`](/reference/prelude/kotlin_jvm_test#description).
+
 ## Coverage-assisted Selection
 
 Host-side tests support the same isolated JaCoCo collector as
@@ -51,11 +58,15 @@ observations cannot establish complete checkpoints. Coverage measurements
 bypass execution caching. This host collector does not collect device
 instrumentation coverage.
 
+Coverage measures classes compiled by targets in the graph. Classes from
+`java_import`, `classpath` and `runtime_classpath` jars are not measured, so
+each `coverage_sources` file must be compiled by a target.
+
 ## Attributes
 
 | Attribute | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `test_framework` | string | no | `reflection` | `reflection` for convention-based methods or `junit4` for native lifecycle and runner dispatch |
+| `test_framework` | string | no | `reflection` | `reflection` for convention-based methods, `junit4` for native lifecycle and runner dispatch, or `junit5` for the JUnit Platform |
 | `coverage_per_test` | bool | no | `false` | Measure each exact host execution unit with JaCoCo |
 | `coverage_sources` | list&lt;string&gt; | no | `[]` | Product Java or Kotlin source globs required in the class-file universe |
 | `jacoco_agent` | string | no | empty | Package-relative JaCoCo runtime agent JAR |
@@ -67,10 +78,12 @@ instrumentation coverage.
 | `javac_opts` | list&lt;string&gt; | no | `[]` | Additional `javac` flags |
 | `javacopts` | list&lt;string&gt; | no | `[]` | Bazel-compatible alias for additional `javac` flags |
 | `kotlinc_opts` | list&lt;string&gt; | no | `[]` | Additional `kotlinc` flags |
+| `source_sets` | map&lt;string, list&lt;string&gt;&gt; | no | `{}` | Kotlin Multiplatform test source set name, such as `commonTest`, to Kotlin source patterns, each compiled as its own fragment |
+| `source_set_depends_on` | map&lt;string, list&lt;string&gt;&gt; | no | `{}` | Source set name to the source sets it depends on |
 | `classpath` | list&lt;string&gt; | no | `[]` | Additional Java archive files used while compiling and running tests |
 | `runtime_classpath` | list&lt;string&gt; | no | `[]` | Additional Java archive files used only while running tests |
 | `args` | list&lt;string&gt; | no | `[]` | Additional fully qualified class or `Class#method` filters passed to the local test runner |
-| `jvm_flags` | list&lt;string&gt; | no | `[]` | Additional flags passed to the host Java virtual machine before the test classpath |
+| `jvm_flags` | list&lt;string&gt; | no | `[]` | Additional flags passed to the host Java virtual machine before the test classpath. Tests run with `-ea`, as in Gradle; pass `-da` to disable assertions |
 | `test_class` | string | no | empty | Optional fully qualified test class or `Class#method` filter |
 | `env` | map&lt;string,string&gt; | no | `{}` | Bazel-compatible environment variables passed to the local test runner before `test_env` overrides |
 | `env_inherit` | list&lt;string&gt; | no | `[]` | Host environment variable names inherited by the local test runner before explicit test environment values |

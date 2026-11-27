@@ -104,6 +104,30 @@ jvm_target = "1.8"
 javac_opts = ["-Xlint:none"]
 ```
 
+### Compile multiplatform source sets
+
+A Kotlin Multiplatform module keeps shared code in source sets such as
+`commonMain`, with `expect` declarations that the JVM source set implements
+with `actual` ones. Declare the shared source sets in `source_sets` and keep
+the JVM sources in `srcs`:
+
+```toml
+[[target]]
+name = "Result"
+kind = "kotlin_jvm_library"
+srcs = ["src/jvmMain/kotlin/**/*.kt"]
+
+[target.attrs]
+source_sets = { commonMain = ["src/commonMain/kotlin/**/*.kt"], nonJsMain = ["src/nonJsMain/kotlin/**/*.kt"] }
+source_set_depends_on = { nonJsMain = ["commonMain"] }
+```
+
+Each source set compiles as its own fragment, and the JVM sources refine
+every declared source set, so `expect` and `actual` declarations match the
+way the Kotlin Gradle plugin compiles a JVM target. `source_set_depends_on`
+mirrors `dependsOn` between intermediate source sets. Tests declare
+`commonTest` the same way on a `kotlin_jvm_test`.
+
 ## Manage dependencies
 
 ### Import prebuilt Java archives

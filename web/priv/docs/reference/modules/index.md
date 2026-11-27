@@ -2070,6 +2070,10 @@ methods surface as native initialization failures. A class-level `@Ignore`
 expands to one skipped case per test method or parameterized case. Existing convention-based
 test behavior is unchanged. Prepare custom-runner SDK and configuration inputs
 explicitly; undeclared runtime downloads are not covered by the action cache.
+Both test kinds also accept `junit5`, which runs every JUnit Platform
+engine on the runtime classpath through the Platform launcher, which must be
+declared there. Parameterized and dynamic invocations report as
+`Class.method[n]`, and class-level failures as `Class.classMethod`.
 
 Nx output declarations describe potential paths or patterns, not required
 products. Runnable tasks cache a declared snapshot and manifest of existing

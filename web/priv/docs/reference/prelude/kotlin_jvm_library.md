@@ -18,6 +18,15 @@ sets `--release`, `-source`, or `-target`.
 Dependency roles distinguish normal, friend, exported, compile-only, and
 runtime-only classpaths.
 
+Kotlin Multiplatform modules declare their shared source sets in
+`source_sets`, such as `commonMain`, and keep the JVM source set in `srcs`.
+Each source set compiles as its own fragment, so an `expect` declaration in
+`commonMain` matches its `actual` in the JVM sources, as it does when the
+Kotlin Gradle plugin compiles a JVM target. Sources in `srcs` outside every
+source set form the JVM fragment, which refines every declared source set.
+Intermediate source sets name their parents in `source_set_depends_on`.
+Each Kotlin file belongs to one source set.
+
 ## Attributes
 
 | Attribute | Type | Required | Default | Description |
@@ -30,6 +39,8 @@ runtime-only classpaths.
 | `language_version` | string | no | compiler default | Kotlin language version |
 | `api_version` | string | no | compiler default | Kotlin application programming interface version |
 | `kotlinc_opts` | list&lt;string&gt; | no | `[]` | Additional Kotlin compiler arguments |
+| `source_sets` | map&lt;string, list&lt;string&gt;&gt; | no | `{}` | Kotlin Multiplatform source set name to source patterns, each compiled as its own fragment |
+| `source_set_depends_on` | map&lt;string, list&lt;string&gt;&gt; | no | `{}` | Source set name to the source sets it depends on |
 | `compiler_plugin_jars` | list&lt;string&gt; | no | `[]` | Package-relative Kotlin compiler plug-in Java archives |
 | `compiler_plugin_options` | list&lt;string&gt; | no | `[]` | Kotlin compiler plug-in options passed through `-P` |
 | `data` | list&lt;string&gt; | no | `[]` | Runtime data patterns propagated to binaries |

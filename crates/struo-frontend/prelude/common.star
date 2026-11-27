@@ -269,6 +269,66 @@ def _parent_dir(path):
         return ""
     return path[:idx]
 
+# Kotlin Multiplatform source sets compiled as kotlinc fragments, the way the
+# Kotlin Gradle plugin compiles one platform target. `source_sets` maps a name
+# such as `commonMain` to source patterns and `depends_on` mirrors `dependsOn`
+# between them. Files in `platform_files` outside every source set form the
+# `platform` fragment, which refines every declared source set. Returns the
+# sources to compile and the kotlinc flags. Each file gets its own
+# -Xfragment-sources flag, which kotlinc merges, so a large module never
+# exceeds the per-argument length limit.
+def _kotlin_source_set_fragments(label_id, source_sets, depends_on, platform_files, platform, extensions):
+    if not source_sets and not depends_on:
+        return (platform_files, [])
+    names = sorted(source_sets.keys())
+    for name in names:
+        if name == platform or ":" in name or "," in name or not name:
+            fail(label_id + ": source set name `" + name + "` is reserved or contains `:` or `,`; rename it, for example `commonMain`")
+    for name, parents in depends_on.items():
+        for candidate in [name] + parents:
+            if candidate not in source_sets:
+                fail(label_id + ": source_set_depends_on names `" + candidate + "`, which is not a key of source_sets; declared source sets: " + ", ".join(names))
+    for name in names:
+        reached = {}
+        pending = list(depends_on.get(name) or [])
+        for _ in range(len(names) * len(names) + 1):
+            if not pending:
+                break
+            parent = pending.pop()
+            if parent == name:
+                fail(label_id + ": source_set_depends_on has a cycle through `" + name + "`; a source set cannot depend on itself")
+            if parent not in reached:
+                reached[parent] = True
+                pending.extend(depends_on.get(parent) or [])
+    owner = {}
+    fragments = []
+    for name in names:
+        files = _filter_by_extensions(glob(source_sets[name]), extensions)
+        for path in files:
+            if path in owner:
+                fail(label_id + ": `" + path + "` matches source sets `" + owner[path] + "` and `" + name + "`; each file belongs to one source set")
+            owner[path] = name
+        fragments.append((name, files))
+    fragments.append((platform, [path for path in platform_files if path not in owner]))
+    refines = []
+    for name in names:
+        for parent in sorted(depends_on.get(name) or []):
+            refines.append(name + ":" + parent)
+        refines.append(platform + ":" + name)
+    sources = []
+    args = [
+        "-Xmulti-platform",
+        "-Xfragments=" + ",".join([name for name, _ in fragments]),
+        "-Xfragment-refines=" + ",".join(refines),
+    ]
+    for name, files in fragments:
+        sources.extend(files)
+        for path in files:
+            if "," in path:
+                fail(label_id + ": Kotlin source set file `" + path + "` contains `,`, which kotlinc cannot pass in -Xfragment-sources; rename the file")
+            args.append("-Xfragment-sources=" + name + ":" + path)
+    return (sources, args)
+
 def _unique(values):
     seen = {}
     out = []

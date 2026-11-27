@@ -184,8 +184,17 @@ def _kotlin_jvm_attr(ctx, key, default):
 def _kotlin_jvm_dependency_role(ctx, name):
     return (ctx.get("deps_by_role") or {}).get(name) or []
 
+# The Kotlin sources and the kotlinc flags that compile each source set as its
+# own fragment.
 def _kotlin_jvm_sources(ctx):
-    return _filter_by_extensions(glob(ctx["srcs"]), [".kt", ".kts"])
+    return _kotlin_source_set_fragments(
+        ctx["label"]["id"],
+        _kotlin_jvm_attr(ctx, "source_sets", {}),
+        _kotlin_jvm_attr(ctx, "source_set_depends_on", {}),
+        _filter_by_extensions(glob(ctx["srcs"]), [".kt", ".kts"]),
+        "jvm",
+        [".kt", ".kts"],
+    )
 
 def _kotlin_jvm_java_sources(ctx):
     return _filter_by_extensions(glob(ctx["srcs"]), [".java"])
@@ -279,7 +288,7 @@ def _kotlin_jvm_data(ctx):
 def _kotlin_jvm_output_name(ctx):
     return _kotlin_jvm_attr(ctx, "output", "") or ctx["label"]["name"] + ".jar"
 
-def _kotlin_jvm_compile_argv(ctx, tools, sources, compile_jars, output):
+def _kotlin_jvm_compile_argv(ctx, tools, sources, fragment_args, compile_jars, output):
     associates = _kotlin_jvm_compile_jars(_kotlin_jvm_dependency_role(ctx, "associates"))
     plugin_jars = [_package_relative(ctx, path) for path in _kotlin_jvm_attr(ctx, "compiler_plugin_jars", [])]
     module_name = _kotlin_jvm_attr(ctx, "module_name", "") or ctx["label"]["name"]
@@ -302,6 +311,7 @@ def _kotlin_jvm_compile_argv(ctx, tools, sources, compile_jars, output):
         args.append("-Xplugin=" + plugin)
     for option in _kotlin_jvm_attr(ctx, "compiler_plugin_options", []):
         args.extend(["-P", option])
+    args.extend(fragment_args)
     args.extend(_kotlin_jvm_attr(ctx, "kotlinc_opts", []))
     args.extend(sources)
     args.extend(["-d", output])
@@ -350,7 +360,7 @@ def _kotlin_jvm_merge_classes(ctx, kotlin_classes, java_classes, output, identif
     )
 
 def _kotlin_jvm_compile(ctx, target_kind):
-    sources = _kotlin_jvm_sources(ctx)
+    sources, fragment_args = _kotlin_jvm_sources(ctx)
     if len(sources) == 0:
         fail(target_kind + " " + ctx["label"]["id"] + " has no Kotlin sources (.kt/.kts)")
     java_sources = _kotlin_jvm_java_sources(ctx)
@@ -371,7 +381,7 @@ def _kotlin_jvm_compile(ctx, target_kind):
         history = _action_history(ctx, "kotlin", "jvm.compile"),
         presentation = _action_metadata(context = [_action_context("kotlin.jvm_target", _kotlin_jvm_attr(ctx, "jvm_target", "17"), "JVM " + _kotlin_jvm_attr(ctx, "jvm_target", "17"))]),
         source_files = _action_source_files(_unique(all_sources + _kotlin_jvm_workspace_inputs(compile_jars + plugin_jars))),
-        argv = _kotlin_jvm_compile_argv(ctx, tools, all_sources, compile_jars, compile_output),
+        argv = _kotlin_jvm_compile_argv(ctx, tools, all_sources, fragment_args, compile_jars, compile_output),
         inputs = _unique(all_sources + _kotlin_jvm_workspace_inputs(compile_jars + plugin_jars)),
         outputs = [compile_output],
         clean_paths = [compile_output] if compile_output != output else [],
@@ -423,6 +433,7 @@ def _kotlin_jvm_compile(ctx, target_kind):
         "runtime_jar": output,
         "transitive_compile_jars": transitive_compile_jars,
         "transitive_runtime_jars": transitive_runtime_jars,
+        "transitive_imported_jars": _collect_transitive(compile_deps + runtime_deps, "transitive_imported_jars", [tools["kotlin_stdlib"]]),
         "transitive_data": _kotlin_jvm_data(ctx),
         "affected_inputs": _unique(all_sources + _kotlin_jvm_workspace_inputs(compile_jars + plugin_jars) + ([manifest] if manifest else [])),
     }
@@ -471,6 +482,7 @@ def _kotlin_jvm_binary_impl(ctx):
         "compile_jar": binary_jar,
         "runtime_jar": binary_jar,
         "transitive_runtime_jars": runtime_jars,
+        "transitive_imported_jars": _collect_transitive(_kotlin_jvm_runtime_deps(ctx), "transitive_imported_jars", [tools["kotlin_stdlib"]]),
         "transitive_data": data,
     }
 
@@ -479,15 +491,15 @@ def _kotlin_jvm_compile_test_runner(ctx, tools):
     classes = declare_output("test_runner/classes")
     classes_hash = declare_output("test_runner/classes.sha256")
     framework = _kotlin_jvm_attr(ctx, "test_framework", "reflection")
-    if framework not in ["reflection", "junit4"]:
-        fail("unsupported Kotlin JVM test_framework `" + framework + "`; use `reflection` or `junit4`")
-    jars = _kotlin_jvm_runtime_jars(_kotlin_jvm_runtime_deps(ctx)) if framework == "junit4" else []
+    if framework not in ["reflection", "junit4", "junit5"]:
+        fail("unsupported Kotlin JVM test_framework `" + framework + "`; use `reflection`, `junit4`, or `junit5`")
+    jars = _kotlin_jvm_runtime_jars(_kotlin_jvm_runtime_deps(ctx)) if framework != "reflection" else []
     argv = [tools["javac"], "-encoding", "UTF-8", "-d", classes]
     if jars:
         argv.extend(["-classpath", _kotlin_jvm_classpath_separator().join(jars)])
     prepare_path(classes, kind = "remove", identifier = "kotlin_jvm_test_runner_clean:" + ctx["label"]["id"])
     prepare_path(classes, kind = "directory", identifier = "kotlin_jvm_test_runner_prepare:" + ctx["label"]["id"])
-    write_path(source, _jvm_test_runner_source(junit4 = framework == "junit4"))
+    write_path(source, _jvm_test_runner_source(junit4 = framework == "junit4", junit5 = framework == "junit5"))
     run_action(
         display_name = "Compile JVM test runner · " + ctx["label"]["name"],
         source_files = _action_source_files([source]),
@@ -500,6 +512,10 @@ def _kotlin_jvm_compile_test_runner(ctx, tools):
     )
     write_tree_digest(classes, classes_hash, identifier = "kotlin_jvm_test_runner_digest:" + ctx["label"]["id"])
     return (classes, classes_hash)
+
+def _kotlin_jvm_coverage_classfiles(ctx, tools, classes, runtime_jars):
+    imported = _collect_transitive(_kotlin_jvm_runtime_deps(ctx), "transitive_imported_jars", [tools["kotlin_stdlib"]])
+    return _unique([classes] + [jar for jar in runtime_jars if jar not in imported])
 
 def _kotlin_jvm_test_env(ctx, test_dir):
     env = _kotlin_jvm_env(ctx)
@@ -558,7 +574,7 @@ def _kotlin_jvm_test_info(ctx, command_argv, command_env, results, log, native_r
     }
 
 def _kotlin_jvm_test_impl(ctx):
-    sources = _kotlin_jvm_sources(ctx)
+    sources, fragment_args = _kotlin_jvm_sources(ctx)
     if len(sources) == 0:
         fail("kotlin_jvm_test " + ctx["label"]["id"] + " has no Kotlin test sources (.kt/.kts)")
     java_sources = _kotlin_jvm_java_sources(ctx)
@@ -577,7 +593,7 @@ def _kotlin_jvm_test_impl(ctx):
         history = _action_history(ctx, "kotlin", "test.compile"),
         presentation = _action_metadata(context = [_action_context("kotlin.jvm_target", _kotlin_jvm_attr(ctx, "jvm_target", "17"), "JVM " + _kotlin_jvm_attr(ctx, "jvm_target", "17"))]),
         source_files = _action_source_files(_unique(all_sources + _kotlin_jvm_workspace_inputs(compile_jars + plugin_jars))),
-        argv = _kotlin_jvm_compile_argv(ctx, tools, all_sources, compile_jars, kotlin_classes),
+        argv = _kotlin_jvm_compile_argv(ctx, tools, all_sources, fragment_args, compile_jars, kotlin_classes),
         inputs = _unique(all_sources + _kotlin_jvm_workspace_inputs(compile_jars + plugin_jars)),
         outputs = [kotlin_classes],
         env = _kotlin_jvm_env(ctx),
@@ -595,7 +611,7 @@ def _kotlin_jvm_test_impl(ctx):
     log = test_dir + "/kotlin-jvm-test.log"
     native_results = test_dir + "/native_results.txt"
     runtime_classpath = _unique([runner_classes, classes, tools["kotlin_stdlib"]] + runtime_jars)
-    command_argv = [tools["java"]] + _kotlin_jvm_attr(ctx, "jvm_flags", []) + [
+    command_argv = [tools["java"], "-ea"] + _kotlin_jvm_attr(ctx, "jvm_flags", []) + [
         "-cp", _kotlin_jvm_classpath_separator().join(runtime_classpath),
         "StruoJvmTestRunner",
         classes,
@@ -622,7 +638,7 @@ def _kotlin_jvm_test_impl(ctx):
     configuration = None
     if measured:
         prefix = command_argv[:command_argv.index("StruoJvmTestRunner") + 2]
-        configuration = _jvm_coverage_configuration(ctx, provider, prefix, command_env, _unique(all_sources + _kotlin_jvm_data(ctx)), _unique([classes] + runtime_jars), "kotlin_jvm")
+        configuration = _jvm_coverage_configuration(ctx, provider, prefix, command_env, _unique(all_sources + _kotlin_jvm_data(ctx)), _kotlin_jvm_coverage_classfiles(ctx, tools, classes, runtime_jars), "kotlin_jvm")
     discovery = ctx["capability"] == "test-discovery"
     provider["test_inventory"] = test_dir + "/inventory.json"
     if ctx["capability"] != "test" and not discovery:
@@ -658,6 +674,8 @@ _KOTLIN_JVM_COMMON_ATTRS = [
     attr("language_version", "string", docs = "Kotlin language version passed to kotlinc."),
     attr("api_version", "string", docs = "Kotlin application programming interface version passed to kotlinc."),
     attr("kotlinc_opts", "list<string>", default = "[]", docs = "Additional kotlinc arguments."),
+    attr("source_sets", "map<string, list<string>>", default = "{}", docs = "Kotlin Multiplatform source set name, such as `commonMain`, to package-relative Kotlin source patterns compiled as its own fragment so `expect` and `actual` declarations match across source sets. Sources in `srcs` outside every source set form the platform fragment, which refines every declared source set.", configurable = False),
+    attr("source_set_depends_on", "map<string, list<string>>", default = "{}", docs = "Source set name to the source sets it depends on, mirroring `dependsOn` between intermediate source sets such as `nonJsMain` depending on `commonMain`.", configurable = False),
     attr("compiler_plugin_jars", "list<string>", default = "[]", docs = "Package-relative Kotlin compiler plug-in Java archives passed through -Xplugin.", configurable = False),
     attr("compiler_plugin_options", "list<string>", default = "[]", docs = "Kotlin compiler plug-in options passed through -P.", configurable = False),
     attr("data", "list<string>", default = "[]", docs = "Package-relative runtime data patterns propagated to binaries."),
@@ -693,7 +711,7 @@ kotlin_jvm_library = target_kind(
     ],
     deps = _KOTLIN_JVM_DEP_EDGES,
     providers = ["kotlin_jvm_library", "java_library"],
-    capabilities = [capability("build", ["default", "jar"])],
+    capabilities = [capability("build", ["default", "jar"]), capability("metadata", [])],
     tools = [_KOTLIN_TOOL, _JAVA_COMPILER_TOOL],
     source_references = [
         source_reference("Buck2", "kotlin_library", "https://buck2.build/docs/prelude/rules/kotlin/kotlin_library/", "Use when adopting a Buck2 Kotlin library and its classpath roles."),
@@ -721,6 +739,7 @@ kotlin_jvm_binary = target_kind(
     capabilities = [
         capability("build", ["default", "jar"]),
         capability("run", ["default"], ["jar"]),
+        capability("metadata", []),
     ],
     tools = [_KOTLIN_TOOL, _JAVA_RUNTIME_TOOL, _JAVA_COMPILER_TOOL],
     source_references = [
@@ -735,10 +754,10 @@ kotlin_jvm_binary = target_kind(
 kotlin_jvm_test = target_kind(
     docs = "Compiles Kotlin tests, and Java test sources jointly with them, for the Java virtual machine and emits normalized Struo test results.",
     attrs = _KOTLIN_JVM_COMMON_ATTRS + _JVM_COVERAGE_ATTRS + [
-        attr("test_framework", "string", default = "\"reflection\"", docs = "`reflection` for convention-based tests or `junit4` for native JUnit lifecycle, rules, and runners. Declare JUnit on the runtime classpath.", configurable = False),
+        attr("test_framework", "string", default = "\"reflection\"", docs = "`reflection` for convention-based tests, `junit4` for native JUnit lifecycle, rules, and runners, or `junit5` to run every JUnit Platform engine on the classpath, such as Jupiter, as Gradle's `useJUnitPlatform()` does. Declare JUnit, and for `junit5` the JUnit Platform launcher, on the runtime classpath.", configurable = False),
         attr("test_class", "string", docs = "Optional fully qualified test class or Class#method filter.", configurable = False),
         attr("args", "list<string>", default = "[]", docs = "Additional fully qualified class or Class#method filters.", configurable = False),
-        attr("jvm_flags", "list<string>", default = "[]", docs = "Flags passed to the Java virtual machine before the test classpath.", configurable = False),
+        attr("jvm_flags", "list<string>", default = "[]", docs = "Flags passed to the Java virtual machine before the test classpath. Tests run with `-ea`, as Gradle's Test task enables assertions by default; pass `-da` to disable them.", configurable = False),
         attr("env", "map<string,string>", default = "{}", docs = "Environment variables passed to the test runner before test_env overrides.", configurable = False),
         attr("env_inherit", "list<string>", default = "[]", docs = "Host environment variable names inherited before explicit test environment values.", configurable = False),
         attr("test_env", "map<string,string>", default = "{}", docs = "Environment variables passed to the test runner.", configurable = False),
@@ -748,7 +767,7 @@ kotlin_jvm_test = target_kind(
     ],
     deps = _KOTLIN_JVM_DEP_EDGES,
     providers = ["kotlin_jvm_test", "struo_test_info"],
-    capabilities = [capability("test", ["default", "test_results", "logs"]), capability("test-discovery", ["test_inventory"])],
+    capabilities = [capability("test", ["default", "test_results", "logs"]), capability("test-discovery", ["test_inventory"]), capability("metadata", [])],
     tools = [_KOTLIN_TOOL, _JAVA_RUNTIME_TOOL, _JAVA_COMPILER_TOOL],
     source_references = [
         source_reference("Buck2", "kotlin_test", "https://buck2.build/docs/prelude/rules/kotlin/kotlin_test/", "Use when adopting a Buck2 host-side Kotlin test and its test runner settings."),
@@ -787,6 +806,7 @@ def _java_import_impl(ctx):
         "jars": jars,
         "transitive_compile_jars": _unique(jars + _kotlin_jvm_compile_jars(ctx["deps"])),
         "transitive_runtime_jars": _unique(jars + _kotlin_jvm_runtime_jars(ctx["deps"] + runtime_deps)),
+        "transitive_imported_jars": _collect_transitive(ctx["deps"] + runtime_deps, "transitive_imported_jars", jars),
         "transitive_data": _collect_transitive(ctx["deps"] + runtime_deps, "transitive_data", []),
         "affected_inputs": _kotlin_jvm_workspace_inputs(jars),
     }

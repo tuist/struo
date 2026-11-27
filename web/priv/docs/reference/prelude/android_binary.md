@@ -16,7 +16,7 @@ and signs it with a debug key by default.
 | Attribute | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `application_id` | string | yes |  | Android application id |
-| `manifest` | string | no | `AndroidManifest.xml` | Package-relative Android manifest |
+| `manifest` | string | no | `AndroidManifest.xml` | Package-relative Android manifest. When it is missing or has no `package` attribute, the package comes from `namespace` or `application_id`, as in the Android Gradle plugin |
 | `resource_files` | list&lt;string&gt; | no | files under `res` | Android resource file glob patterns |
 | `resource_dirs` | list&lt;string&gt; | no | `["res"]` | Resource roots passed to `aapt2 compile` |
 | `assets` | list&lt;string&gt; | no | `[]` | Android asset file glob patterns |
@@ -45,6 +45,8 @@ and signs it with a debug key by default.
 | `javac_opts` | list&lt;string&gt; | no | `[]` | Additional `javac` flags |
 | `javacopts` | list&lt;string&gt; | no | `[]` | Bazel-compatible alias for additional `javac` flags |
 | `kotlinc_opts` | list&lt;string&gt; | no | `[]` | Additional `kotlinc` flags |
+| `source_sets` | map&lt;string, list&lt;string&gt;&gt; | no | `{}` | Kotlin Multiplatform source set name, such as `commonMain`, to Kotlin source patterns, each compiled as its own fragment. Kotlin sources in `srcs` form the Android fragment, which refines every source set |
+| `source_set_depends_on` | map&lt;string, list&lt;string&gt;&gt; | no | `{}` | Source set name to the source sets it depends on |
 | `dexopts` | list&lt;string&gt; | no | `[]` | Additional `d8` flags |
 
 Tool override attrs are also available for `javac`, `jar`, `java`,

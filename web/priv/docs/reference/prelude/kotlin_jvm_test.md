@@ -37,12 +37,40 @@ with `@Ignore` reports each of its test methods, or each parameterized case,
 as skipped, matching JUnit's own counts, without initializing the class. Convention-only
 methods are not JUnit tests.
 
+Set `test_framework = "junit5"` to run tests on the JUnit Platform, as
+Gradle's `useJUnitPlatform()` does. Every engine on the runtime classpath runs,
+such as Jupiter, or Vintage for JUnit 4 tests. Declare the engines, the JUnit
+Platform launcher, and their dependencies on the target's runtime classpath.
+Each test reports as `Class.method`; a nested class keeps its binary name, such
+as `Outer$Inner.method`, and overloaded test methods add their parameter types,
+such as `Class.method(org.junit.jupiter.api.TestInfo)`. Jupiter parameterized
+and dynamic tests report one case per invocation, such as `Class.method[2]`,
+numbered from 1 as Jupiter does. Vintage keeps JUnit 4's names, such as
+`Class.method[0]`. Tests from engines that do not report a method, such as
+specification-style engines, are named by their display names below the class,
+joined with `/`. A disabled class reports each of its tests as skipped. A
+failure in class-level setup or teardown reports as a failed `Class.classMethod`
+case, and an aborted class reports its tests as skipped. A class filter also
+selects its nested classes; `Class#method` selects every invocation of a
+parameterized or dynamic test, and `Class#method[2]` selects only that Jupiter
+invocation. Tests may run in parallel through JUnit's own configuration. Per-test
+coverage measures a Jupiter parameterized or dynamic test as one unit,
+`Class.method`, and each Vintage parameterized case as its own unit. A failure
+in class-level teardown is attached to each unit's log without failing a unit
+that passed. Per-test coverage and `Class#method` filters need tests known at
+discovery: engines that register tests while they run, such as Kotest, are
+reported as unresolved when listing coverage units.
+
 ## Coverage-assisted Selection
 
 Set `coverage_per_test = true`, declare product `coverage_sources`, and
 provide package-relative `jacoco_agent` and `jacoco_cli` JAR paths. Use
 matching JaCoCo releases compatible with your class-file version. The initial
 collector requires Linux, Python 3 and strace.
+
+Coverage measures classes compiled by targets in the graph. Classes from
+`java_import`, `classpath` and `runtime_classpath` jars are not measured, so
+each `coverage_sources` file must be compiled by a target.
 
 Struo discovers current execution units without invoking test bodies and runs
 each exact unit with its own JaCoCo profile. Class-file analysis preserves
@@ -57,14 +85,14 @@ the target.
 
 | Attribute | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `test_framework` | string | no | `reflection` | `reflection` for convention-based tests or `junit4` for native JUnit 4 execution |
+| `test_framework` | string | no | `reflection` | `reflection` for convention-based tests, `junit4` for native JUnit 4 execution, or `junit5` for the JUnit Platform |
 | `coverage_per_test` | bool | no | `false` | Measure each exact execution unit with JaCoCo |
 | `coverage_sources` | list&lt;string&gt; | no | `[]` | Product Java or Kotlin source globs required in the class-file universe |
 | `jacoco_agent` | string | no | empty | Package-relative JaCoCo runtime agent JAR |
 | `jacoco_cli` | string | no | empty | Package-relative matching JaCoCo command-line JAR |
 | `test_class` | string | no |  | Fully qualified class or `Class#method` filter |
 | `args` | list&lt;string&gt; | no | `[]` | Additional class or `Class#method` filters |
-| `jvm_flags` | list&lt;string&gt; | no | `[]` | Flags passed to the Java virtual machine before the test classpath |
+| `jvm_flags` | list&lt;string&gt; | no | `[]` | Flags passed to the Java virtual machine before the test classpath. Tests run with `-ea`, as in Gradle; pass `-da` to disable assertions |
 | `env` | map&lt;string,string&gt; | no | `{}` | Environment variables applied before `test_env` |
 | `env_inherit` | list&lt;string&gt; | no | `[]` | Host environment variable names to inherit |
 | `test_env` | map&lt;string,string&gt; | no | `{}` | Environment variables applied last |
