@@ -454,6 +454,8 @@ jobs:
           name: struo-${{ matrix.os }}
           path: target/release
       - run: chmod +x target/release/struo
+      # The Rebar compile-hook specs skip without Mix's local Rebar 3.
+      - run: mise exec -- mix local.rebar --force
       - run: mise exec -- shellspec
 
   ios-sdk-check:
