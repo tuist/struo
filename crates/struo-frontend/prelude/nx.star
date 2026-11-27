@@ -631,7 +631,9 @@ def _nx_task_impl(ctx, is_test = False):
         spec.update({"results": results, "log": log, "target": ctx["label"]["id"]})
         argv = [node, runner, _json_encode(spec)]
         action_outputs = action_outputs + [results, log]
-        provider["affected_inputs"] = inputs
+        # No `affected_inputs`: these are every workspace file the task hashes,
+        # so each would select every Nx test. Like `nx affected`, test
+        # selection follows project ownership and `_affected_deps` instead.
         provider["test_discovery_inputs"] = inputs
         provider["test_info"] = {
             "schema": "struo.test_info.v1", "target": ctx["label"]["id"],
