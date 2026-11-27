@@ -1,29 +1,32 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-
-use tokio::sync::{Semaphore, SemaphorePermit};
 
 use super::host_error;
 use crate::remote::path::{Directory, Parent};
-use crate::{Error, RemoteIoLimits, Result, WorkspacePath};
+use crate::{RemoteIoLimits, Result, WorkspacePath};
 
-const MAX_PINNED_PARENTS: usize = 128;
-static PINNED_PARENTS: Semaphore = Semaphore::const_new(MAX_PINNED_PARENTS);
+const FILES: usize = 0;
+const BACKUP: usize = 1;
+const WORKSPACE: usize = 2;
 
+/// Resolves output parents through the descriptor-relative tree walkers while keeping only the
+/// most recent parent of each root open, so descriptor use stays constant however many
+/// directories the outputs span.
 struct Parents<'a> {
     roots: [&'a Directory; 3],
-    directories: BTreeMap<(usize, PathBuf), (Directory, SemaphorePermit<'static>)>,
+    open: [Option<(PathBuf, Directory)>; 3],
+    seen: BTreeSet<(usize, PathBuf)>,
     metadata_bytes: u64,
     limits: RemoteIoLimits,
 }
 
 impl Parents<'_> {
     fn parent(&mut self, root: usize, path: &Path, create: bool) -> Result<Parent> {
-        let key = (root, path.parent().unwrap_or(Path::new("")).to_path_buf());
-        if !self.directories.contains_key(&key) {
+        let directory = path.parent().unwrap_or(Path::new(""));
+        if self.seen.insert((root, directory.to_path_buf())) {
             self.metadata_bytes = self
                 .metadata_bytes
-                .saturating_add(key.1.as_os_str().len() as u64)
+                .saturating_add(directory.as_os_str().len() as u64)
                 .saturating_add(256);
             crate::remote::http::check_size(
                 self.metadata_bytes,
@@ -31,21 +34,16 @@ impl Parents<'_> {
                 "remote",
                 "output parent metadata bytes",
             )?;
-            let permit =
-                PINNED_PARENTS
-                    .try_acquire()
-                    .map_err(|_| Error::ExecutorResourceLimit {
-                        executor: "remote".into(),
-                        resource: "pinned output directories",
-                        limit: MAX_PINNED_PARENTS as u64,
-                    })?;
-            let directory = self.roots[root]
-                .descend(&key.1, create)
-                .map_err(|source| host_error("open_remote_output_parent", path, source))?;
-            self.directories.insert(key.clone(), (directory, permit));
         }
-        self.directories[&key]
-            .0
+        if !matches!(&self.open[root], Some((open, _)) if open == directory) {
+            self.open[root] = None;
+            let opened = self.roots[root]
+                .descend(directory, create)
+                .map_err(|source| host_error("open_remote_output_parent", path, source))?;
+            self.open[root] = Some((directory.to_path_buf(), opened));
+        }
+        let (_, opened) = self.open[root].as_ref().unwrap();
+        opened
             .parent(Path::new(path.file_name().unwrap()), false)
             .map_err(|source| host_error("open_remote_output_parent", path, source))
     }
@@ -79,7 +77,8 @@ pub(super) fn install_outputs(
     }
     let mut parents = Parents {
         roots: [files, backup, workspace],
-        directories: BTreeMap::new(),
+        open: [None, None, None],
+        seen: BTreeSet::new(),
         metadata_bytes: 0,
         limits,
     };
@@ -87,30 +86,29 @@ pub(super) fn install_outputs(
     let mut installed = Vec::new();
     for output in outputs {
         if let Err(error) = install_output(&mut parents, output, &mut backed_up, &mut installed) {
-            rollback_outputs(&installed, &backed_up);
+            rollback_outputs(&mut parents, &installed, &backed_up);
             return Err(error);
         }
     }
     Ok(())
 }
 
-fn install_output(
+fn install_output<'a>(
     parents: &mut Parents<'_>,
-    output: &WorkspacePath,
-    backed_up: &mut Vec<(Parent, Parent)>,
-    installed: &mut Vec<(Parent, Parent)>,
+    output: &'a WorkspacePath,
+    backed_up: &mut Vec<&'a Path>,
+    installed: &mut Vec<&'a Path>,
 ) -> Result<()> {
     let path = Path::new(output.as_str());
-    let destination = parents.parent(2, path, true)?;
-    let saved = parents.parent(1, path, true)?;
-    let source = parents.parent(0, path, false)?;
+    let destination = parents.parent(WORKSPACE, path, true)?;
+    let saved = parents.parent(BACKUP, path, true)?;
+    let source = parents.parent(FILES, path, false)?;
     match destination.metadata() {
         Ok(_) => {
-            let original = destination.clone();
             destination
                 .rename_to(&saved)
                 .map_err(|source| host_error("backup_remote_output", path, source))?;
-            backed_up.push((original, saved));
+            backed_up.push(path);
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(source) => return Err(host_error("backup_remote_output", path, source)),
@@ -118,15 +116,23 @@ fn install_output(
     source
         .rename_to(&destination)
         .map_err(|source| host_error("install_remote_output", path, source))?;
-    installed.push((destination, source));
+    installed.push(path);
     Ok(())
 }
 
-fn rollback_outputs(installed: &[(Parent, Parent)], backed_up: &[(Parent, Parent)]) {
-    for (destination, source) in installed.iter().rev() {
-        let _ = destination.rename_to(source);
+/// Best effort: moves installed outputs back into staging and restores the saved originals,
+/// resolving each parent again because only the most recent ones stay open.
+fn rollback_outputs(parents: &mut Parents<'_>, installed: &[&Path], backed_up: &[&Path]) {
+    let mut restore = |from: usize, to: usize, path: &Path| -> Result<()> {
+        let source = parents.parent(from, path, false)?;
+        let destination = parents.parent(to, path, false)?;
+        let _ = source.rename_to(&destination);
+        Ok(())
+    };
+    for path in installed.iter().rev() {
+        let _ = restore(WORKSPACE, FILES, path);
     }
-    for (destination, saved) in backed_up.iter().rev() {
-        let _ = saved.rename_to(destination);
+    for path in backed_up.iter().rev() {
+        let _ = restore(BACKUP, WORKSPACE, path);
     }
 }

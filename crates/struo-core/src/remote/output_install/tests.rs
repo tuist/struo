@@ -31,7 +31,9 @@ fn many_replaced_outputs_fit_a_small_descriptor_budget() {
         .build()
         .unwrap()
         .block_on(async {
-            for separate_parents in [false, true, false] {
+            for (separate_parents, missing_last) in
+                [(false, false), (true, false), (true, true), (false, false)]
+            {
                 let workspace = tempfile::tempdir().unwrap();
                 let staging = OutputStaging::create(workspace.path()).unwrap();
                 let outputs = (0..100)
@@ -45,26 +47,18 @@ fn many_replaced_outputs_fit_a_small_descriptor_budget() {
                             std::fs::create_dir_all(root.join(&path).parent().unwrap()).unwrap();
                         }
                         std::fs::write(workspace.path().join(&path), b"old").unwrap();
-                        std::fs::write(staging.files().join(&path), b"new").unwrap();
+                        if !(missing_last && index == 99) {
+                            std::fs::write(staging.files().join(&path), b"new").unwrap();
+                        }
                         WorkspacePath::try_from(path).unwrap()
                     })
                     .collect::<Vec<_>>();
                 let result = staging.install(&outputs, workspace.path()).await;
-                if separate_parents {
-                    assert!(matches!(
-                        result,
-                        Err(Error::ExecutorResourceLimit {
-                            resource: "pinned output directories",
-                            ..
-                        })
-                    ));
-                } else {
-                    result.unwrap();
-                }
+                assert_eq!(result.is_ok(), !missing_last, "{result:?}");
                 for output in outputs {
                     assert_eq!(
                         std::fs::read(workspace.path().join(output.as_str())).unwrap(),
-                        if separate_parents { b"old" } else { b"new" }
+                        if missing_last { b"old" } else { b"new" }
                     );
                 }
             }
