@@ -121,7 +121,9 @@ products. Run Struo from a directory that contains both packages, for example
 Struo checks out each source-control dependency at the revision pinned in
 `Package.resolved` and compiles its targets directly; Swift Package Manager does
 not build a separate dependency graph. When the lockfile is not committed,
-Struo asks Swift Package Manager to resolve it first. If a local dependency
+or does not pin a remote package that the manifest's targets use, as when it
+was written for another `Package@swift-*.swift` manifest, Struo asks Swift
+Package Manager to resolve it first. If a local dependency
 introduces a remote package, it is resolved through the root package's
 lockfile.
 

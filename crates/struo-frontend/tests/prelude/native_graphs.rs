@@ -303,7 +303,7 @@ def host_command(argv, env = None):
     calls.append(argv)
     return ""
 def host_file_exists(path):
-    return path == "/workspace/Package.resolved"
+    return path.endswith("/Package.resolved")
 def host_file_read(path):
     return '{"version": 3, "pins": []}'
 _swift_package_remote_infos(
@@ -316,6 +316,59 @@ result = repr(calls)
     assert_eq!(
         eval_prelude_source_to_repr(source).unwrap(),
         r#"[["swift", "package", "resolve", "--package-path", "/workspace"]]"#
+    );
+}
+
+#[test]
+fn a_lockfile_without_a_declared_dependency_resolves_again() {
+    let source = package_source(
+        r#"
+resolves = []
+def _resolve_swiftc(platform, variant, developer):
+    return {"swiftc_path": "/swiftc", "env": {}}
+def _swiftpm_absolute_package_path(ctx, path):
+    return "/workspace"
+def host_command(argv, env = None):
+    if argv[1:3] == ["package", "resolve"]:
+        resolves.append(argv)
+        return ""
+    return _json_encode({"name": "Root", "products": [], "dependencies": [
+        {"sourceControl": [{"identity": "New-Name"}]},
+        {"sourceControl": [{"identity": "aliased-url", "nameForTargetDependencyResolutionOnly": "Aliased"}]},
+        {"sourceControl": [{"identity": "trait-only"}]},
+    ], "targets": [{"name": "Root", "dependencies": [
+        {"product": ["Lib", "new-name", None, None]},
+        {"product": ["Other", "Aliased", None, None]},
+        {"product": ["Extra", "trait-only", None, {"traits": ["Extra"]}]},
+    ]}]})
+def _swift_package_metadata(argv, absolute, env = {}, check = True):
+    return host_command(argv, env = env)
+def host_file_exists(path):
+    return path.endswith("/Package.resolved")
+def host_file_read(path):
+    return '{"version": 2, "pins": []}'
+def _xcode_acquire_remote_swift_packages(pins, checkout_root = ""):
+    pass
+def _xcode_local_swift_package_specs(ctx, packages, platform, minimum_os, variant, root_identities = None, owner_package = None):
+    return {"specs": [], "products": {}, "modules": {}}
+def lockfile(identities):
+    pins = [{"identity": pinned, "kind": "localSourceControl", "location": "/" + pinned, "state": {"revision": "abc"}} for pinned in identities]
+    return _json_encode({"version": 2, "pins": pins})
+def resolves_with(pinned, package_path = "", alias_pinned = True):
+    resolves.clear()
+    prefix = package_path + "/" if package_path else ""
+    _swift_package_workspace_resolver({
+        "attrs": {"package_path": package_path} if package_path else {},
+        "label": {"id": "root", "name": "root", "package": ""},
+        "files": {prefix + "Package.swift": "manifest", prefix + "Package.resolved": lockfile([pinned] + (["aliased-url"] if alias_pinned else []))},
+    })
+    return len(resolves)
+result = repr([resolves_with("old-name"), resolves_with("new-name"), resolves_with("new-name", alias_pinned = False), resolves_with("old-name", "tools/Tool"), resolves_with("new-name", "tools/Tool")])
+"#,
+    );
+    assert_eq!(
+        eval_prelude_source_to_repr(source).unwrap(),
+        "[1, 0, 1, 1, 0]"
     );
 }
 

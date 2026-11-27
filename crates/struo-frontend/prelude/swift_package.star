@@ -26,7 +26,7 @@ def _swift_package_workspace_resolver(ctx):
     package = {"identity": _basename(package_path) or info.get("name") or ctx["label"]["name"], "path": package_dir, "info": info}
     local_packages = _xcode_expand_swift_package_infos(ctx, [package], cache = swift_info_cache, follow_resolved = False)
     remote_dependencies = any([dependency.get("sourceControl") or dependency.get("registry") for local in local_packages for dependency in local["info"].get("dependencies") or []])
-    remote_packages = _swift_package_remote_infos(ctx, info, swift, swiftc["env"], absolute_package_path, package_dir, cache = swift_info_cache, remote_dependencies = remote_dependencies)
+    remote_packages = _swift_package_remote_infos(ctx, info, swift, swiftc["env"], absolute_package_path, package_dir, cache = swift_info_cache, remote_dependencies = remote_dependencies, required_identities = _swift_package_required_identities(info), resolved_file = _swiftpm_package_file(attrs, "Package.resolved"))
     packages = _xcode_expand_swift_package_infos(ctx, local_packages + remote_packages, cache = swift_info_cache, follow_resolved = False)
     graph = _xcode_local_swift_package_specs(ctx, packages, attrs.get("platform") or "macos", attrs.get("minimum_os") or "13.0", attrs.get("sdk_variant") or "simulator", root_identities = [package["identity"]], owner_package = ctx["label"]["package"])
     for spec in graph["specs"]:
@@ -64,8 +64,45 @@ def _swift_package_workspace_resolver(ctx):
     package_name = info.get("name") or ctx["label"]["name"]
     return {"targets": graph["specs"], "roots": roots, "attrs": {"package_name": package_name, "_display_name": package_name, "_default_test_roots": test_roots}}
 
-def _swift_package_remote_infos(ctx, package_info, swift, env, absolute_package_path, package_path, cache = None, remote_dependencies = None):
-    resolved = ctx["files"].get("Package.resolved")
+# The remote packages Swift Package Manager always pins for a root manifest:
+# those its targets use through a product without a trait condition. It may pin
+# more, but leaves out unused trait-guarded dependencies and the test-only ones
+# of path packages, so only these show that a lockfile is stale.
+def _swift_package_required_identities(info):
+    declared = {}
+    for dependency in info.get("dependencies") or []:
+        source = dependency.get("sourceControl") or dependency.get("registry")
+        if source and source[0].get("identity"):
+            declared[source[0]["identity"].lower()] = True
+    aliases = _xcode_swift_package_dependency_aliases(info)
+    required = []
+    for target in info.get("targets") or []:
+        for dependency in target.get("dependencies") or []:
+            product = dependency.get("product") or []
+            if len(product) < 2 or not product[1]:
+                continue
+            condition = product[3] if len(product) > 3 else None
+            if condition and condition.get("traits"):
+                continue
+            identity = (aliases.get(product[1].lower()) or product[1]).lower()
+            if identity in declared and identity not in required:
+                required.append(identity)
+    return required
+
+def _swift_package_remote_infos(ctx, package_info, swift, env, absolute_package_path, package_path, cache = None, remote_dependencies = None, required_identities = [], resolved_file = "Package.resolved"):
+    resolved = ctx["files"].get(resolved_file)
+    if resolved != None and required_identities:
+        pinned = {}
+        for pin in _swiftpm_resolved_pins(json_decode(resolved)):
+            pinned[pin["identity"]] = True
+            # Version 1 lockfiles name a pin by package, not repository.
+            repository = _basename(pin.get("location") or "").lower()
+            pinned[repository[:-len(".git")] if repository.endswith(".git") else repository] = True
+        # Swift Package Manager resolves again when the lockfile does not pin a
+        # dependency the manifest uses, as when it was written for another
+        # manifest such as a `Package@swift-6.0.swift` naming an older URL.
+        if [identity for identity in required_identities if identity not in pinned]:
+            resolved = None
     if remote_dependencies == None:
         remote_dependencies = any([dependency.get("sourceControl") or dependency.get("registry") for dependency in package_info.get("dependencies") or []])
     if resolved == None and remote_dependencies:
