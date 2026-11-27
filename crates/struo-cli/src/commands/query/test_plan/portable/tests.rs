@@ -402,3 +402,45 @@ fn portable_binding_tracks_symlink_sources_with_multiple_patterns() {
     std::fs::remove_file(source).unwrap();
     assert!(portable.validate(workspace.path(), &graph).is_err());
 }
+
+#[cfg(unix)]
+#[test]
+fn portable_binding_looks_up_named_sources_without_walking_their_package() {
+    use std::os::unix::fs::PermissionsExt;
+    let (workspace, graph, _) = fixture();
+    let fingerprint = || discovery_fingerprint(workspace.path(), &graph, "tests");
+    let before = fingerprint().unwrap();
+    // A walk of the package would fail on a directory it cannot read.
+    let locked = workspace.path().join("locked");
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let after = fingerprint();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(after.unwrap(), before);
+
+    std::fs::write(workspace.path().join("input"), "changed input").unwrap();
+    assert_ne!(fingerprint().unwrap(), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn portable_binding_tracks_links_that_leave_the_workspace() {
+    let (workspace, mut graph, _) = fixture();
+    graph[0].srcs = vec!["**/*".into()];
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("cases"), "first").unwrap();
+    std::os::unix::fs::symlink(outside.path().join("cases"), workspace.path().join("cases"))
+        .unwrap();
+    std::os::unix::fs::symlink(outside.path().join("later"), workspace.path().join("later"))
+        .unwrap();
+    let fingerprint = || discovery_fingerprint(workspace.path(), &graph, "tests").unwrap();
+    let before = fingerprint();
+
+    std::fs::write(outside.path().join("cases"), "second").unwrap();
+    assert_ne!(fingerprint(), before);
+    std::fs::write(outside.path().join("cases"), "first").unwrap();
+    assert_eq!(fingerprint(), before);
+
+    std::fs::write(outside.path().join("later"), "created").unwrap();
+    assert_ne!(fingerprint(), before);
+}

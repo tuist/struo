@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{ensure, Context, Result};
 use serde_json::{json, Value};
 use struo_core::{InputDigestBuilder, WorkspacePath};
-use struo_frontend::{analysis::AnalysisEngine, GraphTarget};
+use struo_frontend::{analysis::AnalysisEngine, AttrValue, GraphTarget};
 
 pub(crate) fn discovery_fingerprint(
     workspace: &Path,
@@ -84,10 +84,68 @@ fn hash_target_inputs(
             }
         }
     }
+    let srcs_exclude = match node.attrs.get("srcs_exclude") {
+        Some(AttrValue::List(values)) => values
+            .iter()
+            .filter_map(AttrValue::as_str)
+            .map(str::to_string)
+            .collect(),
+        _ => Vec::new(),
+    };
+    let excludes = srcs_exclude
+        .iter()
+        .map(|pattern| glob::Pattern::new(pattern))
+        .collect::<Result<Vec<_>, _>>()?;
+    let is_excluded = |path: &str| {
+        let options = glob::MatchOptions {
+            require_literal_separator: true,
+            ..glob::MatchOptions::new()
+        };
+        excludes
+            .iter()
+            .any(|pattern| pattern.matches_with(path, options))
+    };
     let mut sources = BTreeSet::new();
+    let mut walked = Vec::new();
+    let mut named = Vec::new();
     for pattern in &node.srcs {
         let directory_only = pattern.ends_with(std::path::is_separator);
         let source = WorkspacePath::try_from(pattern.as_str())?;
+        // Wildcard patterns go through the walk `glob()` uses, which never
+        // enters an excluded tree such as a build output directory. A path
+        // without wildcards is looked up rather than walked, and one that
+        // names a directory binds its whole tree.
+        if !directory_only
+            && !Path::new(source.as_str())
+                .components()
+                .any(|component| component.as_os_str() == ".struo")
+        {
+            let literal = source.as_str();
+            if literal.contains(['*', '?', '[']) {
+                walked.push(vec![literal.to_string(), format!("{literal}/**")]);
+                continue;
+            }
+            let path = workspace.join(&node.label.package).join(literal);
+            match std::fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.is_dir() => walked.push(vec![if literal.is_empty() {
+                    "**".to_string()
+                } else {
+                    format!("{literal}/**")
+                }]),
+                Ok(_) if !is_excluded(literal) => {
+                    let input = Path::new(&node.label.package).join(literal);
+                    let input = input.to_str().context("non-UTF-8 discovery input")?;
+                    named.push(WorkspacePath::try_from(input)?.as_str().to_string());
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(anyhow::Error::from(error)
+                        .context(format!("reading discovery input `{}`", path.display())))
+                }
+            }
+            continue;
+        }
         let pattern = if source.as_str().split('/').next() == Some(".struo") {
             PathBuf::from(source.as_str())
         } else {
@@ -120,6 +178,34 @@ fn hash_target_inputs(
                 inputs.insert(input);
             } else {
                 sources.insert(input);
+            }
+        }
+    }
+    let mut external_links = Vec::new();
+    for patterns in walked {
+        // One walk per pattern, so each starts at that pattern's own literal
+        // directory and follows it when it is a symbolic link.
+        let (matches, links) = struo_frontend::analysis::expand_globs_reporting_external_links(
+            workspace,
+            &node.label.package,
+            &patterns,
+            &srcs_exclude,
+        )?;
+        sources.extend(matches);
+        external_links.extend(links);
+    }
+    // The walk leaves out links that resolve outside the workspace or to
+    // nothing, but a test may still read through one, so bind what it
+    // reaches, or that it reaches nothing, so a target appearing later
+    // changes the binding.
+    for link in external_links.into_iter().chain(named) {
+        if workspace.join(&link).exists() {
+            sources.insert(link);
+        } else {
+            digest.push_bytes(b"absent link");
+            digest.push_bytes(link.as_bytes());
+            if let Ok(target) = std::fs::read_link(workspace.join(&link)) {
+                digest.push_bytes(target.to_string_lossy().as_bytes());
             }
         }
     }

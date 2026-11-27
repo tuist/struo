@@ -53,6 +53,22 @@ pub fn expand_globs_with_excludes(
     patterns: &[String],
     excludes: &[String],
 ) -> Result<Vec<String>> {
+    expand_globs_reporting_external_links(workspace_root, package, patterns, excludes)
+        .map(|(matches, _)| matches)
+}
+
+/// [`expand_globs_with_excludes`], also returning the matched symbolic links
+/// it leaves out because they resolve outside the workspace or to nothing, so
+/// a caller that hashes inputs outside analysis can still account for them.
+pub fn expand_globs_reporting_external_links(
+    workspace_root: &Path,
+    package: &str,
+    patterns: &[String],
+    excludes: &[String],
+) -> Result<(Vec<String>, Vec<String>)> {
+    if patterns.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
     let package_dir = if package.is_empty() {
         workspace_root.to_path_buf()
     } else {
@@ -87,9 +103,10 @@ pub fn expand_globs_with_excludes(
         narrowed.unwrap_or_else(|| package_dir.clone())
     };
     if !walk_root.exists() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
 
+    let mut external_links = Vec::new();
     let mut out = collect_glob_matches(
         workspace_root,
         package,
@@ -97,7 +114,10 @@ pub fn expand_globs_with_excludes(
         &patterns,
         &excludes,
         &canonical_workspace,
+        &mut external_links,
     )?;
+    external_links.sort();
+    external_links.dedup();
     out.sort();
     out.dedup();
     let symlink_roots = out
@@ -115,7 +135,7 @@ pub fn expand_globs_with_excludes(
                 .is_some_and(|suffix| suffix.starts_with('/'))
         })
     });
-    Ok(out)
+    Ok((out, external_links))
 }
 
 /// Compute the deepest directory under `package_dir` that could contain
@@ -178,6 +198,7 @@ fn collect_glob_matches(
     patterns: &[glob::Pattern],
     excludes: &[glob::Pattern],
     canonical_workspace: &Path,
+    external_links: &mut Vec<String>,
 ) -> Result<Vec<String>> {
     let mut out = Vec::new();
     let walker = WalkDir::new(walk_root)
@@ -272,6 +293,9 @@ fn collect_glob_matches(
             Ok(canonical) => canonical,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 observe_absent_link_target(path);
+                if metadata.file_type().is_symlink() {
+                    external_links.push(ws_rel);
+                }
                 continue;
             }
             Err(error) => {
@@ -282,6 +306,7 @@ fn collect_glob_matches(
         if canonical.strip_prefix(canonical_workspace).is_err() {
             if metadata.file_type().is_symlink() {
                 observe_absent_link_target(path);
+                external_links.push(ws_rel);
                 continue;
             }
             // A real file whose canonical location is outside the workspace

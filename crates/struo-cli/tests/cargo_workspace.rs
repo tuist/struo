@@ -512,6 +512,62 @@ fn root_package_ignores_cargo_output_and_member_sources() {
     assert_eq!(cache_state(&output, "cargo_derive_demo"), "miss");
 }
 
+#[test]
+fn cached_tests_do_not_read_cargo_output() {
+    let root = tempfile::tempdir().unwrap();
+    write_files(
+        root.path(),
+        &[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            ),
+            ("src/lib.rs", "#[test]\nfn passes() {}\n"),
+            ("fixtures/value.txt", "one\n"),
+            ("target/debug/deps/output", "one\n"),
+        ],
+    );
+    let test = || {
+        let output = struo(root.path(), "never", &["test", "cargo_app_unit_tests"]);
+        success(&output);
+        let manifest = std::fs::read_to_string(
+            root.path()
+                .join(".struo/test-manifests/cargo_app_unit_tests/manifest.json"),
+        )
+        .unwrap();
+        let manifest: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+        let fingerprint = manifest["discovery_fingerprint"]
+            .as_str()
+            .unwrap_or_else(|| panic!("no discovery fingerprint: {manifest}"))
+            .to_string();
+        (cache_state(&output, "cargo_app_unit_tests"), fingerprint)
+    };
+    let (_, before) = test();
+
+    write_files(
+        root.path(),
+        &[
+            ("target/debug/deps/output", "two\n"),
+            ("target/debug/deps/added", "x"),
+        ],
+    );
+    // A file that cannot be opened makes any read of it fail the binding.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            root.path().join("target/debug/deps/added"),
+            std::fs::Permissions::from_mode(0o000),
+        )
+        .unwrap();
+    }
+    assert_eq!(test(), ("hit".to_string(), before.clone()));
+
+    // Control: a package file the test may read still changes the binding.
+    write_files(root.path(), &[("fixtures/value.txt", "two\n")]);
+    assert_ne!(test().1, before);
+}
+
 #[cfg(unix)]
 #[test]
 fn integration_tests_share_one_copy_of_each_package_binary() {

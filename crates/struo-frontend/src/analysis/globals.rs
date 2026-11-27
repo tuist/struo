@@ -30,9 +30,9 @@ pub(super) use observation::validate_observations;
 pub use observation::{expansion_could_differ, StaleObservation, UnchangedWorkspace};
 use observation::{observe_absent_link_target, observe_host_path, observed_which};
 
-pub use expansion::expand_globs_with_excludes;
 #[cfg(test)]
 pub(super) use expansion::{expand_globs, walk_package_files};
+pub use expansion::{expand_globs_reporting_external_links, expand_globs_with_excludes};
 
 const CMD_ARGS_MARKER: &str = "_struo_cmd_args";
 const EXECUTION_ROOT_MARKER: &str = "{{struo.execution_root}}";

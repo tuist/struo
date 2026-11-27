@@ -41,11 +41,11 @@ pub use engine::{
     analyze_target, target_kind_has_impl, AnalysisEngine, AnalysisFailure, AnalysisOptions,
     AnalysisResult,
 };
-pub use globals::expand_globs_with_excludes;
 pub use globals::expansion_could_differ;
 pub use globals::globals_for_prelude;
 pub use globals::StaleObservation;
 pub use globals::UnchangedWorkspace;
+pub use globals::{expand_globs_reporting_external_links, expand_globs_with_excludes};
 pub use provider::SharedProvider;
 pub use store::{
     with_active_store, AnalysisObservations, AnalysisStore, CachedToolCommand, CommandPolicy,
