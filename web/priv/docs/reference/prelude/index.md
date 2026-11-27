@@ -249,6 +249,9 @@ you already have.
 
 ## CMake target kinds
 
+- [`cmake_native_workspace`](/reference/prelude/cmake_native_workspace):
+  discovered CMake project that emits one `cmake_project` per library or
+  executable and one `cmake_test` for its CTest suite
 - [`cmake_project`](/reference/prelude/cmake_project): coarse uncached CMake
   configure and build boundary with explicitly declared products
 - [`cmake_test`](/reference/prelude/cmake_test): path-bound local CMake build

@@ -17,6 +17,32 @@ stale executables. Native incremental state and build-result cache restoration
 are unavailable. Staging already-built products remains content-addressed;
 a staging cache hit does not mean the native build was skipped.
 
+For C, C++, and Objective-C compiled with GCC 8 or later, Clang 10 or later,
+or AppleClang 12 or later, the target maps the workspace path to `.` with
+`-ffile-prefix-map`, so debug information and `__FILE__` do not record the
+checkout location. Assembly sources get `-fdebug-prefix-map`, and sub-builds
+that configure separately, such as `ExternalProject`, get the mapping through
+`CFLAGS` and `CXXFLAGS` when the workspace path has no spaces. Unless the
+project sets `CMAKE_BUILD_RPATH_USE_ORIGIN`, the target also turns that option
+on, so executables find the project's shared libraries relative to themselves
+instead of through the checkout path. Other compilers and clang-cl keep their
+native behavior. A `CMAKE_PROJECT_INCLUDE` passed in `configure_args` replaces
+the mapping.
+
+With `export_build_tree = true`, the target declares the whole generated build
+directory and exposes it to dependents: a `cmake_test` runs CTest in it, and a
+`cmake_project` that lists it in `deps` copies its `products` out of it instead
+of configuring and building. The tree is built incrementally under a lock. The
+build is skipped when no declared input changed, the size and modification time
+of every source-tree file match the last build, and a Ninja dry run finds
+nothing to do, or only commands that rerun every time, such as a custom target
+copying a data directory. So test runs in other processes are not disturbed. The tree starts again from
+scratch when the CMake toolchain, configure arguments, environment, or bytes of
+a selected compiler change. It selects no tests itself.
+
+Set `native_paths = true` to keep the compiler's own paths instead of the
+workspace mapping, for a tree whose tests find their data through `__FILE__`.
+
 The target also exposes declared headers, include directories, definitions,
 link options, libraries, and data through the shared native provider shape.
 Use [`cmake_workspace`](/reference/prelude/cmake_workspace) when the configured
@@ -34,7 +60,9 @@ CMake graph should also be queryable.
 | `configure_args` | list&lt;string&gt; | no | `[]` | Additional CMake configure arguments, each passed as one argument |
 | `build_targets` | list&lt;string&gt; | no | `[]` | Native CMake targets passed to the generated build |
 | `build_args` | list&lt;string&gt; | no | `[]` | Additional arguments passed to `cmake --build`, each as one argument |
-| `products` | list&lt;string&gt; | yes |  | Exact files expected under the generated build directory |
+| `products` | list&lt;string&gt; | unless `export_build_tree` | `[]` | Exact files expected under the generated build directory |
+| `export_build_tree` | bool | no | `false` | Expose the generated build directory to `cmake_test` and `cmake_project` dependents |
+| `native_paths` | bool | no | `false` | Keep native compiler paths instead of mapping the workspace path to `.` |
 | `hdrs` | list&lt;string&gt; | no | `[]` | Public package-relative headers |
 | `header_globs` | list&lt;string&gt; | no | `[]` | Public header patterns |
 | `includes` | list&lt;string&gt; | no | `[]` | Public include directories |

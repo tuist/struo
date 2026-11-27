@@ -52,6 +52,10 @@ pub(crate) struct NativeProjectSchema {
     /// of the same kind on demand, for ecosystems whose nested projects build
     /// against targets their enclosing project owns.
     pub(crate) enclosing_on_demand: bool,
+    /// Authored target kinds that already describe the project: one whose
+    /// sources cover the primary marker suppresses the discovered seed.
+    #[serde(default)]
+    pub(crate) claimed_by: Vec<String>,
 }
 
 impl NativeProjectSchema {
@@ -331,6 +335,7 @@ fn native_project_schema(name: String, dict: &DictRef<'_>) -> Result<NativeProje
         owns_descendants: required_bool(dict, "owns_descendants")?,
         workspace_markers,
         enclosing_on_demand: required_bool(dict, "enclosing_on_demand")?,
+        claimed_by: string_list(dict, "claimed_by")?,
     })
 }
 

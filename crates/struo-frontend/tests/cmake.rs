@@ -111,8 +111,8 @@ fn cmake_project_declares_one_coarse_build_and_exact_product_staging() {
     assert!(build.operation.is_none());
     assert!(build.argv.iter().any(|arg| arg == "-P"));
     assert_eq!(build.outputs.len(), 1);
-    assert!(build.outputs[0].ends_with("/cmake-build/libgreeting.a"));
-    assert_eq!(build.clean_paths.len(), 1);
+    assert!(build.outputs[0].ends_with("/cmake-products/libgreeting.a"));
+    assert_eq!(build.clean_paths.len(), 2);
     assert!(build.clean_paths[0].ends_with("/cmake-build"));
 
     let staged = result

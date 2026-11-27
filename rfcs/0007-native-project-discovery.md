@@ -137,7 +137,10 @@ Discovered seeds fill uncovered ecosystem entry points:
   match when its declared `srcs` or `resolver_inputs` cover that match's
   primary marker.
 - Non-resolver targets do not claim nested discovery merely because they have
-  a broad source glob.
+  a broad source glob, unless the declaration lists their target kind in
+  `claimed_by`. An authored target of such a kind whose `srcs` cover the
+  primary marker suppresses the seed. CMake lists `cmake_project` and
+  `cmake_test`, which describe a CMake project without a resolver.
 - Resolver-emitted targets never participate in discovery precedence.
 
 Workspace include and exclude patterns remain the outer boundary for both

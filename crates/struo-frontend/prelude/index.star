@@ -134,6 +134,7 @@ PRELUDE_TARGET_KINDS = {
         "cmake_test",
         "cmake_workspace",
         "cmake_target",
+        "cmake_native_workspace",
     ],
     "zig.star": [
         "zig_dependencies",

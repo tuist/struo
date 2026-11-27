@@ -13,7 +13,7 @@ options = json.loads(pathlib.Path(args.struo_config).read_text())
 output = pathlib.Path(args.struo_results)
 output.parent.mkdir(parents=True, exist_ok=True)
 output.unlink(missing_ok=True)
-base = [options['ctest'], '--test-dir', options['build'], '--build-config', options['build_type']]
+base = [options['ctest'], '--test-dir', options['build']] + (['--build-config', options['build_type']] if options['build_type'] else [])
 listing_path = output.parent / 'current-listing.json'
 with listing_path.open('wb') as stream:
     listing = subprocess.run(base + ['--show-only=json-v1'], stdout=stream)

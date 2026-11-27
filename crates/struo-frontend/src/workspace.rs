@@ -88,7 +88,12 @@ pub fn load_workspace_with_configuration(
             explicit.package == target.package
                 && (explicit.kind == target.kind || explicit.name == target.name)
         }) && !all.iter().any(|explicit| {
-            resolver_kinds.contains(&explicit.kind) && target_covers_path(explicit, &marker_path)
+            (resolver_kinds.contains(&explicit.kind)
+                || native_project_schemas.iter().any(|schema| {
+                    schema.name == matched.native_project
+                        && schema.claimed_by.contains(&explicit.kind)
+                }))
+                && target_covers_path(explicit, &marker_path)
         }) {
             all.push(target);
         }

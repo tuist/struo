@@ -203,7 +203,7 @@ pub fn module_authoring_contract() -> ModuleAuthoringContract {
         ],
         native_project_contract: vec![
             entry(
-                "native_project(target_kind, markers, name = None, target_name = None, docs = \"\", inputs = [], exclude = [], input_exclude = [], manifests = [], on_match = \"descend\", max_depth = 16, requires_tools = [], marker_exclude = [])",
+                "native_project(target_kind, markers, name = None, target_name = None, docs = \"\", inputs = [], exclude = [], input_exclude = [], manifests = [], on_match = \"descend\", max_depth = 16, requires_tools = [], owns_descendants = False, workspace_markers = [], marker_exclude = [], claimed_by = [])",
                 "Declare how Struo recognizes native project roots and maps each match to one ordinary seed target.",
             ),
             entry(
@@ -213,6 +213,10 @@ pub fn module_authoring_contract() -> ModuleAuthoringContract {
             entry(
                 "marker_exclude",
                 "File name patterns, in the same one-`*` grammar, that the first marker never matches, such as `*.bak` copies beside `project.*` files.",
+            ),
+            entry(
+                "claimed_by",
+                "Authored target kinds without a resolver that already describe the project. An authored target of one of these kinds whose srcs cover the first marker suppresses the discovered seed.",
             ),
             entry(
                 "target_name",

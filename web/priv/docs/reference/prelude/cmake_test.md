@@ -66,6 +66,7 @@ in the exported executable's coverage also prevent complete observations.
 | `build_type` | string | `Debug` | Native build configuration; debug information is preserved |
 | `configure_args` | list&lt;string&gt; | `[]` | Configure arguments, each passed as one argument, including upstream test-enabling options |
 | `build_targets` | list&lt;string&gt; | `[]` | Native build targets; defaults to all, including tests |
+| `tests` | list&lt;string&gt; | `[]` | CTest test names to run, matched exactly; empty runs every test |
 | `test_targets` | list&lt;string&gt; | `[]` | Native targets run as the test suite; empty uses CTest with empty suites treated as errors |
 | `jobs` | int | `1` | Positive native build and test concurrency |
 | `data` | list&lt;string&gt; | `[]` | Additional runtime and configuration input globs |
@@ -85,6 +86,12 @@ for build and test execution within Struo's budget, since native CTest suites
 can themselves compile integration fixtures. It also defaults
 `CMAKE_BUILD_PARALLEL_LEVEL` for nested CMake builds. Explicit environment
 overrides remain the caller's responsibility.
+
+## Dependency Edges
+
+| Edge | Accepts | Description |
+| --- | --- | --- |
+| `deps` | `cmake_project` | A `cmake_project` with `export_build_tree = true`. CTest runs in its build tree instead of a tree configured and built for this target. Cannot be combined with `test_targets` or `coverage_per_test` |
 
 ## Cache and execution boundary
 

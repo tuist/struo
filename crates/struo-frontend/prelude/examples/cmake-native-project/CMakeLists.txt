@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.20)
+project(NativeGreeting C)
+add_library(greeting STATIC greeting.c greeting.h)
+target_include_directories(greeting PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+add_executable(greeting_test greeting_test.c)
+target_link_libraries(greeting_test PRIVATE greeting)
+enable_testing()
+add_test(NAME greeting_test COMMAND greeting_test)

@@ -396,6 +396,7 @@ mod tests {
             owns_descendants: false,
             workspace_markers: Vec::new(),
             enclosing_on_demand: false,
+            claimed_by: Vec::new(),
             manifests: Vec::new(),
         }
     }

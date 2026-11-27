@@ -316,7 +316,10 @@ defmodule StruoSiteWeb.Docs.Sidebar do
           ),
           target_group("Bazel", ~w(bazel_workspace bazel_target bazel_test bazel_binary)),
           target_group("C and C++", ~w(c_library)),
-          target_group("CMake", ~w(cmake_workspace cmake_project cmake_target cmake_test)),
+          target_group(
+            "CMake",
+            ~w(cmake_native_workspace cmake_workspace cmake_project cmake_target cmake_test)
+          ),
           target_group("Containers", ~w(dockerfile_image oci_layer oci_image oci_index
                 oci_pull oci_import oci_load oci_push)),
           target_group("Cross-platform", ~w(swift_android_library kotlin_apple_framework)),

@@ -1,0 +1,7 @@
+[[target]]
+name = "cmake"
+kind = "cmake_native_workspace"
+srcs = ["CMakeLists.txt"]
+
+[target.attrs]
+resolver_inputs = ["CMakeLists.txt"]

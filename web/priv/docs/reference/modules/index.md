@@ -328,6 +328,10 @@ native = native_project(
   Marker files and directories both count. Without a containing marker, the
   invocation directory remains the boundary. Existing `struo.toml` manifests
   take priority. The default is `[]`, preserving ordinary workspace discovery.
+- `claimed_by` lists authored target kinds without a resolver that already
+  describe the project. An authored target of one of these kinds whose `srcs`
+  cover the first marker suppresses the discovered seed. Authored targets whose
+  kind has a resolver claim covered markers without being listed.
 - `owns_descendants = true` makes a matched workspace root take precedence over
   other native project seeds beside or below it. Use this for a native
   workspace whose checked tree intentionally contains another package format,
