@@ -1582,6 +1582,11 @@ the named exported Starlark function from the same module environment. This
 lets a compiler's dependency scan describe further cacheable actions without
 running the compiler during initial analysis.
 
+Declare every file the callback reads in `inputs`, including dependency
+artifacts it hashes or inspects. A cached dependency can leave those files in
+the cache rather than on disk; the planning barrier restores only declared
+inputs before calling the callback.
+
 The callback receives `ctx.args`, `ctx.inputs`, `ctx.outputs`, `ctx.build_dir`,
 and `ctx.label` (`id` and `package`). It declares ordinary actions and returns
 `None` on success, or one structured diagnostic with `code`, `message`,

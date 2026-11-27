@@ -132,7 +132,7 @@ def _apple_swift_action(ctx, attrs, swiftc, deps, **action):
             own_module = action["argv"][index + 1]
     expand_actions(
         implementation = "apple_explicit_module_plan",
-        inputs = [scan],
+        inputs = _unique([scan] + action["inputs"]),
         outputs = action["outputs"],
         args = {
             "scan": scan,

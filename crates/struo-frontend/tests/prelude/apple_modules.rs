@@ -58,7 +58,7 @@ fn scan_rejects_incomplete_records() {
 }
 
 #[test]
-fn deferred_compilation_declares_scan_before_planning() {
+fn deferred_compilation_declares_scan_and_module_inputs_before_planning() {
     let (store, result) = evaluate(
         r#"
 def _apple_module_toolchain_identity(swiftc):
@@ -70,7 +70,7 @@ _apple_swift_action(
     [], argv = ["swiftc", "-c", "Main.swift", "-o", "Main.o",
                 "-target", "arm64-apple-ios18.0-macabi",
                 "-target-variant", "arm64-apple-macosx15.0"],
-    inputs = ["Main.swift"], outputs = ["Main.o"], identifier = "main",
+    inputs = ["Main.swift", ".struo/out/Right/Right.swiftmodule"], outputs = ["Main.o"], identifier = "main",
 )
 result = True
 "#,
@@ -81,7 +81,12 @@ result = True
     assert!(scan.stdout.is_none());
     assert_eq!(scan.argv.last(), scan.outputs.first());
     assert_eq!(scan.argv[scan.argv.len() - 2], "-o");
-    assert_eq!(store.actions[1].inputs, scan.outputs);
+    let mut expected = scan.outputs.clone();
+    expected.extend([
+        "Main.swift".to_string(),
+        ".struo/out/Right/Right.swiftmodule".to_string(),
+    ]);
+    assert_eq!(store.actions[1].inputs, expected);
     let Some(DeclaredActionOperation::ExpandActions { args, .. }) = &store.actions[1].operation
     else {
         panic!("missing expansion")
