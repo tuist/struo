@@ -1194,31 +1194,10 @@ def _rust_builtin_extern_args(crate_type):
 def _rust_build_script_tool_paths(ctx):
     resolved = []
     for name in _rust_attr(ctx, "build_script_tools", []):
-        path = _rust_version_manager_tool(name, host_which_optional(name))
+        path = _version_manager_tool(name, host_which_optional(name))
         if path:
             resolved.append(path)
     return _unique(resolved)
-
-# Version managers that put a shim named after each tool on PATH, a symbolic
-# link to the manager itself, which picks the real binary from the user's
-# environment and configuration. A build script runs with neither, so the shim
-# fails there; `<manager> which <tool>` names the binary it would run instead.
-_RUST_VERSION_MANAGERS = ["mise", "rtx"]
-
-# The binary a version-manager shim at `path` runs for `name`, or "" when the
-# manager selects none here. A path that is not such a shim comes back as is.
-def _rust_version_manager_tool(name, path):
-    if not path:
-        return ""
-    target = host_symlink_target(path)
-    if not target or target.split("/")[-1] not in _RUST_VERSION_MANAGERS:
-        return path
-    if not target.startswith("/"):
-        target = path.rsplit("/", 1)[0] + "/" + target
-    real = host_command([target, "which", name], cwd = workspace_root(), check = False).strip()
-    if real.startswith("/") and host_file_exists(real):
-        return real
-    return ""
 
 def _rust_build_script_tool_identity(tool_paths):
     if not tool_paths:

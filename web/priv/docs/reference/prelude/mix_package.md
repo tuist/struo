@@ -12,9 +12,11 @@ version, source identity, checksums, repository, and Git revision available in
 For a Mix-managed package, the target runs the compiler pipeline registered by
 the vendored project. For a Rebar-managed package, it generates a sanitized
 Rebar configuration, stages the package source into an isolated directory, and
-invokes Rebar 3 directly. Dependency application outputs are declared inputs in
-both modes. Hex runs offline, and the package writes bytecode, private files,
-and include files into target-owned outputs.
+invokes Rebar 3 directly. Files that Rebar compile hooks write into the output
+application's `priv` directory, such as native libraries built by a Makefile,
+are kept beside the package's own `priv` files. Dependency application outputs
+are declared inputs in both modes. Hex runs offline, and the package writes
+bytecode, private files, and include files into target-owned outputs.
 Source-provided Rebar application metadata is staged before compilation and
 validated afterward.
 
@@ -49,6 +51,11 @@ wrong semantics.
 
 The target also receives the application metadata attributes shared with
 `elixir_library`, including `app_name`, `version`, and `mix_env`.
+
+The resolver also sets `srcs_exclude` to the build, dependency, and
+`node_modules` trees that Mix, Rebar, and asset tools leave inside a fetched
+package. Changing a file under them selects no tests and leaves test bindings
+unchanged.
 
 ## Dependency Edges
 

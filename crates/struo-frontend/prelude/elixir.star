@@ -250,13 +250,19 @@ def _elixir_execution_toolchain():
         "identity": "struo.elixir.execution.v1\x00" + content_sha256(_json_encode(execution)),
     }
 
+# Actions set their own HOME, where a version-manager shim cannot find the
+# configuration that selects a version, so they run the binary it names.
+def _elixir_host_tool(name):
+    path = host_which(name)
+    return _version_manager_tool(name, path) or path
+
 def _elixir_compiler_toolchain(worker = True):
     remote = _elixir_execution_toolchain() if worker else None
     if remote:
         return remote
-    elixir = host_which("elixir")
-    elixirc = host_which("elixirc")
-    erl = host_which("erl")
+    elixir = _elixir_host_tool("elixir")
+    elixirc = _elixir_host_tool("elixirc")
+    erl = _elixir_host_tool("erl")
     version = host_command([elixir, "--version"]).strip()
     elixirc_version = host_command([elixirc, "--version"]).strip()
     tool_dir = _parent_dir(elixir)
@@ -278,7 +284,7 @@ def _elixir_mix_toolchain(worker = True):
     if remote:
         return remote
     compiler = _elixir_compiler_toolchain(worker = False)
-    mix = host_which("mix")
+    mix = _elixir_host_tool("mix")
     mix_version = host_command([mix, "--version"]).strip()
     mix_home_info = host_command([
         compiler["elixir"],
@@ -1270,6 +1276,9 @@ def _mix_test_command_source():
     return """
 Mix.start()
 """ + _mix_locked_scm_source() + _elixir_test_formatter_source() + """
+# The build's applications are on the code path once the VM has started.
+# `mix test` exports none to the processes a test spawns, so neither do we.
+System.delete_env("ERL_LIBS")
 Mix.Project.in_project(:struo_test_runner, ".", [compilers: []], fn _project ->
   Mix.Task.run("loadconfig")
   Mix.Task.run("loadpaths", ["--no-deps-check"])
@@ -2090,14 +2099,11 @@ def _mix_dependency_index(dependencies):
 def _mix_source_globs(source_root):
     return [source_root + "/**/*"]
 
+def _mix_package_build_trees(source_root):
+    return [source_root + "/" + tree + "/**" for tree in [".struo", "_build", "deps", "node_modules", "**/node_modules"]]
+
 def _mix_generated_source_excludes(package, source_root):
-    excludes = [
-        source_root + "/.struo/**/*",
-        source_root + "/_build/**/*",
-        source_root + "/deps/**/*",
-        source_root + "/node_modules/**/*",
-        source_root + "/**/node_modules/**/*",
-    ]
+    excludes = _mix_package_build_trees(source_root)
     # Mix's yecc and leex compilers write the Erlang source next to each
     # grammar in the package's own directory, so a compile would otherwise
     # change the inputs of the next one. Matches are workspace-relative and
@@ -2213,6 +2219,7 @@ def _mix_dependencies_resolver(ctx):
             "_mix_root_config_entry": root_config_entry,
             "_mix_root_config_env": mix_env,
             "_mix_root_config_target": root_config_target,
+            "srcs_exclude": _mix_package_build_trees(source_root),
         }
         dependency_targets = []
         for child in dependency.get("dependencies") or []:
@@ -2269,6 +2276,7 @@ def _mix_dependencies_resolver(ctx):
                 "_mix_root_config_entry": root_config_entry,
                 "_mix_root_config_env": mix_env,
                 "_mix_root_config_target": root_config_target,
+                "srcs_exclude": _mix_package_build_trees(source_root),
             },
         })
     roots = _mix_resolved_roots(ctx, all_dependencies, targets_by_app, identities)
@@ -2586,7 +2594,7 @@ def _mix_rebar_package_action(ctx, source_root, app_name, mix_env, apps, app_dir
             ctx,
             source_root,
             "priv",
-            compiled_app_dir + "/priv",
+            metadata_stage + "/priv",
             ctx["label"]["id"] + ":rebar-priv",
         )
     if package_ebin:
@@ -2613,17 +2621,19 @@ def _mix_rebar_package_action(ctx, source_root, app_name, mix_env, apps, app_dir
     resource_inputs = []
     if package_include:
         resource_inputs.append(compiled_app_dir + "/include")
-    if package_priv:
-        resource_inputs.append(compiled_app_dir + "/priv")
+    # Compile hooks such as NIF Makefiles write into the output application's
+    # priv, so it is a compile output and the package's own priv merges with
+    # it when the application is assembled.
+    compiled_priv_dir = compiled_app_dir + "/priv"
     run_action(
         display_name = "Compile Rebar dependency · " + ctx["label"]["name"],
         presentation = _mix_action_metadata(ctx, mix_env, app_name),
         source_files = _action_source_files(_unique(_elixir_app_inputs(apps) + [config_file, source_stage] + resource_inputs)),
         argv = argv,
         inputs = _unique(_elixir_app_inputs(apps) + [config_file, source_stage] + resource_inputs),
-        outputs = [compiled_ebin_dir, compile_log, compile_warnings],
-        clean_paths = [build_home, compile_log, compile_warnings],
-        create_dirs = [compiled_ebin_dir, build_home],
+        outputs = [compiled_ebin_dir, compiled_priv_dir, compile_log, compile_warnings],
+        clean_paths = [build_home, compiled_priv_dir, compile_log, compile_warnings],
+        create_dirs = [compiled_ebin_dir, compiled_priv_dir, build_home],
         cwd = _package_relative(ctx, cwd),
         env = _elixir_action_env_with(ctx, toolchain, {
             "ERL_LIBS": ":".join(erlang_libraries),
@@ -2637,16 +2647,19 @@ def _mix_rebar_package_action(ctx, source_root, app_name, mix_env, apps, app_dir
         }),
         stdout = compile_log,
         stderr = compile_warnings,
-        toolchain_identity = toolchain["identity"] + "\x00mix-rebar-package.v7\x00" + identity,
+        toolchain_identity = toolchain["identity"] + "\x00mix-rebar-package.v8\x00" + identity,
         identifier = ctx["label"]["id"] + ":rebar-compile",
     )
     app_sources = []
     app_inputs = []
-    if package_ebin:
+    if package_ebin or package_priv:
         app_sources.append(metadata_stage)
+    if package_ebin:
         app_inputs.append(metadata_stage + "/ebin")
+    if package_priv:
+        app_inputs.append(metadata_stage + "/priv")
     app_sources.append(compiled_app_dir)
-    app_inputs.extend([compiled_ebin_dir] + resource_inputs)
+    app_inputs.extend([compiled_ebin_dir, compiled_priv_dir] + resource_inputs)
     copy_path(
         app_sources,
         app_dir,
@@ -3378,8 +3391,13 @@ def _mix_workspace_relative_paths(ctx, paths):
 def _mix_workspace_project_inputs(ctx):
     generated = _native_project_generated_dirs() + ["node_modules", ".git", ".struo", ".build", "cover"]
     excludes = [prefix + name + "/**/*" for name in generated for prefix in ["", "**/"]]
-    files = glob(["**/*", ".formatter.exs"], exclude = excludes)
-    return _mix_workspace_relative_paths(ctx, files)
+    # Hidden files and trees, such as CI configuration, are not Mix inputs,
+    # except hidden Elixir files: `mix format` expands its inputs with
+    # dotfiles and reads nested formatter files through `subdirectories`. ExUnit's tmp_dir tag writes test
+    # scratch files under `tmp/`.
+    untracked = ["**/.*/**/*", "tmp/**/*"]
+    files = glob(["**/*"], exclude = excludes + untracked + ["**/.*"]) + glob(["**/.*.ex", "**/.*.exs"], exclude = excludes + untracked)
+    return _mix_workspace_relative_paths(ctx, sorted(files))
 
 def _mix_workspace_children(ctx, apps_path):
     normalized = (apps_path or "").replace("\\", "/")
@@ -3693,6 +3711,7 @@ _MIX_DEPENDENCIES_ATTRS = [
 ]
 
 _MIX_PACKAGE_ATTRS = _ELIXIR_LIBRARY_ATTRS + [
+    attr("srcs_exclude", "list<string>", default = "[]", docs = "Package-relative globs that test selection and test discovery bindings leave out of `srcs`. Generated packages list the build, dependency, and `node_modules` trees Mix, Rebar, and asset tools leave inside a fetched package, which the Mix compile already ignores.", configurable = False),
     attr("_mix_locked", "bool", default = "false", docs = "Resolver-owned marker proving the synthetic target has locked identity metadata.", configurable = False),
     attr("_mix_local", "bool", default = "false", docs = "Resolver-owned marker identifying a workspace-local path dependency.", configurable = False),
     attr("_mix_package_name", "string", default = "", docs = "Resolver-owned registry package name.", configurable = False),

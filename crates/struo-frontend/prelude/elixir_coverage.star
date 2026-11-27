@@ -112,6 +112,8 @@ end
 [config] = System.argv()
 options = config |> File.read!() |> :json.decode()
 if options["mix"] do
+  # As under `mix test`, processes a test spawns get no build code paths.
+  System.delete_env("ERL_LIBS")
   Mix.start()
   Mix.Project.in_project(:struo_coverage_runner, ".", [compilers: []], fn _ ->
     if Keyword.has_key?(Mix.Project.config()[:aliases] || [], :test), do: raise("isolated coverage cannot replace a native test alias")
@@ -155,6 +157,7 @@ def _elixir_coverage_configuration(ctx, provider):
     sources = _file_globs(_elixir_attr(ctx, "coverage_sources", []))
     python = _resolve_host_executable("python3")
     elixir = _resolve_host_executable("elixir")
+    elixir = _version_manager_tool("elixir", elixir) or elixir
     if not sources or not python or not elixir:
         fail("coverage_per_test requires coverage_sources, Python 3 and Elixir")
     inputs = _unique(_elixir_test_input_sources(ctx, _elixir_test_sources(ctx)) + _elixir_config_inputs(ctx) + _elixir_data_inputs(ctx) + _elixir_tool_inputs(ctx) + glob(["mix.exs", "mix.lock", "**/mix.exs", "**/mix.lock"]))

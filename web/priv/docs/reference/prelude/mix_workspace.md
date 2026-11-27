@@ -21,7 +21,10 @@ without an explicit native target keep ordinary discovery, and containing
 explicit manifests take priority.
 
 Native compilation includes non-hidden project files outside generated build
-and dependency directories as conservative data inputs. Compile-time resources
+and dependency directories as conservative data inputs. It leaves out the
+project's `tmp/` directory, where ExUnit writes test scratch files, and keeps
+hidden `.ex` and `.exs` files, such as `.formatter.exs`, that `mix format`
+reads or checks. Compile-time resources
 and custom compiler sources therefore invalidate cached application output.
 Compilation identities also include the source location, so bytecode containing
 directory-sensitive resources is not reused across different checkout paths.

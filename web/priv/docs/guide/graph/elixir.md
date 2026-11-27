@@ -122,7 +122,9 @@ The second invocation restores unchanged actions from the configured cache.
 Outputs are materialized under `.struo/out/`. Changing a dependency
 invalidates that package and its consumers, and changing application source
 invalidates the application. Compilation also tracks non-hidden project files
-outside the build and dependency directories, such as a version file.
+outside the build and dependency directories, such as a version file. Test
+scratch files that ExUnit writes under the project's `tmp/` directory are not
+tracked.
 
 Builds, `mix_lint`, dependency compilation, and release assembly are
 cacheable. `struo run` with a task is not cached, so servers and interactive

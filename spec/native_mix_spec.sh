@@ -426,6 +426,162 @@ EX
     ! grep -q '"id":"app/mix-dev-second"' "$SPEC_ROOT/targets.json" || { cat "$SPEC_ROOT/targets.json"; return 1; }
   }
 
+  application_digest() {
+    native_struo build mix_application_dev > "$SPEC_ROOT/digest.json" 2> "$SPEC_ROOT/digest.err" || { cat "$SPEC_ROOT/digest.err"; return 1; }
+    "$SPEC_PYTHON3" -c 'import json, sys; print(json.load(open(sys.argv[1]))["action_digest"])' "$SPEC_ROOT/digest.json"
+  }
+
+  exercise_untracked_project_files() {
+    mkdir -p "$WORKSPACE/.git" "$WORKSPACE/app"
+    cp -R "$REPO_ROOT/crates/struo-frontend/prelude/examples/mix-workspace-native-project/." "$WORKSPACE/app/"
+    rm "$WORKSPACE/app/struo.toml"
+    printf '1.0.0' > "$WORKSPACE/app/VERSION"
+    before="$(application_digest)" || return
+    # ExUnit's tmp_dir tag writes under tmp/, and hidden trees such as CI
+    # configuration are not Mix inputs.
+    mkdir -p "$WORKSPACE/app/tmp/ExampleTest" "$WORKSPACE/app/.github/workflows"
+    printf 'scratch' > "$WORKSPACE/app/tmp/ExampleTest/output"
+    printf '[]\n' > "$WORKSPACE/app/tmp/ExampleTest/.formatter.exs"
+    printf 'on: push\n' > "$WORKSPACE/app/.github/workflows/ci.yml"
+    [ "$(application_digest)" = "$before" ] || { echo "tmp/ or .github/ changed the compile key" >&2; return 1; }
+    printf '2.0.0' > "$WORKSPACE/app/VERSION"
+    versioned="$(application_digest)" || return
+    [ "$versioned" != "$before" ] || { echo "a project file did not change the compile key" >&2; return 1; }
+    printf '[inputs: ["mix.exs"]]\n' > "$WORKSPACE/app/.formatter.exs"
+    [ "$(application_digest)" != "$versioned" ] || { echo ".formatter.exs did not change the compile key" >&2; return 1; }
+  }
+
+  exercise_hidden_formatter_inputs() {
+    mkdir -p "$WORKSPACE/.git" "$WORKSPACE/app"
+    cp -R "$REPO_ROOT/crates/struo-frontend/prelude/examples/mix-workspace-native-project/." "$WORKSPACE/app/"
+    rm "$WORKSPACE/app/struo.toml"
+    # `mix format` expands its inputs with dotfiles, so it checks `.iex.exs`.
+    printf '[inputs: ["*.{ex,exs}", "{lib,test}/**/*.{ex,exs}"]]\n' > "$WORKSPACE/app/.formatter.exs"
+    printf 'IO.puts(:ready)\n' > "$WORKSPACE/app/.iex.exs"
+    native_struo run mix_lint > "$SPEC_ROOT/lint.json" 2> "$SPEC_ROOT/lint.err" || { cat "$SPEC_ROOT/lint.err" >&2; return 1; }
+    printf 'IO.puts( :ready )\n' > "$WORKSPACE/app/.iex.exs"
+    if native_struo run mix_lint > "$SPEC_ROOT/relint.json" 2> "$SPEC_ROOT/relint.err"; then
+      echo "a misformatted .iex.exs passed lint" >&2
+      return 1
+    fi
+  }
+
+  It 'lints the hidden Elixir files mix format checks'
+    Skip if 'Mix toolchain unavailable on this host' mix_tools_unavailable
+    When call exercise_hidden_formatter_inputs
+    The status should be success
+  End
+
+  It 'keeps test scratch files and hidden trees out of the compile key'
+    Skip if 'Mix toolchain unavailable on this host' mix_tools_unavailable
+    When call exercise_untracked_project_files
+    The status should be success
+  End
+
+  # A stand-in for mise: its shims run the real tool only with the user's own
+  # HOME, as mise needs its configuration, and `mise which` names the binary.
+  install_version_manager_shims() {
+    elixir_bin="$(elixir -e 'IO.write(Path.expand("../../bin", :code.lib_dir(:elixir)))')" || return
+    erlang_bin="$(elixir -e 'IO.write(Path.join(:code.root_dir(), "bin"))')" || return
+    mkdir -p "$SPEC_ROOT/mise/bin" "$SPEC_ROOT/mise/shims"
+    cat > "$SPEC_ROOT/mise/bin/mise" <<EOF
+#!/bin/sh
+name=\${0##*/}
+case "\$name" in mise) name=\$2 ;; esac
+case "\$name" in erl|escript) real="$erlang_bin/\$name" ;; *) real="$elixir_bin/\$name" ;; esac
+if [ "\${0##*/}" = mise ]; then
+  [ "\$1" = which ] && printf '%s\n' "\$real"
+  exit
+fi
+[ "\$HOME" = "$HOME" ] || { echo "mise ERROR No version is set for shim: \$name" >&2; exit 1; }
+exec "\$real" "\$@"
+EOF
+    chmod +x "$SPEC_ROOT/mise/bin/mise"
+    for tool in elixir elixirc mix erl escript iex; do
+      ln -s ../bin/mise "$SPEC_ROOT/mise/shims/$tool"
+    done
+  }
+
+  exercise_version_manager_shims() {
+    mkdir -p "$WORKSPACE/.git" "$WORKSPACE/app"
+    cp -R "$REPO_ROOT/crates/struo-frontend/prelude/examples/mix-workspace-native-project/." "$WORKSPACE/app/"
+    rm "$WORKSPACE/app/struo.toml"
+    install_version_manager_shims || return
+    PATH="$SPEC_ROOT/mise/shims:/usr/bin:/bin"
+    native_struo build > "$SPEC_ROOT/build.json" 2> "$SPEC_ROOT/build.err" || { cat "$SPEC_ROOT/build.json" "$SPEC_ROOT/build.err" >&2; return 1; }
+    native_struo test > "$SPEC_ROOT/test.json" 2> "$SPEC_ROOT/test.err" || { cat "$SPEC_ROOT/test.err" >&2; return 1; }
+    # Lint runs `mix` itself inside an action.
+    native_struo run mix_lint > "$SPEC_ROOT/lint.json" 2> "$SPEC_ROOT/lint.err" || { cat "$SPEC_ROOT/lint.err" >&2; return 1; }
+  }
+
+  It 'builds and tests through version-manager shims'
+    Skip if 'Mix toolchain unavailable on this host' mix_tools_unavailable
+    When call exercise_version_manager_shims
+    The status should be success
+  End
+
+  exercise_child_code_paths() {
+    mkdir -p "$WORKSPACE/.git" "$WORKSPACE/app"
+    cp -R "$REPO_ROOT/crates/struo-frontend/prelude/examples/mix-workspace-native-project/." "$WORKSPACE/app/"
+    rm "$WORKSPACE/app/struo.toml"
+    # Like `mix test`, a node a test starts must not see the project's code,
+    # or a library that loads its modules into that node skips the load.
+    cat > "$WORKSPACE/app/test/child_node_test.exs" <<'EX'
+defmodule ChildNodeTest do
+  use ExUnit.Case
+
+  test "a spawned VM does not inherit the project's code paths" do
+    {loaded, 0} = System.cmd("elixir", ["-e", "IO.write(Code.ensure_loaded?(StruoNativeProjectExample))"])
+    assert loaded == "false"
+  end
+end
+EX
+    native_struo test > "$SPEC_ROOT/test.json" 2> "$SPEC_ROOT/test.err" || { cat "$WORKSPACE/.struo/out/app/mix_tests/test/elixir-test.log" >&2; return 1; }
+  }
+
+  It 'keeps the test build off the code path of processes a test spawns'
+    Skip if 'Mix toolchain unavailable on this host' mix_tools_unavailable
+    When call exercise_child_code_paths
+    The status should be success
+  End
+
+  test_binding() {
+    native_struo query test-plan > "$SPEC_ROOT/plan.json" 2> "$SPEC_ROOT/plan.err" || { cat "$SPEC_ROOT/plan.err"; return 1; }
+    "$SPEC_PYTHON3" -c 'import json, sys; print(json.load(open(sys.argv[1]))["bindings"][0]["fingerprint"])' "$SPEC_ROOT/plan.json"
+  }
+
+  selected_tests() {
+    native_struo query affected-tests --changed-path "$1" 2> "$SPEC_ROOT/affected.err" | "$SPEC_PYTHON3" -c 'import json, sys; print(" ".join(test["id"] for test in json.load(sys.stdin)))'
+  }
+
+  exercise_dependency_build_directories() {
+    mkdir -p "$WORKSPACE/.git" "$WORKSPACE/app/deps"
+    example="$REPO_ROOT/crates/struo-frontend/prelude/examples"
+    cp -R "$example/mix-workspace-native-project/." "$WORKSPACE/app/"
+    rm "$WORKSPACE/app/struo.toml"
+    cp "$example/elixir-library-with-mix-dependency/mix.lock" "$WORKSPACE/app/"
+    cp -R "$example/elixir-library-with-mix-dependency/deps/locked_greeting" "$WORKSPACE/app/deps/"
+    "$SPEC_PYTHON3" - "$WORKSPACE/app/mix.exs" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+path.write_text(path.read_text().replace('elixir: "~> 1.15"', 'elixir: "~> 1.15",\n      deps: [{:locked_greeting, "0.1.0"}]'))
+PY
+    before="$(test_binding)" || return
+    # Mix and Rebar leave their build directories inside a fetched package.
+    mkdir -p "$WORKSPACE/app/deps/locked_greeting/_build/prod"
+    printf 'build output' > "$WORKSPACE/app/deps/locked_greeting/_build/prod/output"
+    [ "$(test_binding)" = "$before" ] || { echo "a dependency build directory changed the test binding" >&2; return 1; }
+    [ -z "$(selected_tests deps/locked_greeting/_build/prod/output)" ] || { echo "a dependency build directory selected tests" >&2; return 1; }
+    [ "$(selected_tests deps/locked_greeting/lib/locked_greeting.ex)" = mix_tests ] || { echo "a dependency source did not select tests" >&2; return 1; }
+  }
+
+  It 'keeps dependency build directories out of test bindings and selection'
+    Skip if 'Mix toolchain unavailable on this host' mix_tools_unavailable
+    export MIX_HOME="$SPEC_ORIGINAL_HOME/.mix"
+    When call exercise_dependency_build_directories
+    The status should be success
+  End
+
   It 'resolves each Mix environment with the dependencies that environment selects'
     Skip if 'Mix toolchain unavailable on this host' mix_tools_unavailable
     When call exercise_environment_specific_dependency_graphs

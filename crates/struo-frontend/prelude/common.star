@@ -97,6 +97,27 @@ def native_project(target_kind, markers, name = None, target_name = None, docs =
         "workspace_markers": workspace_markers,
     }
 
+# Version managers that put a shim named after each tool on PATH, a symbolic
+# link to the manager itself, which picks the real binary from the user's
+# environment and configuration. An action runs with neither, so the shim
+# fails there; `<manager> which <tool>` names the binary it would run instead.
+_VERSION_MANAGERS = ["mise", "rtx"]
+
+# The binary a version-manager shim at `path` runs for `name`, or "" when the
+# manager selects none here. A path that is not such a shim comes back as is.
+def _version_manager_tool(name, path):
+    if not path:
+        return ""
+    target = host_symlink_target(path)
+    if not target or target.split("/")[-1] not in _VERSION_MANAGERS:
+        return path
+    if not target.startswith("/"):
+        target = path.rsplit("/", 1)[0] + "/" + target
+    real = host_command([target, "which", name], cwd = workspace_root(), check = False).strip()
+    if real.startswith("/") and host_file_exists(real):
+        return real
+    return ""
+
 def _native_project_generated_dirs():
     return ["_build", "deps", "target", "third_party", "vendor"]
 

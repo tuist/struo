@@ -185,6 +185,102 @@ TOML
     The status should be success
   End
 
+  rebar_unavailable() {
+    [ ! -x "${MIX_REBAR3:-}" ]
+  }
+
+  prepare_rebar_hook_dependency() {
+    MIX_REBAR3="$(HOME="$SPEC_ORIGINAL_HOME" elixir -e 'Mix.start(); IO.write(Mix.Rebar.local_rebar_path(:rebar3))' 2>/dev/null)"
+    export MIX_REBAR3
+    cp -R "$REPO_ROOT/crates/struo-frontend/prelude/examples/elixir-library-with-mix-dependency/." "$WORKSPACE/"
+    package="$WORKSPACE/deps/locked_greeting"
+    rm -rf "$package/mix.exs" "$package/lib"
+    mkdir -p "$package/src"
+    if [ "${1:-}" != generated-only ]; then
+      mkdir -p "$package/priv"
+      printf 'static' > "$package/priv/static.txt"
+    fi
+    # The native build reads the host outside the package, like a NIF
+    # Makefile linking a system library.
+    printf generated > "$SPEC_ROOT/native.txt"
+    # Like a NIF Makefile, the hook writes into the output application.
+    # Rebar runs a hook without a shell, so it runs one script.
+    cat > "$package/generate.sh" <<EOF
+mkdir -p "\$REBAR_BARE_COMPILER_OUTPUT_DIR/priv/native"
+cat "$SPEC_ROOT/native.txt" > "\$REBAR_BARE_COMPILER_OUTPUT_DIR/priv/native/generated.txt"
+EOF
+    printf '{pre_hooks, [{compile, "sh generate.sh"}]}.\n' > "$package/rebar.config"
+    printf '{application, locked_greeting, [{vsn, "0.1.0"}, {applications, [kernel, stdlib]}, {modules, []}, {registered, []}]}.\n' > "$package/src/locked_greeting.app.src"
+    printf -- '-module(locked_greeting).\n-export([message/1]).\nmessage(Name) -> Name.\n' > "$package/src/locked_greeting.erl"
+    "$SPEC_PYTHON3" - "$WORKSPACE" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+lock = root / "mix.lock"
+lock.write_text(lock.read_text().replace("[:mix]", "[:rebar3]"))
+graph = json.loads((root / "mix-dependencies.json").read_text())
+graph["lockfile"] = graph["struo_inputs"]["mix.lock"] = lock.read_text()
+graph["lock"]["locked_greeting"][4] = ["rebar3"]
+for dependency in graph["dependencies"]:
+    if dependency["app"] == "locked_greeting":
+        dependency["manager"] = "rebar3"
+(root / "mix-dependencies.json").write_text(json.dumps(graph))
+PY
+  }
+
+  build_and_restore_rebar_hook_resources() {
+    struo --format json build mix-locked-greeting > "$WORKSPACE/build.json" || return
+    app_dir="$WORKSPACE/.struo/out/mix-locked-greeting/mix/prod/lib/locked_greeting"
+    [ "$(cat "$app_dir/priv/native/generated.txt")" = generated ] || return
+    [ "$(cat "$app_dir/priv/static.txt")" = static ] || return
+    rm -rf "$WORKSPACE/.struo/out"
+    struo --format json build mix-locked-greeting > "$WORKSPACE/restored.json" || return
+    [ "$(cat "$app_dir/priv/native/generated.txt")" = generated ] || return
+    [ "$(cat "$app_dir/priv/static.txt")" = static ] || return
+    "$SPEC_PYTHON3" -c 'import json, sys; assert json.load(open(sys.argv[1]))["cache"] == "hit"' "$WORKSPACE/restored.json"
+  }
+
+  consumer_compile_digest() {
+    rm -rf "$WORKSPACE/.struo" "$XDG_CACHE_HOME" "$(struo_log_dir)"
+    struo --format json build greeting > "$WORKSPACE/greeting.json" || return
+    "$SPEC_PYTHON3" - "$(struo_log_dir)" <<'PY'
+import json, pathlib, sys
+for log in pathlib.Path(sys.argv[1]).glob("*.log"):
+    for line in log.read_text().splitlines():
+        fields = json.loads(line).get("fields", {})
+        if fields.get("identifier") == "greeting:elixir-compile" and fields.get("action_digest"):
+            print(fields["action_digest"])
+PY
+  }
+
+  rebuild_consumer_after_native_change() {
+    before="$(consumer_compile_digest)" || return
+    # A fresh build of the same package sources produces a different native
+    # library, which the consumer compiles against.
+    printf rebuilt > "$SPEC_ROOT/native.txt"
+    after="$(consumer_compile_digest)" || return
+    [ -n "$before" ] || return
+    [ "$(cat "$WORKSPACE/.struo/out/mix-locked-greeting/mix/prod/lib/locked_greeting/priv/native/generated.txt")" = rebuilt ] || return
+    [ "$after" != "$before" ] || { echo "a changed hook-built priv file left the consumer key unchanged" >&2; return 1; }
+  }
+
+  It 'rebuilds consumers when a Rebar compile hook writes different priv files'
+    Skip if 'Mix toolchain unavailable on this host' mix_tools_unavailable
+    prepare_rebar_hook_dependency generated-only
+    Skip if 'Rebar 3 unavailable on this host' rebar_unavailable
+
+    When call rebuild_consumer_after_native_change
+    The status should be success
+  End
+
+  It 'keeps priv files a Rebar compile hook writes into the output application'
+    Skip if 'Mix toolchain unavailable on this host' mix_tools_unavailable
+    prepare_rebar_hook_dependency
+    Skip if 'Rebar 3 unavailable on this host' rebar_unavailable
+
+    When call build_and_restore_rebar_hook_resources
+    The status should be success
+  End
+
   It 'captures generated priv resources without static source resources'
     Skip if 'Mix toolchain unavailable on this host' mix_tools_unavailable
     prepare_resource_dependency
