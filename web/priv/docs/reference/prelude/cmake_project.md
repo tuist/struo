@@ -38,6 +38,7 @@ CMake graph should also be queryable.
 | `hdrs` | list&lt;string&gt; | no | `[]` | Public package-relative headers |
 | `header_globs` | list&lt;string&gt; | no | `[]` | Public header patterns |
 | `includes` | list&lt;string&gt; | no | `[]` | Public include directories |
+| `generated_includes` | list&lt;string&gt; | no | `[]` | Public include directories relative to the generated build directory; declared header products under them, or a product naming the directory itself, become public headers |
 | `defines` | list&lt;string&gt; | no | `[]` | Public preprocessor definitions |
 | `linkopts` | list&lt;string&gt; | no | `[]` | Linker options propagated to dependents |
 | `data` | list&lt;string&gt; | no | `[]` | Runtime data patterns propagated to dependents |
@@ -46,6 +47,14 @@ CMake graph should also be queryable.
 Product paths support `{static_prefix}`, `{static_suffix}`,
 `{shared_prefix}`, `{shared_suffix}`, and `{exe_suffix}`. Absolute paths and
 paths that escape the generated build directory are rejected.
+
+Headers that CMake generates, such as a configured `config.h`, are not in the
+source tree. List each one in `products` and name its directory in
+`generated_includes`, so dependents receive the staged header and its include
+directory. A product that names the include directory itself publishes the
+whole directory. Other products under it, such as executables or stamp files,
+are not passed to dependents. A generated include directory with no declared
+header product is rejected.
 
 ## Dependency Edges
 

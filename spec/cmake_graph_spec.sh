@@ -191,6 +191,106 @@ PY
     The contents of file "$WORKSPACE/.struo/out/Tests/test/ctest.log" should include 'Process terminated due to timeout'
   End
 
+  consume_generated_cmake_header() {
+    value="$1"
+    cat > "$WORKSPACE/CMakeLists.txt" <<'CMAKE'
+cmake_minimum_required(VERSION 3.20)
+project(Gen C)
+include(values.cmake)
+configure_file(config.h.in "${CMAKE_BINARY_DIR}/include/gen/config.h")
+add_library(gen STATIC gen.c)
+target_include_directories(gen PUBLIC "${CMAKE_BINARY_DIR}/include")
+CMAKE
+    printf 'set(GEN_VALUE 42)\n' > "$WORKSPACE/values.cmake"
+    printf '#define GEN_VALUE @GEN_VALUE@\n' > "$WORKSPACE/config.h.in"
+    printf '#include <gen/config.h>\nint gen_value(void) { return GEN_VALUE; }\n' > "$WORKSPACE/gen.c"
+    printf '#include <gen/config.h>\n_Static_assert(GEN_VALUE == 42, "stale generated header");\nint consumer(void) { return GEN_VALUE; }\n' > "$WORKSPACE/consumer.c"
+    cat > "$WORKSPACE/struo.toml" <<'TOML'
+[[target]]
+name = "Gen"
+kind = "cmake_project"
+srcs = ["CMakeLists.txt", "values.cmake", "config.h.in", "gen.c"]
+[target.attrs]
+products = ["{static_prefix}gen{static_suffix}", "include/gen/config.h"]
+generated_includes = ["include"]
+
+[[target]]
+name = "Consumer"
+kind = "c_library"
+srcs = ["consumer.c"]
+deps = ["Gen"]
+TOML
+    struo --format json build --sandbox copied-inputs Consumer > "$WORKSPACE/first.json" || return
+    [ "$value" = 42 ] && return
+    printf 'set(GEN_VALUE %s)\n' "$value" > "$WORKSPACE/values.cmake"
+    struo --format json build --sandbox copied-inputs Consumer
+  }
+
+  It 'publishes headers CMake generates to native dependents'
+    Skip if 'CMake native toolchain unavailable' cmake_tools_unavailable
+    When call consume_generated_cmake_header 42
+    The status should be success
+    The contents of file "$WORKSPACE/first.json" should include '"status":"completed"'
+  End
+
+  It 'rebuilds dependents when a generated CMake header changes'
+    Skip if 'CMake native toolchain unavailable' cmake_tools_unavailable
+    When call consume_generated_cmake_header 7
+    The status should be failure
+    The stderr should include 'stale generated header'
+  End
+
+  reuse_dependent_of_generated_root() {
+    layout="$1"
+    cat > "$WORKSPACE/CMakeLists.txt" <<'CMAKE'
+cmake_minimum_required(VERSION 3.20)
+project(Gen C)
+file(WRITE "${CMAKE_BINARY_DIR}/gen/config.h" "#define GEN_VALUE 42\n")
+file(WRITE "${CMAKE_BINARY_DIR}/include/gen/config.h" "#define GEN_VALUE 42\n")
+string(RANDOM LENGTH 16 stamp)
+file(WRITE "${CMAKE_BINARY_DIR}/stamp.txt" "${stamp}\n")
+add_library(gen STATIC gen.c)
+target_include_directories(gen PUBLIC "${CMAKE_BINARY_DIR}")
+CMAKE
+    printf '#include <gen/config.h>\nint gen_value(void) { return GEN_VALUE; }\n' > "$WORKSPACE/gen.c"
+    printf '#include <gen/config.h>\nint consumer(void) { return GEN_VALUE; }\n' > "$WORKSPACE/consumer.c"
+    case "$layout" in
+      files) products='"./{static_prefix}gen{static_suffix}", "./gen/config.h", "stamp.txt"'; includes='"./"' ;;
+      directory) products='"{static_prefix}gen{static_suffix}", "include", "stamp.txt"'; includes='"include/"' ;;
+    esac
+    cat > "$WORKSPACE/struo.toml" <<TOML
+[[target]]
+name = "Gen"
+kind = "cmake_project"
+srcs = ["CMakeLists.txt", "gen.c"]
+[target.attrs]
+products = [$products]
+generated_includes = [$includes]
+
+[[target]]
+name = "Consumer"
+kind = "c_library"
+srcs = ["consumer.c"]
+deps = ["Gen"]
+TOML
+    struo --format json build --sandbox copied-inputs Consumer > /dev/null || return
+    struo --format json build --sandbox copied-inputs Consumer
+  }
+
+  It 'publishes only header products from a generated include directory'
+    Skip if 'CMake native toolchain unavailable' cmake_tools_unavailable
+    When call reuse_dependent_of_generated_root files
+    The status should be success
+    The stdout should include '"cache":"hit"'
+  End
+
+  It 'publishes a generated header directory product'
+    Skip if 'CMake native toolchain unavailable' cmake_tools_unavailable
+    When call reuse_dependent_of_generated_root directory
+    The status should be success
+    The stdout should include '"cache":"hit"'
+  End
+
   rebuild_changed_cmake_toolchain() {
     kind="$1"
     selection="$2"

@@ -186,6 +186,18 @@ defines = ["ENGINE_PUBLIC=1"]
 linkopts = ["-pthread"]
 ```
 
+When CMake generates a public header, such as one written by
+`configure_file`, declare it as a product and name its directory relative to
+the generated build directory in `generated_includes`:
+
+```toml
+[target.attrs]
+products = ["{static_prefix}engine{static_suffix}", "include/engine/config.h"]
+generated_includes = ["include"]
+```
+
+Dependents then compile against the staged header and rebuild when it changes.
+
 ## Limitations
 
 - Configure and build form one uncached action that cleans the build directory

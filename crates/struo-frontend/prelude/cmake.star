@@ -67,16 +67,22 @@ def _cmake_product_tokens():
         "{exe_suffix}": ".exe" if os == "windows" else "",
     }
 
-def _cmake_product_path(ctx, product):
+def _cmake_product_path(ctx, product, attribute = "products"):
     path = product.replace("\\", "/")
     if not path or path.startswith("/") or (len(path) > 1 and path[1] == ":"):
-        fail(ctx["label"]["id"] + ": CMake product paths must be non-empty and relative to the generated build directory")
+        fail(ctx["label"]["id"] + ": " + attribute + " paths must be non-empty and relative to the generated build directory")
+    components = []
     for component in path.split("/"):
         if component == "..":
-            fail(ctx["label"]["id"] + ": CMake product path `" + product + "` must stay inside the generated build directory")
+            fail(ctx["label"]["id"] + ": " + attribute + " path `" + product + "` must stay inside the generated build directory")
+        if component and component != ".":
+            components.append(component)
+    path = "/".join(components)
     for token, value in _cmake_product_tokens().items():
         path = path.replace(token, value)
     return path
+
+_CMAKE_HEADER_EXTENSIONS = [".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".ipp", ".tpp", ".def"]
 
 def _cmake_static_library(path):
     return _ends_with(path, ".a") or _ends_with(path, ".lib")
@@ -108,6 +114,8 @@ def _cmake_build_program(ctx, generator):
 
 def _cmake_project_impl(ctx):
     products = [_cmake_product_path(ctx, product) for product in _cmake_attr(ctx, "products", [])]
+    if "" in products:
+        fail(ctx["label"]["id"] + ": products must name files or directories inside the generated build directory, not the directory itself")
     if not products:
         fail(ctx["label"]["id"] + ": products must list at least one file produced under the generated CMake build directory")
 
@@ -167,7 +175,19 @@ def _cmake_project_impl(ctx):
 
     own_static = [path for path in staged_products if _cmake_static_library(path)]
     own_dynamic = [path for path in staged_products if _cmake_dynamic_library(path)]
+    products_root = staged_products[0][:-len(products[0])].rstrip("/")
     include_dirs = _cmake_path_attrs(ctx, "includes")
+    for directory in _cmake_attr(ctx, "generated_includes", []):
+        relative = _cmake_product_path(ctx, directory, "generated_includes")
+        generated = [
+            staged_products[index]
+            for index in range(len(products))
+            if products[index] == relative or ((not relative or products[index].startswith(relative + "/")) and _filter_by_extensions([products[index]], _CMAKE_HEADER_EXTENSIONS))
+        ]
+        if not generated:
+            fail(ctx["label"]["id"] + ": generated include directory `" + directory + "` contains no declared header product; list the headers CMake generates there, or the directory itself, in products")
+        headers = _unique(headers + generated)
+        include_dirs.append(products_root + "/" + relative if relative else products_root)
     defines = _cmake_attr(ctx, "defines", [])
     linkopts = _cmake_attr(ctx, "linkopts", [])
     data = _cmake_globs(_cmake_attr(ctx, "data", []))
@@ -552,6 +572,7 @@ cmake_project = target_kind(
         attr("hdrs", "list<string>", default = "[]", docs = "Public package-relative headers exposed to native dependents.", configurable = False),
         attr("header_globs", "list<string>", default = "[]", docs = "Public header glob patterns exposed to native dependents.", configurable = False),
         attr("includes", "list<string>", default = "[]", docs = "Public include directories propagated to native dependents.", configurable = False),
+        attr("generated_includes", "list<string>", default = "[]", docs = "Public include directories relative to the generated build directory, for headers CMake generates. Declared header products under each directory, or a product naming the directory itself, are published as headers.", configurable = False),
         attr("defines", "list<string>", default = "[]", docs = "Preprocessor definitions propagated to native dependents.", configurable = False),
         attr("linkopts", "list<string>", default = "[]", docs = "Linker options propagated to native dependents.", configurable = False),
         attr("data", "list<string>", default = "[]", docs = "Runtime data globs propagated to dependents.", configurable = False),
