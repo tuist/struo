@@ -274,6 +274,8 @@ permit LLVM caching; debug information is never removed automatically. See the
   compiled at the use site by downstream Zig targets
 - [`zig_c_library`](/reference/prelude/zig_c_library): Zig module
   generated from C provider headers
+- [`zig_options`](/reference/prelude/zig_options): Zig module of
+  build-time constants, like a `build.zig` options step
 - [`zig_binary`](/reference/prelude/zig_binary): Zig executable built
   from a root module, Zig module dependencies, and C provider dependencies
 - [`zig_static_library`](/reference/prelude/zig_static_library): Zig

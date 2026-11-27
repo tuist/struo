@@ -139,6 +139,7 @@ PRELUDE_TARGET_KINDS = {
         "zig_package",
         "zig_library",
         "zig_generated_library",
+        "zig_options",
         "zig_c_library",
         "zig_binary",
         "zig_static_library",

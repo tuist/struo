@@ -908,6 +908,63 @@ def _zig_generated_library_impl(ctx):
     provider["default_output"] = output
     return provider
 
+def _zig_string_literal(value):
+    out = ["\""]
+    for ch in value.elems():
+        code = ord(ch)
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == "\"":
+            out.append("\\\"")
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\t":
+            out.append("\\t")
+        elif code < 32 or code == 127:
+            out.append("\\x" + "0123456789abcdef"[code // 16] + "0123456789abcdef"[code % 16])
+        else:
+            out.append(ch)
+    out.append("\"")
+    return "".join(out)
+
+def _zig_option_declaration(name, value, declared_type):
+    # Quoted like std.zig.fmtId, so keywords and primitives such as `type`
+    # remain valid option names.
+    name = "@" + _zig_string_literal(name)
+    if value == None:
+        if not declared_type.startswith("?"):
+            _diagnostic_fail("zig_option_value_required", "option_types", "Zig option `" + name + "` has a type but no value", "Add a value under options, or make option_types[\"" + name + "\"] optional with a leading `?` so it defaults to null")
+        return "pub const " + name + ": " + declared_type + " = null;"
+    if type(value) == "bool":
+        return "pub const " + name + ": " + (declared_type or "bool") + " = " + ("true" if value else "false") + ";"
+    if type(value) == "int":
+        return "pub const " + name + ": " + (declared_type or "comptime_int") + " = " + str(value) + ";"
+    if type(value) == "string":
+        return "pub const " + name + ": " + (declared_type or "[]const u8") + " = " + _zig_string_literal(value) + ";"
+    if type(value) == "list" and all([type(item) == "string" for item in value]):
+        items = ", ".join([_zig_string_literal(item) for item in value])
+        return "pub const " + name + ": " + (declared_type or "[]const []const u8") + " = &[_][]const u8{ " + items + " };"
+    _diagnostic_fail("zig_option_value_unsupported", "options", "Zig option `" + name + "` has an unsupported value type `" + type(value) + "`", "Use a bool, integer, string, or list of strings, matching Zig's build Options step")
+
+def _zig_options_impl(ctx):
+    options = _zig_attr(ctx, "options", {})
+    option_types = _zig_attr(ctx, "option_types", {})
+    lines = []
+    for name in sorted(_unique(list(options.keys()) + list(option_types.keys()))):
+        lines.append(_zig_option_declaration(name, options.get(name), option_types.get(name) or ""))
+    output = declare_output(_zig_attr(ctx, "output_name", "options.zig"))
+    write_path(output, "\n".join(lines) + "\n")
+    module_ctx = dict(ctx)
+    module_ctx["attr"] = dict(ctx["attr"])
+    module_ctx["attr"]["main"] = output
+    module_ctx["srcs"] = []
+    provider = _zig_library_impl(module_ctx)
+    provider["target_kind"] = "zig_options"
+    provider["default_output"] = output
+    return provider
+
 def _zig_binary_impl(ctx):
     if ctx["capability"] == "run":
         binary = ctx["build_dir"] + "/" + _zig_output_name(ctx, "binary")
@@ -1154,9 +1211,9 @@ def _zig_test_impl(ctx):
         argv = _zig_powershell_argv(_zig_test_windows_script(ctx, provider["test_binary"], results, log, native_results))
     else:
         argv = [host_which("sh"), "-c", _zig_test_script(ctx, provider["test_binary"], results, log, native_results)]
-    prepare_path(test_dir, kind = "directory", identifier = ctx["label"]["id"] + ":zig-test-prepare")
     run_action(
         display_name = "Run Zig tests · " + ctx["label"]["name"],
+        create_dirs = [test_dir],
         source_files = _action_source_files(_unique([provider["test_binary"]] + _zig_data_inputs(ctx) + _zig_collect_dep_data(ctx["deps"]))),
         argv = argv,
         inputs = _unique([provider["test_binary"]] + _zig_data_inputs(ctx) + _zig_collect_dep_data(ctx["deps"])),
@@ -1356,6 +1413,143 @@ def _zig_zon_package_fields(source):
     tokens = _zig_zon_tokens(source)
     return _zig_zon_fields(tokens, 1, len(tokens) - 1)
 
+def _zig_source_tokens(source):
+    tokens = []
+    index = 0
+    length = len(source)
+    for _ in range(length + 1):
+        if index >= length:
+            break
+        ch = source[index]
+        if ch in [" ", "\t", "\r", "\n"]:
+            index += 1
+            continue
+        two = source[index:index + 2]
+        if two == "//" or two == "\\\\":
+            end = source.find("\n", index)
+            index = length if end < 0 else end
+            continue
+        if ch == "\"" or ch == "'":
+            index += 1
+            value = []
+            for _ in range(length + 1):
+                if index >= length or source[index] == "\n":
+                    break
+                current = source[index]
+                index += 1
+                if current == "\\":
+                    if index < length:
+                        value.append(source[index])
+                        index += 1
+                elif current == ch:
+                    break
+                else:
+                    value.append(current)
+            tokens.append({"kind": "string" if ch == "\"" else "char", "value": "".join(value)})
+            continue
+        if ch in ["(", ")", "{", "}", "[", "]", ",", ".", "=", ";"]:
+            tokens.append({"kind": "punct", "value": ch})
+            index += 1
+            continue
+        start = index
+        for _ in range(length + 1):
+            if index >= length:
+                break
+            current = source[index]
+            if current in [" ", "\t", "\r", "\n", "\"", "'", "(", ")", "{", "}", "[", "]", ",", ".", "=", ";"] or source[index:index + 2] == "//":
+                break
+            index += 1
+        if start == index:
+            index += 1
+            continue
+        tokens.append({"kind": "atom", "value": source[start:index]})
+    return tokens
+
+def _zig_token_is(tokens, index, value):
+    return index < len(tokens) and tokens[index]["kind"] != "string" and tokens[index]["value"] == value
+
+def _zig_build_module_root(tokens, start, end, receiver):
+    # Returns the literal path of `.root_source_file = <receiver>.path("...")`,
+    # "" when the module has no root source file, or None when the root is
+    # not a literal path in this package.
+    if not (_zig_token_is(tokens, start, ",") and _zig_token_is(tokens, start + 1, ".") and _zig_token_is(tokens, start + 2, "{")):
+        return None
+    depth = 0
+    for index in range(start, end):
+        value = tokens[index]["value"] if tokens[index]["kind"] == "punct" else ""
+        if value in ["(", "{", "["]:
+            depth += 1
+        elif value in [")", "}", "]"]:
+            depth -= 1
+        if depth != 1 or not _zig_token_is(tokens, index, ".") or not _zig_token_is(tokens, index + 1, "root_source_file") or not _zig_token_is(tokens, index + 2, "="):
+            continue
+        value_end = index + 3
+        nested = 0
+        for cursor in range(index + 3, end):
+            current = tokens[cursor]["value"] if tokens[cursor]["kind"] == "punct" else ""
+            if current in ["(", "{", "["]:
+                nested += 1
+            elif current in [")", "}", "]"]:
+                if nested == 0:
+                    break
+                nested -= 1
+            elif current == "," and nested == 0:
+                break
+            value_end = cursor + 1
+        expression = tokens[index + 3:value_end]
+        if len(expression) == 1 and expression[0]["value"] == "null":
+            return ""
+        if len(expression) == 6 and _zig_token_is(expression, 0, receiver) and _zig_token_is(expression, 1, ".") and _zig_token_is(expression, 2, "path") and _zig_token_is(expression, 3, "(") and expression[4]["kind"] == "string" and _zig_token_is(expression, 5, ")"):
+            return expression[4]["value"]
+        return None
+    return ""
+
+def _zig_build_exported_modules(source):
+    tokens = _zig_source_tokens(source)
+    modules = []
+    for index in range(1, len(tokens)):
+        if not _zig_token_is(tokens, index, "addModule") or not _zig_token_is(tokens, index - 1, ".") or not _zig_token_is(tokens, index + 1, "("):
+            continue
+        if index + 2 >= len(tokens) or tokens[index + 2]["kind"] != "string":
+            continue
+        depth = 0
+        end = len(tokens)
+        for cursor in range(index + 1, len(tokens)):
+            value = tokens[cursor]["value"] if tokens[cursor]["kind"] == "punct" else ""
+            if value == "(":
+                depth += 1
+            elif value == ")":
+                depth -= 1
+                if depth == 0:
+                    end = cursor
+                    break
+        modules.append({"name": tokens[index + 2]["value"], "root": _zig_build_module_root(tokens, index + 3, end, tokens[index - 2]["value"] if index >= 2 else "")})
+    return modules
+
+def _zig_package_module_root(ctx, record, package_name, files):
+    default = record["source_root"] + "/src/root.zig"
+    build_file = record["source_root"] + "/build.zig"
+    source = files.get(build_file)
+    if source == None:
+        return default
+    modules = [module for module in _zig_build_exported_modules(source) if module["root"] != ""]
+    if len(modules) == 0:
+        return default
+    selected = None
+    for wanted in [record["alias"], package_name]:
+        matches = [module for module in modules if module["name"] == wanted]
+        if len(matches) > 0:
+            selected = matches[0]
+            break
+    repair = "set module_paths[\"" + record["alias"] + "\"] on `" + ctx["label"]["id"] + "` to the root source file of the module this project imports"
+    if selected == None:
+        if len(modules) > 1:
+            fail(ctx["label"]["id"] + ": Zig package `" + record["alias"] + "` (" + build_file + ") exports several modules (" + ", ".join([module["name"] for module in modules]) + "); " + repair)
+        selected = modules[0]
+    if selected["root"] == None:
+        fail(ctx["label"]["id"] + ": Zig package `" + record["alias"] + "` module `" + selected["name"] + "` in " + build_file + " has a computed root source file; " + repair)
+    return _zig_normalize_package_path(record["source_root"] + "/" + selected["root"])
+
 def _zig_normalize_package_path(path):
     normalized = []
     for part in path.replace("\\", "/").split("/"):
@@ -1379,9 +1573,12 @@ def _zig_package_source_root(manifest, alias, dependency, vendor_dir, package_pa
         return _zig_normalize_package_path(_parent_dir(manifest) + "/" + package_path)
     content_hash = dependency.get("hash") or ""
     by_hash = vendor_dir + "/" + content_hash
+    by_alias = vendor_dir + "/" + alias
     if content_hash and by_hash + "/build.zig.zon" in files:
         return by_hash
-    return vendor_dir + "/" + alias
+    if content_hash and by_alias + "/build.zig.zon" not in files:
+        return by_hash
+    return by_alias
 
 def _zig_package_identity(alias, dependency, source_root):
     return dependency.get("hash") or source_root or alias
@@ -1394,10 +1591,16 @@ def _zig_trim_trailing_slash(value):
 def _zig_package_target_name(alias, identity):
     return "zig-package-" + _zig_safe_name(alias + "-" + identity)
 
+def _zig_package_is_source_only(dependency, manifest, files):
+    # Zig names a package without build.zig.zon `N-V-<digest>`; such a
+    # package carries files, such as C sources, but exports no Zig module.
+    return (dependency.get("hash") or "").startswith("N-V-") and manifest not in files
+
 def _zig_package_record(alias, dependency, manifest, vendor_dir, package_paths, files):
     source_root = _zig_package_source_root(manifest, alias, dependency, vendor_dir, package_paths, files)
     identity = _zig_package_identity(alias, dependency, source_root)
     return {
+        "source_only": _zig_package_is_source_only(dependency, source_root + "/build.zig.zon", files),
         "alias": alias,
         "dependency": dependency,
         "identity": identity,
@@ -1417,13 +1620,19 @@ def _zig_dependency_resolver_impl(ctx):
     vendor_dir = _zig_trim_trailing_slash(attrs.get("vendor_dir") or "third_party/zig")
     package_paths = attrs.get("package_paths") or {}
     module_paths = attrs.get("module_paths") or {}
+    package_deps = attrs.get("package_deps") or {}
+    used_package_deps = {}
+    source_only = {}
     direct = _zig_zon_dependencies(source)
     queue = []
     queued = {}
     root_names = []
     for alias, dependency in direct.items():
         record = _zig_package_record(alias, dependency, manifest, vendor_dir, package_paths, files)
-        if record["key"] in queued:
+        if record["source_only"]:
+            source_only[alias] = True
+            source_only[record["identity"]] = True
+        if record["key"] in queued or record["source_only"]:
             continue
         queued[record["key"]] = True
         queue.append(record)
@@ -1446,6 +1655,10 @@ def _zig_dependency_resolver_impl(ctx):
         import_names = {}
         for child_alias, child_dependency in child_dependencies.items():
             child = _zig_package_record(child_alias, child_dependency, record["manifest"], vendor_dir, package_paths, files)
+            if child["source_only"]:
+                source_only[child_alias] = True
+                source_only[child["identity"]] = True
+                continue
             deps.append("./" + child["target_name"])
             import_names[child["target_name"]] = child_alias
             if child["key"] not in queued:
@@ -1454,7 +1667,13 @@ def _zig_dependency_resolver_impl(ctx):
                 queued[child["key"]] = True
                 queue.append(child)
         dependency = record["dependency"]
-        main = module_paths.get(record["identity"]) or module_paths.get(record["alias"]) or (record["source_root"] + "/src/root.zig")
+        for key in _unique([record["identity"], record["alias"]]):
+            if key in package_deps:
+                used_package_deps[key] = True
+                for label in package_deps[key]:
+                    deps.append(label if "/" in label else "./" + label)
+        deps = _unique(deps)
+        main = module_paths.get(record["identity"]) or module_paths.get(record["alias"]) or _zig_package_module_root(ctx, record, child_fields.get("name") or record["alias"], files)
         source_globs = [
             record["source_root"] + "/**/*",
         ]
@@ -1478,6 +1697,11 @@ def _zig_dependency_resolver_impl(ctx):
             "srcs": source_globs,
             "attrs": target_attrs,
         })
+    for key in package_deps.keys():
+        if key not in used_package_deps and key in source_only:
+            fail(ctx["label"]["id"] + ": package_deps key `" + key + "` names a Zig package without build.zig.zon, which has no Zig module; declare a c_library over its files instead")
+        if key not in used_package_deps:
+            fail(ctx["label"]["id"] + ": package_deps key `" + key + "` does not match the alias or content hash of any resolved Zig package")
     if cursor < len(queue):
         fail(ctx["label"]["id"] + ": Zig dependency graph expansion stopped before package `" + queue[cursor]["alias"] + "`; the graph exceeds the package limit of " + str(package_limit))
     return {
@@ -1569,7 +1793,8 @@ zig_dependencies = target_kind(
         attr("resolver_inputs", "list<string>", default = "[]", docs = "Package-relative text globs supplied to the resolver. Defaults to srcs when empty or omitted; normally include every materialized build.zig.zon file.", configurable = False),
         attr("vendor_dir", "string", default = "third_party/zig", docs = "Package-relative directory containing content-addressed Zig package sources.", configurable = False),
         attr("package_paths", "map<string, string>", default = "{}", docs = "Overrides from dependency alias or content hash to a materialized package source directory.", configurable = False),
-        attr("module_paths", "map<string, string>", default = "{}", docs = "Overrides from dependency alias or content hash to its root Zig module. Defaults to src/root.zig inside the package.", configurable = False),
+        attr("module_paths", "map<string, string>", default = "{}", docs = "Overrides from dependency alias or content hash to its root Zig module. Defaults to the module the package's build.zig exports under the dependency alias or package name, then src/root.zig inside the package.", configurable = False),
+        attr("package_deps", "map<string, list<string>>", default = "{}", docs = "Extra Zig module targets, such as zig_options, imported by a package, keyed by dependency alias or content hash. Use this for modules a package's build.zig attaches with addOptions or addImport.", configurable = False),
         attr("_root_packages", "list<string>", default = "[]", docs = "Resolver-owned names of packages directly exposed by the root manifest.", configurable = False),
     ],
     deps = [dep("deps", ["zig_module"], "Resolved Zig package modules emitted from the locked package graph.")],
@@ -1655,6 +1880,29 @@ zig_generated_library = target_kind(
     capabilities = [capability("build", ["default"])],
     examples = [example("zig-generated-library", name = "Generated Zig module", use_when = "Use this when a compiled host tool generates a Zig module imported by another target.")],
     impl = _zig_generated_library_impl,
+)
+
+zig_options = target_kind(
+    docs = "Zig module of build-time constants, the Struo counterpart of a build.zig Options step (`b.addOptions()`). Downstream modules import it under `import_name`.",
+    attrs = [
+        attr("import_name", "string", docs = "Name used by downstream modules when importing this module, such as `build_options`. Defaults to the target name.", configurable = False),
+        attr("options", "map<string,any>", default = "{}", docs = "Constants to declare. Booleans, integers, strings, and lists of strings map to `bool`, `comptime_int`, `[]const u8`, and `[]const []const u8`.", configurable = False),
+        attr("option_types", "map<string, string>", default = "{}", docs = "Zig types overriding the inferred type of an option, such as `u16`. An optional type with a leading `?` and no value declares the option as null.", configurable = False),
+        attr("output_name", "string", default = "options.zig", docs = "Generated module file name inside the target output directory.", configurable = False),
+    ],
+    deps = [],
+    providers = ["zig_module"],
+    capabilities = [capability("build", ["default"])],
+    examples = [example("zig-options-minimal", name = "Zig build options module", use_when = "Use this when Zig code imports constants that build.zig declares with addOptions.")],
+    source_references = [
+        source_reference(
+            "Zig",
+            "std.Build.Step.Options",
+            "https://ziglang.org/documentation/0.16.0/std/#std.Build.Step.Options",
+            "Use this to match the declarations Zig's Options step generates for each option type.",
+        ),
+    ],
+    impl = _zig_options_impl,
 )
 
 zig_c_library = target_kind(

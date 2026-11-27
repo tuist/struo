@@ -354,7 +354,7 @@ defmodule StruoSiteWeb.Docs.Sidebar do
           target_group("Xcode", ~w(xcode_workspace)),
           target_group(
             "Zig",
-            ~w(zig_dependencies zig_package zig_library zig_generated_library
+            ~w(zig_dependencies zig_package zig_library zig_generated_library zig_options
                 zig_c_library zig_binary zig_static_library zig_shared_library zig_test zig_configure
                 zig_configure_binary zig_configure_test)
           )

@@ -96,6 +96,7 @@ zig_configure_binary|zig-configure-binary-minimal|build
 zig_configure_test|zig-configure-test-minimal|build
 zig_dependencies|zig-binary-with-package|build
 zig_library|zig-library-minimal|build
+zig_options|zig-options-minimal|build
 zig_shared_library|zig-shared-library-minimal|build
 zig_static_library|zig-static-library-minimal|build
 zig_test|zig-test-minimal|build

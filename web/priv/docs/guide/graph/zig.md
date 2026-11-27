@@ -160,10 +160,14 @@ Struo emits one queryable `zig_package` target per package instance. Local path
 dependencies resolve relative to the manifest that declares them. Remote
 packages are expected under the vendor directory, keyed by their Zig content
 hash. Verify them with Zig's native fetch workflow before committing them;
-ordinary builds never fetch or update packages.
+ordinary builds never fetch or update packages. `zig build --fetch` writes
+packages to `zig-pkg/` in this layout, so `vendor_dir = "zig-pkg"` uses them
+where Zig put them.
 
-The conventional public module path is `src/root.zig`. Use `module_paths` when
-a package exposes another module:
+A package's public module is the one its `build.zig` exports with `addModule`
+under the dependency alias or package name; add the packages' `build.zig`
+files to `resolver_inputs` so Struo can read them. Without one, the module is
+`src/root.zig`. Use `module_paths` when a package exposes another module:
 
 ```toml
 [target.attrs.module_paths]
@@ -215,6 +219,11 @@ Use the base kinds until the project needs one of those settings. To generate a
 Zig module with a host tool at build time, use
 [`zig_generated_library`](/reference/prelude/zig_generated_library).
 
+For constants that `build.zig` passes through `b.addOptions()`, declare a
+[`zig_options`](/reference/prelude/zig_options) module and depend on it. A
+package that imports such a module gets it through `package_deps` on
+`zig_dependencies`.
+
 ## Cache Zig builds
 
 Zig preserves debug information by default, and Struo never strips it
@@ -260,6 +269,7 @@ struo build tools/hello/hello --verify-reproducible
 - [`zig_shared_library`](/reference/prelude/zig_shared_library)
 - [`zig_c_library`](/reference/prelude/zig_c_library)
 - [`zig_generated_library`](/reference/prelude/zig_generated_library)
+- [`zig_options`](/reference/prelude/zig_options)
 - [`zig_configure`](/reference/prelude/zig_configure),
   [`zig_configure_binary`](/reference/prelude/zig_configure_binary), and
   [`zig_configure_test`](/reference/prelude/zig_configure_test)

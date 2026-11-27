@@ -15,6 +15,7 @@ a build.
 | `vendor_dir` | string | no | `third_party/zig` | Directory containing content-addressed package sources |
 | `package_paths` | map of strings | no | empty | Overrides from dependency alias or content multihash to a source directory |
 | `module_paths` | map of strings | no | empty | Overrides from dependency alias or content multihash to its public root module |
+| `package_deps` | map of string lists | no | empty | Extra Zig module targets a package imports, keyed by dependency alias or content multihash |
 
 The resolver also maintains an internal root-package list. It is typed in the
 schema so graph validation and query output remain complete.
@@ -54,12 +55,34 @@ main = "src/main.zig"
 ```
 
 Remote packages should be materialized under the vendor directory using the
-content multihash recorded in the manifest. Run Zig's native fetch workflow to
-verify that hash before committing the materialized source. Struo includes the
-actual source contents in build action keys. Local path dependencies are
-resolved relative to the manifest that declares them. Use `package_paths` when
-the source layout differs and `module_paths` when the public module is not
-`src/root.zig`.
+content multihash recorded in the manifest. This is the layout `zig build
+--fetch` writes to `zig-pkg/`, so `vendor_dir = "zig-pkg"` reads packages
+exactly where Zig fetched them. Run Zig's native fetch workflow to verify that
+hash before committing the materialized source. Struo includes the actual
+source contents in build action keys. Local path dependencies are resolved
+relative to the manifest that declares them. Use `package_paths` when the
+source layout differs.
+
+A package's public module is the one its `build.zig` exports with
+`addModule` under the dependency alias or the package name, when that call
+gives a literal `root_source_file` path; include the packages' `build.zig`
+files in `resolver_inputs` so Struo can read them. Otherwise the module is
+`src/root.zig`. When a `build.zig` exports several modules and none matches,
+or computes the root path, resolution fails and asks for a `module_paths`
+entry. Packages without a `build.zig.zon`, whose content multihash starts with
+`N-V-`, carry files such as C sources but no Zig module, so they get no
+package target; declare a `c_library` over their files instead.
+
+When a package's `build.zig` attaches a module with `addOptions` or
+`addImport` that is not itself a package, such as a `build` options module,
+declare that module as a target, often a
+[`zig_options`](/reference/prelude/zig_options), and list it in
+`package_deps` under the package's alias:
+
+```toml
+[target.attrs.package_deps]
+websocket = ["websocket_options"]
+```
 
 Each generated package declares its complete materialized source tree as a
 build input. This includes non-Zig assets read through `@embedFile` as well as

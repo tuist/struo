@@ -5473,13 +5473,9 @@ result = repr(_zig_test_impl(ctx))
     assert!(!run.argv.last().unwrap().contains("CreateDirectory"));
     assert!(run.argv.last().unwrap().contains("'--summary' 'all'"));
 
-    let prepare = action_by_identifier(&store, "pkg/suite:zig-test-prepare");
     assert_eq!(
-        prepare.operation,
-        Some(DeclaredActionOperation::PreparePath {
-            path: ".struo/out/pkg/suite/test".to_string(),
-            mode: DeclaredPreparePathMode::Directory,
-        })
+        run.create_dirs,
+        vec![".struo/out/pkg/suite/test".to_string()]
     );
 }
 

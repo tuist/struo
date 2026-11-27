@@ -1,0 +1,20 @@
+[[target]]
+name = "build_options"
+kind = "zig_options"
+
+[target.attrs.options]
+greeting = "hello"
+enabled = true
+
+[target.attrs.option_types]
+port = "?u16"
+
+[[target]]
+name = "options_test"
+kind = "zig_test"
+srcs = ["src/options_test.zig"]
+deps = ["build_options"]
+
+[target.attrs]
+main = "src/options_test.zig"
+strip = true

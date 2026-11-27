@@ -930,4 +930,311 @@ SH
     The contents of file "$WORKSPACE/.struo/out/generated/generated.zig" should include '+ 9'
     The path "$WORKSPACE/.struo/out/generator/generator.docs" should not be exist
   End
+
+  write_real_zig_test_workspace() {
+    mkdir -p "$WORKSPACE/src"
+    printf '%s\n' 'test "answer" { try @import("std").testing.expect(true); }' > "$WORKSPACE/src/test.zig"
+    cat > "$WORKSPACE/struo.toml" <<TOML
+[[target]]
+name = "tests"
+kind = "zig_test"
+srcs = ["src/test.zig"]
+
+[target.attrs]
+main = "src/test.zig"
+strip = true
+zig = "$SPEC_ZIG"
+TOML
+  }
+
+  test_real_zig_twice() {
+    write_real_zig_test_workspace
+    struo --format json test tests > /dev/null || return
+    struo --format json test tests
+  }
+
+  It 'replays a repeated Zig test run entirely from the cache'
+    Skip if 'Zig toolchain unavailable' real_zig_unavailable
+
+    When call test_real_zig_twice
+    The status should be success
+    The stdout should include '"cache":"hit"'
+    The stdout should not include '"cache":"bypass"'
+  End
+
+  write_zig_options_workspace() {
+    mkdir -p "$WORKSPACE/src"
+    cat > "$WORKSPACE/src/test.zig" <<'ZIG'
+const std = @import("std");
+const options = @import("build_options");
+
+test "options" {
+    try std.testing.expectEqualStrings("say \"hi\"\\\n", options.greeting);
+    try std.testing.expectEqual(3, options.count);
+    try std.testing.expectEqual(@as(u16, 7), options.port);
+    try std.testing.expect(options.enabled);
+    try std.testing.expect(options.dbfile == null);
+    try std.testing.expectEqual(@as(usize, 2), options.paths.len);
+    try std.testing.expectEqualStrings("b", options.paths[1]);
+}
+ZIG
+    cat > "$WORKSPACE/struo.toml" <<TOML
+[[target]]
+name = "options"
+kind = "zig_options"
+
+[target.attrs]
+import_name = "build_options"
+
+[target.attrs.options]
+greeting = "say \"hi\"\\\\\n"
+count = 3
+port = 7
+enabled = true
+paths = ["a", "b"]
+
+[target.attrs.option_types]
+port = "u16"
+dbfile = "?[]const u8"
+
+[[target]]
+name = "tests"
+kind = "zig_test"
+srcs = ["src/test.zig"]
+deps = ["options"]
+
+[target.attrs]
+main = "src/test.zig"
+strip = true
+zig = "$SPEC_ZIG"
+TOML
+  }
+
+  It 'generates Zig build options modules'
+    Skip if 'Zig toolchain unavailable' real_zig_unavailable
+    write_zig_options_workspace
+
+    When call struo --format json test tests
+    The status should be success
+    The stdout should include '"status":"completed"'
+    The contents of file "$WORKSPACE/.struo/out/tests/test/test_results.json" should include '"status":"passed"'
+  End
+
+  write_zig_fetched_packages_workspace() {
+    metrics="zig-pkg/metrics-0.0.0-W7G4eIegAQD4XxA9Co7Atbw59u_2zvxYf406AZuoAHPM"
+    ws="zig-pkg/ws-0.1.0-ZPISdUoQBQC7zw1uSwbOEYdxZiTxNN4nf9RlWBsN0_Nd"
+    clib="zig-pkg/N-V-__8AAH-mpwB7g3MnqYU-ooUBF1t99RP27dZ9addtMVXD"
+    mkdir -p "$WORKSPACE/src" "$WORKSPACE/$metrics/src" "$WORKSPACE/$ws/src" "$WORKSPACE/$clib"
+    cat > "$WORKSPACE/build.zig.zon" <<'ZON'
+.{
+    .name = .app,
+    .version = "0.0.0",
+    .fingerprint = 0x472add02ac73d53c,
+    .paths = .{""},
+    .dependencies = .{
+        .metrics = .{
+            .url = "https://example.invalid/metrics.tar.gz",
+            .hash = "metrics-0.0.0-W7G4eIegAQD4XxA9Co7Atbw59u_2zvxYf406AZuoAHPM",
+        },
+        .ws = .{
+            .url = "https://example.invalid/ws.tar.gz",
+            .hash = "ws-0.1.0-ZPISdUoQBQC7zw1uSwbOEYdxZiTxNN4nf9RlWBsN0_Nd",
+        },
+        .clib = .{
+            .url = "https://example.invalid/clib.tar.gz",
+            .hash = "N-V-__8AAH-mpwB7g3MnqYU-ooUBF1t99RP27dZ9addtMVXD",
+        },
+    },
+}
+ZON
+    cat > "$WORKSPACE/$metrics/build.zig.zon" <<'ZON'
+.{ .name = .metrics, .version = "0.0.0", .fingerprint = 0x42ce80b97512f264, .paths = .{""} }
+ZON
+    cat > "$WORKSPACE/$metrics/build.zig" <<'ZIG'
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const example = b.createModule(.{ .root_source_file = b.path("example/main.zig") });
+    _ = example;
+    const metrics_module = b.addModule("metrics", .{
+        .target = b.standardTargetOptions(.{}),
+        .root_source_file = b.path("src/metrics.zig"),
+    });
+    _ = metrics_module;
+}
+ZIG
+    printf '%s\n' 'pub const answer: u32 = 40;' > "$WORKSPACE/$metrics/src/metrics.zig"
+    cat > "$WORKSPACE/$ws/build.zig.zon" <<'ZON'
+.{ .name = .ws, .version = "0.1.0", .fingerprint = 0x42ce80b97512f265, .paths = .{""} }
+ZON
+    cat > "$WORKSPACE/$ws/build.zig" <<'ZIG'
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const module = b.addModule("ws", .{ .root_source_file = b.path("src/ws.zig") });
+    const options = b.addOptions();
+    options.addOption(bool, "ws_blocking", false);
+    module.addOptions("build", options);
+}
+ZIG
+    printf '%s\n' 'pub const blocking = @import("build").ws_blocking;' > "$WORKSPACE/$ws/src/ws.zig"
+    printf '%s\n' 'int clib_two(void) { return 2; }' > "$WORKSPACE/$clib/clib.c"
+    cat > "$WORKSPACE/src/test.zig" <<'ZIG'
+const std = @import("std");
+
+test "packages" {
+    try std.testing.expectEqual(@as(u32, 40), @import("metrics").answer);
+    try std.testing.expect(@import("ws").blocking);
+}
+ZIG
+    cat > "$WORKSPACE/struo.toml" <<TOML
+[[target]]
+name = "zig_dependencies"
+kind = "zig_dependencies"
+srcs = ["build.zig.zon", "zig-pkg/*/build.zig.zon", "zig-pkg/*/build.zig"]
+
+[target.attrs]
+vendor_dir = "zig-pkg"
+
+[target.attrs.package_deps]
+ws = ["ws_options"]
+
+[[target]]
+name = "ws_options"
+kind = "zig_options"
+
+[target.attrs]
+import_name = "build"
+
+[target.attrs.options]
+ws_blocking = true
+
+[[target]]
+name = "tests"
+kind = "zig_test"
+srcs = ["src/test.zig"]
+deps = ["zig_dependencies"]
+
+[target.attrs]
+main = "src/test.zig"
+strip = true
+zig = "$SPEC_ZIG"
+TOML
+  }
+
+  It 'tests against packages fetched by zig into zig-pkg'
+    Skip if 'Zig toolchain unavailable' real_zig_unavailable
+    write_zig_fetched_packages_workspace
+
+    When call struo --format json test tests
+    The status should be success
+    The stdout should include '"status":"completed"'
+    The contents of file "$WORKSPACE/.struo/out/tests/test/test_results.json" should include '"status":"passed"'
+  End
+
+  ambiguous_zig_package_module() {
+    write_zig_fetched_packages_workspace
+    cat >> "$WORKSPACE/$metrics/build.zig" <<'ZIG'
+
+pub fn more(b: *std.Build) void {
+    _ = b.addModule("metrics_extra", .{ .root_source_file = b.path("src/extra.zig") });
+    _ = b.addModule("other", .{ .root_source_file = b.path("src/other.zig") });
+}
+ZIG
+    sed 's/addModule("metrics"/addModule("primary"/' "$WORKSPACE/$metrics/build.zig" > "$WORKSPACE/build.zig.tmp"
+    mv "$WORKSPACE/build.zig.tmp" "$WORKSPACE/$metrics/build.zig"
+    struo query targets
+  }
+
+  It 'names the module_paths repair when a package exports several modules'
+    When call ambiguous_zig_package_module
+    The status should be failure
+    The stderr should include 'exports several modules (primary, metrics_extra, other)'
+    The stderr should include 'module_paths'
+  End
+
+  write_zig_path_package_workspace() {
+    mkdir -p "$WORKSPACE/src" "$WORKSPACE/ws/src"
+    cat > "$WORKSPACE/build.zig.zon" <<'ZON'
+.{
+    .name = .app,
+    .version = "0.0.0",
+    .fingerprint = 0x472add02ac73d53c,
+    .paths = .{""},
+    .dependencies = .{ .ws = .{ .path = "ws" } },
+}
+ZON
+    cat > "$WORKSPACE/ws/build.zig.zon" <<'ZON'
+.{ .name = .ws, .version = "0.1.0", .fingerprint = 0x42ce80b97512f265, .paths = .{""} }
+ZON
+    cat > "$WORKSPACE/ws/build.zig" <<'ZIG'
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    _ = b.addModule("ws", .{ .root_source_file = b.path("src/ws.zig") });
+}
+ZIG
+    printf '%s\n' 'const build = @import("build");' 'pub const blocking = build.@"type" and !build.@"error";' > "$WORKSPACE/ws/src/ws.zig"
+    printf '%s\n' 'test "path package" { try @import("std").testing.expect(@import("ws").blocking); }' > "$WORKSPACE/src/test.zig"
+    cat > "$WORKSPACE/struo.toml" <<TOML
+[[target]]
+name = "zig_dependencies"
+kind = "zig_dependencies"
+srcs = ["build.zig.zon", "ws/build.zig.zon", "ws/build.zig"]
+
+[target.attrs.package_deps]
+ws = ["ws_options"]
+
+[[target]]
+name = "ws_options"
+kind = "zig_options"
+
+[target.attrs]
+import_name = "build"
+
+[target.attrs.options]
+type = true
+error = false
+
+[[target]]
+name = "tests"
+kind = "zig_test"
+srcs = ["src/test.zig"]
+deps = ["zig_dependencies"]
+
+[target.attrs]
+main = "src/test.zig"
+strip = true
+zig = "$SPEC_ZIG"
+TOML
+  }
+
+  It 'gives a local path package its package_deps once, with keyword option names'
+    Skip if 'Zig toolchain unavailable' real_zig_unavailable
+    write_zig_path_package_workspace
+
+    When call struo --format json test tests
+    The status should be success
+    The stdout should include '"status":"completed"'
+    The contents of file "$WORKSPACE/.struo/out/tests/test/test_results.json" should include '"status":"passed"'
+  End
+
+  foreign_builder_package_module() {
+    write_zig_path_package_workspace
+    cat > "$WORKSPACE/ws/build.zig" <<'ZIG'
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const other = b.dependency("other", .{});
+    _ = b.addModule("ws", .{ .root_source_file = other.path("src/ws.zig") });
+}
+ZIG
+    struo query targets
+  }
+
+  It 'does not read a module root from another package builder'
+    When call foreign_builder_package_module
+    The status should be failure
+    The stderr should include 'module `ws` in ws/build.zig has a computed root source file'
+  End
 End
