@@ -1,0 +1,41 @@
+// !$*UTF8*$!
+{
+ archiveVersion = 1;
+ objectVersion = 56;
+ objects = {
+  ROOT = {isa = PBXProject; mainGroup = GROUP; buildConfigurationList = PROJECT_CONFIGS; targets = (STORE, APP); };
+  GROUP = {isa = PBXGroup; sourceTree = "<group>"; children = (STORE_GROUP, APP_GROUP); };
+  STORE_GROUP = {isa = PBXGroup; path = Store; sourceTree = "<group>"; children = (UMBRELLA_FILE, JOINER_HEADER_FILE, JOINER_FILE, VENDOR_GROUP); };
+  VENDOR_GROUP = {isa = PBXGroup; path = Vendor; sourceTree = "<group>"; children = (VENDOR_ARCHIVE); };
+  VENDOR_ARCHIVE = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libseparator.a; sourceTree = "<group>"; };
+  STORE_VENDOR = {isa = PBXBuildFile; fileRef = VENDOR_ARCHIVE; };
+  STORE_FRAMEWORKS = {isa = PBXFrameworksBuildPhase; files = (STORE_VENDOR); };
+  APP_GROUP = {isa = PBXGroup; path = App; sourceTree = "<group>"; children = (APP_MAIN); };
+  APP_MAIN = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+  APP_SOURCE = {isa = PBXBuildFile; fileRef = APP_MAIN; };
+  APP_SOURCES = {isa = PBXSourcesBuildPhase; files = (APP_SOURCE); };
+  STORE_PRODUCT = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = Store.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+  APP_STORE = {isa = PBXBuildFile; fileRef = STORE_PRODUCT; };
+  APP_FRAMEWORKS = {isa = PBXFrameworksBuildPhase; files = (APP_STORE); };
+  APP_EMBED = {isa = PBXCopyFilesBuildPhase; dstSubfolderSpec = 10; files = (APP_STORE_EMBED); };
+  APP_STORE_EMBED = {isa = PBXBuildFile; fileRef = STORE_PRODUCT; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+  APP_DEP = {isa = PBXTargetDependency; target = STORE; };
+  APP_CONFIGS = {isa = XCConfigurationList; buildConfigurations = (APP_DEBUG); defaultConfigurationName = Debug; };
+  APP_DEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = dev.struo.StoreApp; PRODUCT_NAME = StoreApp; LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks"; }; };
+  APP = {isa = PBXNativeTarget; name = StoreApp; productName = StoreApp; productType = "com.apple.product-type.application"; buildConfigurationList = APP_CONFIGS; buildPhases = (APP_SOURCES, APP_FRAMEWORKS, APP_EMBED); dependencies = (APP_DEP); };
+  UMBRELLA_FILE = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Store.h; sourceTree = "<group>"; };
+  JOINER_HEADER_FILE = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Joiner.h; sourceTree = "<group>"; };
+  JOINER_FILE = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.objcpp; path = Joiner.m; sourceTree = "<group>"; };
+  STORE_HEADERS = {isa = PBXHeadersBuildPhase; files = (STORE_UMBRELLA, STORE_JOINER_HEADER); };
+  STORE_UMBRELLA = {isa = PBXBuildFile; fileRef = UMBRELLA_FILE; settings = {ATTRIBUTES = (Public, ); }; };
+  STORE_JOINER_HEADER = {isa = PBXBuildFile; fileRef = JOINER_HEADER_FILE; settings = {ATTRIBUTES = (Public, ); }; };
+  STORE_SOURCES = {isa = PBXSourcesBuildPhase; files = (STORE_JOINER); };
+  STORE_JOINER = {isa = PBXBuildFile; fileRef = JOINER_FILE; };
+  PROJECT_CONFIGS = {isa = XCConfigurationList; buildConfigurations = (PROJECT_DEBUG); defaultConfigurationName = Debug; };
+  PROJECT_DEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 13.0; SWIFT_VERSION = 5.0; CODE_SIGNING_ALLOWED = NO; }; };
+  STORE_CONFIGS = {isa = XCConfigurationList; buildConfigurations = (STORE_DEBUG); defaultConfigurationName = Debug; };
+  STORE_DEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {DEFINES_MODULE = YES; DYLIB_INSTALL_NAME_BASE = "@rpath"; SKIP_INSTALL = YES; CLANG_ENABLE_MODULES = YES; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = dev.struo.Store; LIBRARY_SEARCH_PATHS = "$(SRCROOT)/Store/Vendor"; PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)"; }; };
+  STORE = {isa = PBXNativeTarget; name = Store; productName = Store; productType = "com.apple.product-type.framework"; productReference = STORE_PRODUCT; buildConfigurationList = STORE_CONFIGS; buildPhases = (STORE_HEADERS, STORE_SOURCES, STORE_FRAMEWORKS); dependencies = (); };
+ };
+ rootObject = ROOT;
+}

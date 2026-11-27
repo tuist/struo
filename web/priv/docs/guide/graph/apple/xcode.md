@@ -234,7 +234,12 @@ Use this list to explain a target that resolves differently than expected:
   packages, built as Apple library targets. A project with both macOS and
   iPhone targets gets separate package targets for each destination. Local
   products referenced without a package reference are discovered from the
-  repository's package manifests.
+  repository's package manifests. Remote packages are pinned by the project's
+  or workspace's `Package.resolved`. When the project commits no
+  `Package.resolved`, Struo resolves the project's package requirements with
+  `xcodebuild -resolvePackageDependencies`, which writes `Package.resolved` the
+  way opening the project in Xcode does. A committed `Package.resolved` is never
+  rewritten; a remote package it does not pin is reported as a warning.
 
 ## Script build phases
 

@@ -111,6 +111,14 @@ def _developer_env(xcode_developer_dir):
         env["DEVELOPER_DIR"] = xcode_developer_dir
     return env
 
+def _apple_reproducible_link_flags():
+    # Matches swift-build's default LD_DETERMINISTIC_MODE. Without it, the
+    # `-O0` the Swift driver forwards for `-Onone` makes ld write a random
+    # LC_UUID, so every debug link produces a different binary.
+    if _apple_execution_os() == "macos":
+        return ["-Xlinker", "-reproducible"]
+    return []
+
 def _apple_linker_dir(xcode_developer_dir, env):
     # A Swift toolchain installed next to Xcode rather than inside it ships a
     # compiler but no linker, and the compiler locates `ld` by searching the
@@ -212,6 +220,9 @@ def _filter_swift_sources(paths):
 
 def _filter_objc_sources(paths):
     return _filter_by_extensions(paths, [".m", ".mm"])
+
+def _apple_clang_language(attrs, src, default):
+    return (attrs.get("per_source_language") or {}).get(src) or default
 
 def _filter_c_sources(paths):
     return _filter_by_extensions(paths, [".c"])
@@ -320,6 +331,11 @@ def _resolve_derq(xcode_developer_dir):
         "identity": "struo.apple.derq.v1\x00" + path + "\x00" + (xcode_developer_dir or ""),
         "env": env,
     }
+
+def _apple_actool_paths(paths):
+    # actool forwards work to a long-lived agent that resolves relative paths
+    # against its own launch directory, so spell paths from the execution root.
+    return [execution_path(path) if path and not path.startswith("/") else path for path in paths]
 
 def _resolve_actool(xcode_developer_dir):
     if _apple_execution_os() == "linux":
@@ -1631,6 +1647,7 @@ END {
 def _apple_test_source_cases_awk():
     return """
 function token(word, suite) {
+    display_state = 0
     if (word == "func") {
         function_name = 1
         type_name = 0
@@ -1638,7 +1655,8 @@ function token(word, suite) {
     } else if (function_name) {
         suite = depth ? suites[depth] : file_suite
         if (!functions[depth] && (test_attribute || word ~ /^test/))
-            printf "%s%c%s%c", suite, 9, word, 10
+            printf "%s%c%s%c%s%c", suite, 9, word, 9, display, 10
+        display = ""
         function_name = 0
         test_attribute = 0
         pending_function = 1
@@ -1649,6 +1667,7 @@ function token(word, suite) {
         type_name = 1
     } else if (attribute && word == "Test") {
         test_attribute = 1
+        display_state = 1
     }
     attribute = 0
 }
@@ -1672,8 +1691,15 @@ BEGIN {
             continue
         }
         if (string) {
-            if (char == slash) i++
-            else if (char == quote) string = 0
+            # A plain `@Test("…")` literal is the name Swift Testing reports;
+            # escapes and interpolation are left unmatched.
+            if (char == slash) { i++; capture = 0 }
+            else if (char == quote) {
+                string = 0
+                if (capture) display = display_buffer
+                capture = 0
+            }
+            else if (capture) display_buffer = display_buffer char
             continue
         }
         if (char ~ /[A-Za-z0-9_]/) {
@@ -1684,7 +1710,15 @@ BEGIN {
         if (pair == "//") break
         if (pair == "/*") { comment = 1; i++; continue }
         if (triple == quote quote quote) { multiline = 1; i += 2; continue }
-        if (char == quote) { string = 1; continue }
+        if (display_state == 1 && char == "(") { display_state = 2; continue }
+        if (char == quote) {
+            string = 1
+            capture = display_state == 2
+            display_buffer = ""
+            display_state = 0
+            continue
+        }
+        if (display_state && char !~ /[ \t]/) display_state = 0
         if (char == "@") attribute = 1
         else if (char == "{") {
             suites[depth + 1] = pending_suite != "" ? pending_suite : suites[depth]
@@ -1725,6 +1759,7 @@ emit_case() {{
   case_name="$1"
   case_suite="$2"
   case_file="$3"
+  case_display="$4"
   if [ {selector_count} -gt 0 ]; then
     selected=false
     selector="$case_suite/$case_name"
@@ -1739,15 +1774,17 @@ emit_case() {{
   case_status=unknown
   total=$((total + 1))
   if [ "$total" -gt 1 ]; then printf ',\n' >> "$cases_file"; fi
-  printf '{{"id":"%s::%s/%s","name":"%s","suite":"%s","file":"%s","status":"%s","attempts":[{{"status":"%s"}}],"runner_metadata":{{"runner":"%s"}}}}' "{target}" "$case_suite" "$case_name" "$case_name" "$case_suite" "$case_file" "$case_status" "$case_status" "{runner_type}" >> "$cases_file"
+  display_metadata=""
+  if [ -n "$case_display" ]; then display_metadata=',"display_name":"'"$case_display"'"'; fi
+  printf '{{"id":"%s::%s/%s","name":"%s","suite":"%s","file":"%s","status":"%s","attempts":[{{"status":"%s"}}],"runner_metadata":{{"runner":"%s"%s}}}}' "{target}" "$case_suite" "$case_name" "$case_name" "$case_suite" "$case_file" "$case_status" "$case_status" "{runner_type}" "$display_metadata" >> "$cases_file"
 }}
 for spec in {specs}; do
   [ -f "$spec" ] || continue
   file_suite=${{spec%.swift}}
   file_suite=${{file_suite##*/}}
   {awk} -v file_suite="$file_suite" '{source_parser}' "$spec" > "$cases_file.discovered" || exit 1
-  while IFS="$(printf '\\t')" read -r suite name; do
-    emit_case "$name" "$suite" "$spec"
+  while IFS="$(printf '\\t')" read -r suite name display; do
+    emit_case "$name" "$suite" "$spec" "$display"
   done < "$cases_file.discovered"
 done
 """.format(
@@ -1829,6 +1866,11 @@ FILENAME == source_file {
     source_by_key[suite "/" name] = source_count
     source_name[name] = source_count
     name_count[name]++
+    display = field(record, "display_name")
+    if (display != "") {
+        source_display[display] = source_count
+        display_count[display]++
+    }
     next
 }
 {
@@ -1842,7 +1884,8 @@ FILENAME == source_file {
         complete_suite = 0
     }
     suite_marker = index(line, " Suite ")
-    if (suite_marker) {
+    test_marker = index(line, " Test ")
+    if (suite_marker && (!test_marker || test_marker > suite_marker)) {
         suite = substr(line, suite_marker + 7)
         if (index(line, " started.")) {
             sub(/ started\\.$/, "", suite)
@@ -1867,15 +1910,20 @@ FILENAME == source_file {
         observe(name, suite, status, duration_millis(line))
         next
     }
-    test_marker = index(line, " Test ")
     if (!test_marker) next
     status = index(line, " passed after ") ? "passed" : (index(line, " failed after ") ? "failed" : "")
     if (status == "") next
     name = substr(line, test_marker + 6)
     sub(/ (passed|failed) after .*$/, "", name)
-    sub(/\\(\\)$/, "", name)
+    sub(/ with [0-9]+ test cases?$/, "", name)
+    sub(/\\([^()]*\\)$/, "", name)
     if (name ~ /^run with /) next
     if (name == "") next
+    if (name ~ /^".*"$/ && display_count[substr(name, 2, length(name) - 2)] == 1) {
+        source_index = source_display[substr(name, 2, length(name) - 2)]
+        observe(field(source_record[source_index], "name"), field(source_record[source_index], "suite"), status, duration_millis(line))
+        next
+    }
     source_index = source_name[name]
     suite = "Swift Testing"
     if (source_index && name_count[name] == 1) suite = field(source_record[source_index], "suite")
@@ -2275,12 +2323,14 @@ def _apple_library_impl(ctx):
 
     if generated_framework_module:
         generated_framework_overlay = declare_output("framework-headers-overlay.yaml")
+        # Paths relative to the execution root, the working directory of
+        # every compile, keep the overlay the same in every checkout.
         overlay_contents = []
         for header in _unique(own_exported_headers + authored_modulemap_headers):
             overlay_contents.append({
                 "type": "file",
                 "name": _basename(header),
-                "external-contents": workspace_root() + "/" + header,
+                "external-contents": header,
             })
         write_path(
             generated_framework_overlay,
@@ -2289,7 +2339,7 @@ def _apple_library_impl(ctx):
                 "case-sensitive": False,
                 "roots": [{
                     "type": "directory",
-                    "name": workspace_root() + "/" + generated_framework_root + "/Headers",
+                    "name": generated_framework_root + "/Headers",
                     "contents": overlay_contents,
                 }],
             }) + "\n",
@@ -2384,7 +2434,11 @@ def _apple_library_impl(ctx):
         [hmap_path] if hmap_path and not generated_framework_module else [],
     )
     transitive_archives = _collect_transitive(deps, "transitive_archives", [archive])
-    transitive_sdk_frameworks = _collect_transitive(deps, "transitive_sdk_frameworks", sdk_frameworks)
+    # Xcode links with `-fobjc-link-runtime`, which adds Foundation for
+    # Objective-C objects that carry no autolink entries, such as
+    # Objective-C++ compiled without C++ modules.
+    uses_objc_runtime = [src for src in objc_srcs if _apple_clang_language(attrs, src, "objective-c").startswith("objective-c")] or [src for src in c_srcs + cxx_srcs if _apple_clang_language(attrs, src, "c").startswith("objective-c")]
+    transitive_sdk_frameworks = _collect_transitive(deps, "transitive_sdk_frameworks", _unique(sdk_frameworks + (["Foundation"] if uses_objc_runtime else [])))
     transitive_weak_sdk_frameworks = _collect_transitive(deps, "transitive_weak_sdk_frameworks", weak_sdk_frameworks)
     transitive_sdk_dylibs = _collect_transitive(deps, "transitive_sdk_dylibs", sdk_dylibs)
     transitive_linkopts = _apple_collect_transitive_linkopts(deps, linkopts)
@@ -2774,11 +2828,11 @@ def _apple_library_impl(ctx):
                 arch_clang_objects.append(obj)
 
             for src in objc_srcs:
-                compile_with_clang(src, "objective-c++" if src.endswith(".mm") else "objective-c")
+                compile_with_clang(src, _apple_clang_language(attrs, src, "objective-c++" if src.endswith(".mm") else "objective-c"))
             for src in c_srcs:
-                compile_with_clang(src, "c")
+                compile_with_clang(src, _apple_clang_language(attrs, src, "c"))
             for src in cxx_srcs:
-                compile_with_clang(src, "c++")
+                compile_with_clang(src, _apple_clang_language(attrs, src, "c++"))
             for src in assembly_srcs:
                 compile_with_clang(src, "assembler-with-cpp")
 
@@ -3312,7 +3366,7 @@ def _swift_macro_impl(ctx):
         "-parse-as-library",
         "-o",
         plugin_executable,
-    ] + compile_argv
+    ] + compile_argv + _apple_reproducible_link_flags()
     for src in swift_srcs:
         swift_argv.append(src)
     # Dep archives appear as positional inputs; swiftc forwards
@@ -3889,9 +3943,9 @@ def _apple_materialize_resources(ctx, raw_resources, destination, platform, mini
         run_action(
             display_name = "Compile asset catalogs · " + module_name,
             source_files = _action_source_files(catalogs),
-            argv = [actool["actool_path"]] + catalogs + [
+            argv = [actool["actool_path"]] + _apple_actool_paths(catalogs) + [
                 "--compile",
-                output_dir,
+                execution_path(output_dir),
                 "--platform",
                 _apple_actool_platform(platform, sdk_variant),
                 "--minimum-deployment-target",
@@ -3969,6 +4023,43 @@ def _apple_resource_bundle_target_impl(ctx):
 
 def _xml_escape(value):
     return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&apos;")
+
+# Like swift-build's ProcessProductEntitlementsTaskAction for a macOS test
+# run: a sandboxed host needs these to reach testmanagerd and read its test
+# configuration. The test signs its own copy so the built application keeps
+# its entitlements.
+_APPLE_TEST_HOST_ENTITLEMENTS = {
+    "com.apple.security.temporary-exception.files.absolute-path.read-only": ["/"],
+    "com.apple.security.temporary-exception.mach-lookup.global-name": ["com.apple.testmanagerd", "com.apple.dt.testmanagerd.runner", "com.apple.coresymbolicationd"],
+}
+
+def _apple_sandboxed_test_host(ctx, host_application, xcode_developer_dir):
+    contents = host_application.get("signing_entitlements_content") or ""
+    if not contents or (plist_decode(contents) or {}).get("com.apple.security.app-sandbox") != True:
+        return host_application
+    source = host_application["app_path"]
+    copy_dir = "TestHost/" + _basename(source)
+    copy = ctx["build_dir"] + "/" + copy_dir
+    executable = copy + host_application["app_executable"][len(source):]
+    copied = [declare_output(copy_dir + file[len(source):]) for file in host_application.get("app_files") or [] if file.startswith(source + "/")]
+    copy_path(source, copy, kind = "tree", inputs = host_application.get("app_files") or [], identifier = "apple_test_host_copy:" + ctx["label"]["id"], source_files = _action_source_files([source]))
+    entitlements = declare_output("TestHost/entitlements.plist")
+    write_path(entitlements, _apple_plist_merge(contents, _APPLE_TEST_HOST_ENTITLEMENTS), display_name = "Prepare test host entitlements · " + ctx["label"]["name"])
+    # Sign with the identity that signed the application, so a development
+    # signed host keeps the identity its profile and entitlements belong to.
+    codesign = host_application.get("codesign") or _resolve_codesign(xcode_developer_dir)
+    signature = declare_output(copy_dir + "/Contents/_CodeSignature/CodeResources")
+    run_action(
+        display_name = "Sign test host · " + ctx["label"]["name"],
+        source_files = _action_source_files([source]),
+        argv = _apple_codesign_argv(codesign, copy, entitlements),
+        inputs = _unique(copied + [entitlements]),
+        outputs = [executable, signature],
+        env = codesign["env"],
+        toolchain_identity = codesign["identity"],
+        identifier = "apple_test_host_codesign:" + ctx["label"]["id"],
+    )
+    return dict(host_application, app_path = copy, app_executable = executable, app_files = _unique(copied + [executable, signature]))
 
 def _apple_xctestrun(module_name, test_bundle_path, host_application, xctest_framework_dir, xctest_usr_lib_dir, test_env = {}, test_arguments = [], skipped_tests = []):
     host_path = workspace_root() + "/" + host_application["app_path"] if host_application else xctest_framework_dir[:-len("/Frameworks")] + "/Xcode/Agents/xctest"
@@ -4354,8 +4445,7 @@ def _apple_mixed_framework_impl(ctx):
         "-o",
         dylib,
     ]
-    if _apple_execution_os() == "macos":
-        link_argv.extend(["-Xlinker", "-reproducible"])
+    link_argv.extend(_apple_reproducible_link_flags())
     link_anchor = declare_output(module_name + "-framework-link-anchor.swift")
     write_path(link_anchor, "")
     framework_bundles = library.get("transitive_link_framework_bundles") or []
@@ -4497,9 +4587,9 @@ def _apple_mixed_framework_impl(ctx):
         run_action(
             display_name = "Compile asset catalog · " + ctx["label"]["name"],
             source_files = _action_source_files(asset_catalogs),
-            argv = [actool["actool_path"]] + asset_catalogs + [
+            argv = [actool["actool_path"]] + _apple_actool_paths(asset_catalogs) + [
                 "--compile",
-                framework_path,
+                execution_path(framework_path),
                 "--platform",
                 _apple_actool_platform(platform, sdk_variant),
                 "--minimum-deployment-target",
@@ -4507,7 +4597,7 @@ def _apple_mixed_framework_impl(ctx):
                 "--bundle-identifier",
                 bundle_id,
                 "--output-partial-info-plist",
-                asset_partial_plist,
+                execution_path(asset_partial_plist),
             ],
             inputs = asset_catalogs,
             outputs = [asset_car, asset_partial_plist],
@@ -4679,8 +4769,7 @@ def _apple_framework_impl(ctx):
         "-o",
         dylib,
     ]
-    if _apple_execution_os() == "macos":
-        swift_argv.extend(["-Xlinker", "-reproducible"])
+    swift_argv.extend(_apple_reproducible_link_flags())
     if testing_framework_dir:
         # A framework that itself imports XCTest (Quick, Nimble, RxTest, etc.)
         # needs the platform's Developer/Library/Frameworks on the framework
@@ -5094,7 +5183,7 @@ def _apple_run_prebuild_actions(ctx, attrs):
     if attrs.get("prebuild_actions") or attrs.get("prepackage_actions") or attrs.get("postbuild_actions"):
         _apple_script_dependency_products(ctx)
     outputs = _apple_run_build_actions(ctx, attrs.get("prebuild_actions") or [], "prebuild_action")
-    return _filter_swift_sources(outputs) + _filter_objc_sources(outputs) + _filter_c_sources(outputs) + _filter_cxx_sources(outputs) + _filter_assembly_sources(outputs)
+    return _filter_swift_sources(outputs) + _filter_objc_sources(outputs) + _filter_c_sources(outputs) + _filter_cxx_sources(outputs) + _filter_assembly_sources(outputs) + _filter_by_extensions(outputs, [".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".ipp", ".tpp", ".def"])
 
 def _apple_run_postbuild_actions(ctx, attrs, product_inputs, product_root = ""):
     return _apple_run_build_actions(ctx, attrs.get("postbuild_actions") or [], "postbuild_action", product_inputs, product_root)
@@ -5134,9 +5223,10 @@ def _apple_reconcile_build_action(ctx, action):
     mapped = dict(action)
     for key in ["inputs", "outputs"]:
         mapped[key] = [ctx["build_dir"] + path[len(declared_dir):] if path == declared_dir or path.startswith(declared_dir + "/") else path for path in action.get(key) or []]
-    old_root = workspace_root() + "/" + declared_dir
-    new_root = workspace_root() + "/" + ctx["build_dir"]
-    mapped["env"] = {key: _apple_rebase_build_value(value, old_root, new_root) for key, value in (action.get("env") or {}).items()}
+    env = action.get("env") or {}
+    for root in [workspace_root(), execution_path("")]:
+        env = {key: _apple_rebase_build_value(value, root + "/" + declared_dir, root + "/" + ctx["build_dir"]) for key, value in env.items()}
+    mapped["env"] = env
     return mapped
 
 def _apple_script_output_path(ctx, path):
@@ -5166,7 +5256,7 @@ def _apple_run_build_actions(ctx, actions, identifier_prefix, product_inputs = [
         if contents != None:
             for output in action.get("outputs") or []:
                 write_path(output, contents)
-                if output.endswith(".swift") or output.endswith(".m") or output.endswith(".mm") or output.endswith(".c") or output.endswith(".cc") or output.endswith(".cpp"):
+                if output.endswith(".swift") or output.endswith(".m") or output.endswith(".mm") or output.endswith(".c") or output.endswith(".cc") or output.endswith(".cpp") or output.endswith(".h"):
                     generated_sources.append(output)
             continue
         argv = action.get("argv") or []
@@ -5389,11 +5479,11 @@ def _apple_application_impl(ctx):
             asset_symbols = declare_output("GeneratedAssetSymbols.swift")
             # `actool` only writes the Swift symbols when a compile pass runs, so a
             # throwaway compile directory is supplied; it is not a declared output.
-            symbol_argv = [actool["actool_path"]] + asset_catalogs + [
+            symbol_argv = [actool["actool_path"]] + _apple_actool_paths(asset_catalogs) + [
                 "--compile",
-                ctx["build_dir"] + "/AssetSymbolsCompile",
+                execution_path(ctx["build_dir"] + "/AssetSymbolsCompile"),
                 "--generate-swift-asset-symbols",
-                asset_symbols,
+                execution_path(asset_symbols),
                 "--platform",
                 actool_platform,
                 "--minimum-deployment-target",
@@ -5417,15 +5507,15 @@ def _apple_application_impl(ctx):
 
         asset_car = declare_output(resources_dir + "/Assets.car")
         car_partial_plist = declare_output("assets-partial.plist")
-        car_argv = [actool["actool_path"]] + asset_catalogs + [
+        car_argv = [actool["actool_path"]] + _apple_actool_paths(asset_catalogs) + [
             "--compile",
-            ctx["build_dir"] + "/" + resources_dir,
+            execution_path(ctx["build_dir"] + "/" + resources_dir),
             "--platform",
             actool_platform,
             "--minimum-deployment-target",
             minimum_os,
             "--output-partial-info-plist",
-            car_partial_plist,
+            execution_path(car_partial_plist),
         ]
         for device in _apple_actool_target_devices(platform, families):
             car_argv.extend(["--target-device", device])
@@ -5490,10 +5580,10 @@ def _apple_application_impl(ctx):
 
     processed_entitlements = ""
     der_entitlements = ""
+    entitlements_content = ""
     embeds_simulator_entitlements = entitlements and sdk_variant == "simulator" and platform != "macos" and platform != "macosx"
     if entitlements or signing:
         entitlements_source = _package_relative(ctx, entitlements)
-        entitlements_content = ""
         if entitlements:
             entitlements_path = entitlements_source if entitlements_source.startswith("/") else workspace_root() + "/" + entitlements_source
             entitlements_content = host_file_read(entitlements_path)
@@ -5557,6 +5647,7 @@ def _apple_application_impl(ctx):
         "@executable_path/../Frameworks" if is_macos else "@executable_path/Frameworks",
         "-o",
         executable,
+    ] + _apple_reproducible_link_flags() + [
         # Actions run with a cleared environment, so give the Clang importer an
         # explicit, writable module cache under the build directory. Without it,
         # importing a source-built module map (an Objective-C Swift package
@@ -5866,11 +5957,11 @@ def _apple_application_impl(ctx):
             clang_objects.append(obj)
 
         for src in objc_srcs:
-            compile_application_source(src, "objective-c++" if src.endswith(".mm") else "objective-c")
+            compile_application_source(src, _apple_clang_language(attrs, src, "objective-c++" if src.endswith(".mm") else "objective-c"))
         for src in c_srcs:
-            compile_application_source(src, "c")
+            compile_application_source(src, _apple_clang_language(attrs, src, "c"))
         for src in cxx_srcs:
-            compile_application_source(src, "c++")
+            compile_application_source(src, _apple_clang_language(attrs, src, "c++"))
         for src in assembly_srcs:
             compile_application_source(src, "assembler-with-cpp")
 
@@ -6065,6 +6156,8 @@ def _apple_application_impl(ctx):
         "app_path": app_path,
         "module_name": module_name,
         "app_executable": executable,
+        "signing_entitlements_content": entitlements_content if signing_entitlements else "",
+        "codesign": codesign,
         "application_extension": application_extension,
         "signing": signing["mode"] if signing else "ad_hoc",
         "host_link_archives": dep_archives,
@@ -6383,6 +6476,7 @@ def _apple_test_bundle_impl(ctx):
     assembly_srcs = _filter_assembly_sources(all_srcs)
     if len(swift_srcs) == 0 and len(objc_srcs) == 0 and len(c_srcs) == 0 and len(cxx_srcs) == 0 and len(assembly_srcs) == 0:
         fail("apple_test_bundle " + ctx["label"]["id"] + " has no compilable sources")
+    private_header_files = _unique(private_header_files + _filter_by_extensions(generated_srcs, [".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".ipp", ".tpp", ".def"]))
     declared_swift_srcs = list(swift_srcs)
     if swift_testing:
         entry_point_source = declare_output("StruoTestEntryPoint.swift")
@@ -6517,6 +6611,8 @@ def _apple_test_bundle_impl(ctx):
     if ui_testing and (platform == "macos" or platform == "macosx" or sdk_variant != "simulator"):
         fail(ctx["label"]["id"] + ": user-interface test execution currently supports simulator targets")
     runner_application_path = ctx["build_dir"] + "/" + runner_bundle_dir if ui_testing else ""
+    if ctx["capability"] == "test" and host_application and not ui_testing and platform in ["macos", "macosx"]:
+        host_application = _apple_sandboxed_test_host(ctx, host_application, xcode_developer_dir)
     native_macos_xctest = platform in ["macos", "macosx"] and (not swift_testing or _apple_sources_import_xctest(swift_srcs + objc_srcs))
     if ctx["capability"] == "test" and (host_application or native_macos_xctest) and (platform in ["macos", "macosx"] or sdk_variant == "simulator"):
         runner_xcodebuild = host_which("xcodebuild")
@@ -6550,7 +6646,7 @@ def _apple_test_bundle_impl(ctx):
         swift_argv = list(swiftc["argv"]) + ["-emit-library", "-module-name", module_name, "-target", triple, "-parse-as-library"]
     else:
         link_tool = _resolve_clang(platform, sdk_variant, xcode_developer_dir)
-        linker = link_tool["clangxx_path"] if cxx_srcs or [src for src in objc_srcs if src.endswith(".mm")] else link_tool["clang_path"]
+        linker = link_tool["clangxx_path"] if [src for src in objc_srcs + c_srcs + cxx_srcs if _apple_clang_language(attrs, src, "c++" if src in cxx_srcs or src.endswith(".mm") else "c").endswith("++")] else link_tool["clang_path"]
         swift_argv = [linker, "-isysroot", link_tool["sdk_path"], "-target", triple, "-fobjc-link-runtime"]
         if coverage:
             swift_argv.append("-fprofile-instr-generate")
@@ -6580,7 +6676,7 @@ def _apple_test_bundle_impl(ctx):
         "-lXCTestSwiftSupport",
         "-o",
         test_binary,
-    ])
+    ] + _apple_reproducible_link_flags())
     if swift_testing:
         if testing_library_dir:
             swift_argv.extend(["-I", testing_library_dir])
@@ -6760,11 +6856,11 @@ def _apple_test_bundle_impl(ctx):
             clang_objects.append(obj)
 
         for src in objc_srcs:
-            compile_test_source(src, "objective-c++" if src.endswith(".mm") else "objective-c")
+            compile_test_source(src, _apple_clang_language(attrs, src, "objective-c++" if src.endswith(".mm") else "objective-c"))
         for src in c_srcs:
-            compile_test_source(src, "c")
+            compile_test_source(src, _apple_clang_language(attrs, src, "c"))
         for src in cxx_srcs:
-            compile_test_source(src, "c++")
+            compile_test_source(src, _apple_clang_language(attrs, src, "c++"))
         for src in assembly_srcs:
             compile_test_source(src, "assembler-with-cpp")
 
@@ -6843,9 +6939,9 @@ def _apple_test_bundle_impl(ctx):
         run_action(
             display_name = "Compile test assets · " + ctx["label"]["name"],
             source_files = _action_source_files(asset_catalogs),
-            argv = [actool["actool_path"]] + asset_catalogs + [
+            argv = [actool["actool_path"]] + _apple_actool_paths(asset_catalogs) + [
                 "--compile",
-                ctx["build_dir"] + "/" + resource_destination,
+                execution_path(ctx["build_dir"] + "/" + resource_destination),
                 "--platform",
                 _apple_actool_platform(platform, sdk_variant),
                 "--minimum-deployment-target",
@@ -6853,7 +6949,7 @@ def _apple_test_bundle_impl(ctx):
                 "--bundle-identifier",
                 bundle_id,
                 "--output-partial-info-plist",
-                asset_partial_plist,
+                execution_path(asset_partial_plist),
             ],
             inputs = asset_catalogs,
             outputs = [asset_car, asset_partial_plist],
@@ -7876,6 +7972,7 @@ apple_library = target_kind(
         attr("binary_swift_plugins", "list<string>", default = "[]", docs = "Prebuilt Swift macro executables in `<executable>#<module>` form", configurable = False),
         attr("clang_flags", "list<string>", default = "[]", docs = "Extra Clang compiler flags"),
         attr("per_source_clang_flags", "map<string,string>", default = "{}", docs = "[JavaScript Object Notation (JSON)](https://www.json.org/json-en.html)-encoded Clang flag lists keyed by source path", configurable = False),
+        attr("per_source_language", "map<string,string>", default = "{}", docs = "Clang language (`c`, `objective-c`, `c++` or `objective-c++`) keyed by source path, overriding the language its extension implies", configurable = False),
         attr("defines", "list<string>", default = "[]", docs = "`-D` conditions shared by Swift and Clang for compatibility"),
         attr("swift_defines", "list<string>", default = "[]", docs = "Swift conditional compilation conditions"),
         attr("clang_defines", "list<string>", default = "[]", docs = "C-family preprocessor definitions"),
@@ -8020,6 +8117,7 @@ apple_framework = target_kind(
         attr("binary_swift_plugins", "list<string>", default = "[]", docs = "Prebuilt Swift macro executables in `<executable>#<module>` form", configurable = False),
         attr("clang_flags", "list<string>", default = "[]", docs = "Extra Clang compiler flags"),
         attr("per_source_clang_flags", "map<string,string>", default = "{}", docs = "[JavaScript Object Notation (JSON)](https://www.json.org/json-en.html)-encoded Clang flag lists keyed by source path", configurable = False),
+        attr("per_source_language", "map<string,string>", default = "{}", docs = "Clang language (`c`, `objective-c`, `c++` or `objective-c++`) keyed by source path, overriding the language its extension implies", configurable = False),
         attr("defines", "list<string>", default = "[]", docs = "Conditional compilation definitions shared by Swift and Clang for compatibility"),
         attr("swift_defines", "list<string>", default = "[]", docs = "Swift conditional compilation conditions"),
         attr("clang_defines", "list<string>", default = "[]", docs = "C-family preprocessor definitions"),
@@ -8194,7 +8292,7 @@ def _apple_executable_impl(ctx):
         executable,
         "-module-cache-path",
         compile_module_cache,
-    ]
+    ] + _apple_reproducible_link_flags()
     if not has_main_source:
         # A tool without `main.swift` uses `@main` or an entry-point
         # attribute, which requires library parsing so the compiler does
@@ -8374,6 +8472,7 @@ apple_executable = target_kind(
         attr("binary_swift_plugins", "list<string>", default = "[]", docs = "Prebuilt Swift macro executables in `<executable>#<module>` form", configurable = False),
         attr("clang_flags", "list<string>", default = "[]", docs = "Extra Clang compiler flags (ignored today; kept for schema parity with apple_application)"),
         attr("per_source_clang_flags", "map<string,string>", default = "{}", docs = "JSON-encoded Clang compiler flag lists keyed by source path (unused in the Swift-only draft)"),
+        attr("per_source_language", "map<string,string>", default = "{}", docs = "Clang language (`c`, `objective-c`, `c++` or `objective-c++`) keyed by source path, overriding the language its extension implies (unused in the Swift-only draft)"),
         attr("defines", "list<string>", default = "[]", docs = "Conditional compilation definitions shared by Swift and Clang for compatibility"),
         attr("swift_defines", "list<string>", default = "[]", docs = "Swift conditional compilation conditions"),
         attr("clang_defines", "list<string>", default = "[]", docs = "C-family preprocessor definitions"),
@@ -8444,6 +8543,7 @@ apple_application = target_kind(
         attr("binary_swift_plugins", "list<string>", default = "[]", docs = "Prebuilt Swift macro executables in `<executable>#<module>` form", configurable = False),
         attr("clang_flags", "list<string>", default = "[]", docs = "Extra Clang compiler flags applied to C, C++, Objective-C, and Objective-C++ sources"),
         attr("per_source_clang_flags", "map<string,string>", default = "{}", docs = "JSON-encoded Clang compiler flag lists keyed by source path"),
+        attr("per_source_language", "map<string,string>", default = "{}", docs = "Clang language (`c`, `objective-c`, `c++` or `objective-c++`) keyed by source path, overriding the language its extension implies"),
         attr("defines", "list<string>", default = "[]", docs = "Conditional compilation definitions shared by Swift and Clang for compatibility"),
         attr("swift_defines", "list<string>", default = "[]", docs = "Swift conditional compilation conditions"),
         attr("clang_defines", "list<string>", default = "[]", docs = "C-family preprocessor definitions"),
@@ -8585,6 +8685,7 @@ apple_test_bundle = target_kind(
         attr("binary_swift_plugins", "list<string>", default = "[]", docs = "Prebuilt Swift macro executables in `<executable>#<module>` form", configurable = False),
         attr("clang_flags", "list<string>", default = "[]", docs = "Extra Clang compiler flags applied to C, C++, Objective-C, and Objective-C++ test sources"),
         attr("per_source_clang_flags", "map<string,string>", default = "{}", docs = "JSON-encoded Clang compiler flag lists keyed by test source path"),
+        attr("per_source_language", "map<string,string>", default = "{}", docs = "Clang language (`c`, `objective-c`, `c++` or `objective-c++`) keyed by source path, overriding the language its extension implies"),
         attr("defines", "list<string>", default = "[]", docs = "Conditional compilation definitions shared by Swift and Clang for compatibility"),
         attr("swift_defines", "list<string>", default = "[]", docs = "Swift conditional compilation conditions"),
         attr("clang_defines", "list<string>", default = "[]", docs = "C-family preprocessor definitions"),

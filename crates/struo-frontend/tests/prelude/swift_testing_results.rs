@@ -360,3 +360,57 @@ fn event_stream() -> String {
     ]
     .join("\n")
 }
+
+/// Swift Testing reports a test by its display name when `@Test` gives one,
+/// so the verdict must land on the function the sources declare rather than
+/// on an unknown extra case.
+#[cfg(unix)]
+#[test]
+fn swift_testing_display_names_resolve_to_declared_functions() {
+    let script = eval_prelude_string_function(
+        "_apple_test_report_script",
+        r#"(["Suite.swift"], "cases.jsonl", "tests/Bundle", "swift_testing")"#,
+    )
+    .unwrap();
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("Suite.swift"),
+        r#"import Testing
+struct TitleSuite {
+  @Test("Title is returned for each supported type", arguments: [1, 2])
+  func titleIsReturned(value: Int) {}
+  @Test(.tags(.fast)) func tagged() {}
+  @Test func plain() {}
+  @Test("Login Suite works") func login() {}
+  @Test(arguments: [2, 3]) func primes(n: Int) {}
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("run.log"),
+        "◇ Suite TitleSuite started.\n✔ Test \"Title is returned for each supported type\" with 2 test cases passed after 0.020 seconds.\n✔ Test tagged() passed after 0.010 seconds.\n✘ Test plain() failed after 0.030 seconds.\n✔ Test \"Login Suite works\" passed after 0.010 seconds.\n✔ Test primes(n:) with 2 test cases passed after 0.010 seconds.\n✘ Suite TitleSuite failed after 0.080 seconds.\n✘ Test run with 5 tests failed after 0.080 seconds.\n",
+    )
+    .unwrap();
+    let output = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "status=1\nlog=run.log\nnative_results=native.txt\nresults=results.json\n{script}"
+        ))
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}\n{script}");
+    let results: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("results.json")).unwrap()).unwrap();
+    let cases = results["cases"].as_array().unwrap();
+    let named = |name: &str| cases.iter().find(|case| case["name"] == name).unwrap();
+    assert_eq!(named("titleIsReturned")["status"], "passed", "{results}");
+    assert_eq!(named("titleIsReturned")["suite"], "TitleSuite");
+    assert_eq!(named("tagged")["status"], "passed");
+    assert_eq!(named("plain")["status"], "failed");
+    assert_eq!(named("login")["status"], "passed", "{results}");
+    assert_eq!(named("primes")["status"], "passed", "{results}");
+    assert_eq!(results["summary"]["total"], 5, "{results}");
+    assert_eq!(results["summary"]["passed"], 4);
+}

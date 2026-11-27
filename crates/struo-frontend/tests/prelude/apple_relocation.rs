@@ -1,6 +1,6 @@
 use super::*;
 
-fn library_hmap(umbrella: bool) -> (TempDir, Vec<u8>, String, Vec<String>) {
+fn library_hmap(umbrella: bool) -> (TempDir, Vec<u8>, String, Vec<String>, Option<Vec<u8>>) {
     let workspace = TempDir::new().unwrap();
     for (path, contents) in [
         ("Pkg/Sources/Value.swift", "public func value() {}\n"),
@@ -97,11 +97,23 @@ result = repr(_apple_library_impl(ctx))
             ]
         }));
     }
+    let overlay = store
+        .actions
+        .iter()
+        .find_map(|action| match &action.operation {
+            Some(DeclaredActionOperation::WriteFile { path, bytes })
+                if path.ends_with("framework-headers-overlay.yaml") =>
+            {
+                Some(bytes.clone())
+            }
+            _ => None,
+        });
     (
         workspace,
         bytes.clone(),
         generated_header.to_string(),
         search_flags,
+        overlay,
     )
 }
 
@@ -130,7 +142,7 @@ fn hmap_entries(bytes: &[u8]) -> BTreeMap<String, String> {
 #[test]
 fn hmap_values_are_execution_root_relative_for_public_private_and_swift_headers() {
     for umbrella in [false, true] {
-        let (_workspace, bytes, generated_header, _) = library_hmap(umbrella);
+        let (_workspace, bytes, generated_header, _, _) = library_hmap(umbrella);
         let entries = hmap_entries(&bytes);
         for key in ["Value.h", "Base/Value.h"] {
             assert_eq!(entries[key], "Pkg/include/Value.h");
@@ -143,11 +155,29 @@ fn hmap_values_are_execution_root_relative_for_public_private_and_swift_headers(
     }
 }
 
+#[test]
+fn framework_header_overlay_is_execution_root_relative() {
+    let (workspace, _, _, _, overlay) = library_hmap(true);
+    let overlay: serde_json::Value = serde_json::from_slice(&overlay.unwrap()).unwrap();
+    let root = &overlay["roots"][0];
+    assert_eq!(root["name"], ".struo/out/Pkg/Base.framework/Headers");
+    let contents = root["contents"].as_array().unwrap();
+    assert!(contents
+        .iter()
+        .any(|entry| entry["external-contents"] == "Pkg/include/Value.h"));
+    assert!(
+        !overlay
+            .to_string()
+            .contains(workspace.path().to_str().unwrap()),
+        "{overlay}"
+    );
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn clang_reads_generated_hmaps_locally_and_after_execution_root_relocation() {
     for umbrella in [false, true] {
-        let (workspace, bytes, generated_header, search_flags) = library_hmap(umbrella);
+        let (workspace, bytes, generated_header, search_flags, _) = library_hmap(umbrella);
         let worker = TempDir::new().unwrap();
         for root in [workspace.path(), worker.path()] {
             for (path, contents) in [

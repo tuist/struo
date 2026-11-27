@@ -23,7 +23,7 @@ and .NetNewsWire.attrs.bundle_id == "dev.struo.NetNewsWire"
 and (.NetNewsWire.deps | index("NetNewsWire_Share_Extension") != null and index("Subscribe_to_Feed") != null)
 and (."NetNewsWire-iOS".deps | index("NetNewsWire_iOS_Share_Extension") != null and index("NetNewsWire_iOS_Widget_Extension") != null)
 and (.NetNewsWireTests.deps | index("NetNewsWire") != null)
-and (."NetNewsWire-iOSTests".deps | index("NetNewsWire-iOS") != null)
+and (."NetNewsWire-iOSTests".deps | index("NetNewsWire-iOS") != null and index("NetNewsWire") == null)
 and (.xcode.attrs._default_test_roots | sort) == (["NetNewsWireTests", "NetNewsWire-iOSTests"] | sort)
 and (all(to_entries[] | select(.key | startswith("XcodePackage_")) | select(.key | endswith("_MacroHost") | not); . as $node | all(.value.deps[]; $graph[.].attrs.platform == $node.value.attrs.platform)))
 and (all([$mac, $phone][]; $graph[.] as $account | ($account | package_dep("RSCore")) as $core | ($account | package_dep("RSParser")) as $parser | $graph[$parser].deps == [$core]))

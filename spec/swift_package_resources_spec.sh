@@ -22,16 +22,16 @@ Describe 'Swift package resource catalogs'
 
   exercise_package_resources() {
     cp -R "$REPO_ROOT/fixtures/swift_package_resources/." "$WORKSPACE/"
-    STRUO_CHANGE_TRACKER=0 struo build SwiftPackage_ResourceFixtures_ResourceProbe --format json > "$WORKSPACE/build.json" 2> "$WORKSPACE/build.err" || { cat "$WORKSPACE/build.err"; return 1; }
+    (close_shellspec_fds; STRUO_CHANGE_TRACKER=0 struo build SwiftPackage_ResourceFixtures_ResourceProbe --format json) > "$WORKSPACE/build.json" 2> "$WORKSPACE/build.err" || { cat "$WORKSPACE/build.err"; return 1; }
     app="$WORKSPACE/.struo/out/SwiftPackage_ResourceFixtures_ResourceProbe/ResourceProbe.app"
     check_package_resources || return 1
     [ "$(find "$app" -name Assets.car | wc -l | tr -d ' ')" = 2 ] || return 1
     mv "$WORKSPACE/.struo/out" "$SPEC_ROOT/saved-outputs"
-    STRUO_CHANGE_TRACKER=0 struo build SwiftPackage_ResourceFixtures_ResourceProbe --format json > "$WORKSPACE/restored.json" 2> "$WORKSPACE/build.err" || { cat "$WORKSPACE/build.err"; return 1; }
+    (close_shellspec_fds; STRUO_CHANGE_TRACKER=0 struo build SwiftPackage_ResourceFixtures_ResourceProbe --format json) > "$WORKSPACE/restored.json" 2> "$WORKSPACE/build.err" || { cat "$WORKSPACE/build.err"; return 1; }
     check_package_resources
   }
 
-  It 'loads compiled colors and copied resources through Bundle.module after a build and cache restore'
+  It 'loads compiled colors, implicit localized strings, Objective-C resources, and copied resources through the package resource accessors after a build and cache restore'
     Skip if 'requires Xcode' package_asset_toolchain_unavailable
     When call exercise_package_resources
     The status should be success

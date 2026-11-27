@@ -8929,6 +8929,10 @@ result = repr(provider["test_bundle_path"])
     assert!(compile
         .argv
         .windows(2)
+        .any(|args| args == ["-Xlinker".to_string(), "-reproducible".to_string()]));
+    assert!(compile
+        .argv
+        .windows(2)
         .any(|args| { args == ["-framework".to_string(), "Security".to_string()] }));
     assert!(compile.argv.windows(4).any(|args| {
         args == [
@@ -15973,17 +15977,17 @@ phase = _xcode_shell_script_phases(
     {{"label": {{"package": "App", "id": "App/Seed"}}, "attr": {{"project": "App.xcodeproj"}}}},
     objects,
     objects["TARGET"],
-    {{"PRODUCT_NAME": "App", "CONFIGURATION": "Debug", "DEPENDENCY_ROOT": "${{SRCROOT}}/Dependencies"}},
+    {{"PRODUCT_NAME": "App", "CONFIGURATION": "Debug", "DEPENDENCY_ROOT": "${{SRCROOT}}/Dependencies", "SEARCH_FLAGS": "-I ${{SRCROOT}}/A -I ${{SRCROOT}}/B"}},
     "App",
     "App",
 )
 action = json_decode(phase["actions"][0])
-result = repr([phase["sources"], action["inputs"], action["outputs"], action["cwd"], action["env"]["DERIVED_FILE_DIR"], action["env"]["DEPENDENCY_ROOT"], action["env"]["PROJECT"], action["cacheable"]])
+result = repr([phase["sources"], action["inputs"], action["outputs"], action["cwd"], action["env"]["DERIVED_FILE_DIR"], action["env"]["DEPENDENCY_ROOT"], action["env"]["SEARCH_FLAGS"], action["env"]["PROJECT"], action["cacheable"]])
 "#
     );
     assert_eq!(
         eval_prelude_source_to_repr(source).unwrap(),
-        r#"[[".struo/out/App/App/SecretKey.swift"], ["App/buildscripts/secrets.gyb"], [".struo/out/App/App/SecretKey.swift"], "App", "/workspace/.struo/out/App/App", "/workspace/App/Dependencies", "App", True]"#
+        r#"[[".struo/out/App/App/SecretKey.swift"], ["App/buildscripts/secrets.gyb"], [".struo/out/App/App/SecretKey.swift"], "App", "{{struo.execution_root}}/.struo/out/App/App", "{{struo.execution_root}}/App/Dependencies", "-I {{struo.execution_root}}/App/A -I {{struo.execution_root}}/App/B", "App", True]"#
     );
 }
 
@@ -18339,10 +18343,28 @@ settings = {{
     "TEST_HOST": "$(BUILT_PRODUCTS_DIR)/App.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/App",
 }}
 name_map = {{"App": "App", "Feature": "Feature"}}
-result = repr(_xcode_test_host_ref({{}}, settings, name_map))
+# Both platforms' apps produce `App.app`; the product-name map keeps only one,
+# so the test's dependency on its own platform's app decides.
+objects = {{
+    "MAC": {{"isa": "PBXNativeTarget", "name": "App", "productType": "com.apple.product-type.application"}},
+    "IOS": {{"isa": "PBXNativeTarget", "name": "App-iOS", "productType": "com.apple.product-type.application"}},
+    "DEP": {{"isa": "PBXTargetDependency", "target": "IOS"}},
+    # A test may also depend on an app it launches; TEST_HOST still decides.
+    "HELPER": {{"isa": "PBXNativeTarget", "name": "Helper", "productType": "com.apple.product-type.application", "productReference": "HELPER_PRODUCT"}},
+    "HELPER_PRODUCT": {{"isa": "PBXFileReference", "path": "Helper.app"}},
+    "HELPER_DEP": {{"isa": "PBXTargetDependency", "target": "HELPER"}},
+}}
+result = repr([
+    _xcode_test_host_ref({{}}, {{}}, settings, name_map),
+    _xcode_test_host_ref(objects, {{"dependencies": ["DEP"]}}, settings, name_map),
+    _xcode_test_host_ref(objects, {{"dependencies": ["HELPER_DEP"]}}, settings, name_map),
+])
 "#
     );
-    assert_eq!(eval_prelude_source_to_repr(source).unwrap(), r#""App""#);
+    assert_eq!(
+        eval_prelude_source_to_repr(source).unwrap(),
+        r#"["App", "App-iOS", "App"]"#
+    );
 }
 
 #[test]

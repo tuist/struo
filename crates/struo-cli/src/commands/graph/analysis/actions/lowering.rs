@@ -45,6 +45,42 @@ pub(super) fn declared_to_action(
     .action)
 }
 
+/// The spelling the shell uses for the workspace when it reached it through a
+/// symlink, such as `/tmp/ws` for `/private/tmp/ws` on macOS, taken from `PWD`
+/// when that names the current directory inside the workspace.
+fn shell_workspace_spelling(workspace: &Path) -> Option<String> {
+    let cwd = env::current_dir().ok()?;
+    let relative = cwd.strip_prefix(workspace).ok()?;
+    let mut logical = std::path::PathBuf::from(env::var_os("PWD")?);
+    if logical.canonicalize().ok()? != cwd {
+        return None;
+    }
+    for _ in relative.components() {
+        logical.pop();
+    }
+    if logical.canonicalize().ok()? != workspace || logical == workspace {
+        return None;
+    }
+    Some(struo_core::command_path(&logical))
+}
+
+/// Replace `path` where it appears as a whole path in `value`: at the start
+/// or after a list separator, and followed by its end, `/`, or a separator.
+fn replace_whole_path(value: &str, path: &str, replacement: &str) -> String {
+    let mut replaced = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(index) = rest.find(path) {
+        let after = &rest[index + path.len()..];
+        let starts = index == 0 || rest[..index].ends_with([':', '=', ' ']);
+        let ends = after.is_empty() || after.starts_with(['/', ':', ' ']);
+        replaced.push_str(&rest[..index]);
+        replaced.push_str(if starts && ends { replacement } else { path });
+        rest = after;
+    }
+    replaced.push_str(rest);
+    replaced
+}
+
 pub(super) fn prepare_declared_action_with_inputs(
     workspace: &Path,
     declared: &DeclaredAction,
@@ -61,15 +97,25 @@ pub(super) fn prepare_declared_action_with_inputs(
             "inherit_parent_env requires sandbox = \"off\""
         );
         let mut effective = declared.clone();
+        // The action key hashes the environment as declared, so an inherited
+        // value that names the checkout, such as `PWD`, is spelled through the
+        // execution root, which resolves to the checkout at launch.
+        let roots = std::iter::once(struo_core::command_path(workspace))
+            .chain(shell_workspace_spelling(workspace))
+            .collect::<Vec<_>>();
         effective.env = env::vars_os()
             .map(|(key, value)| {
+                let value = value
+                    .into_string()
+                    .map_err(|_| anyhow::anyhow!("inherited environment values must be UTF-8"))?;
+                let value = roots.iter().fold(value, |value, root| {
+                    replace_whole_path(&value, root, struo_core::EXECUTION_ROOT_MARKER)
+                });
                 Ok((
                     key.into_string().map_err(|_| {
                         anyhow::anyhow!("inherited environment names must be UTF-8")
                     })?,
-                    value.into_string().map_err(|_| {
-                        anyhow::anyhow!("inherited environment values must be UTF-8")
-                    })?,
+                    value,
                 ))
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
@@ -773,4 +819,19 @@ pub(super) fn canonical_action_value(value: &str, workspace: &Path) -> String {
         return struo_core::portable_host_value(value);
     }
     struo_core::portable_host_value(&value.replace(workspace.as_ref(), "{{struo.execution_root}}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::replace_whole_path;
+
+    #[test]
+    fn replaces_only_whole_paths() {
+        assert_eq!(replace_whole_path("/tmp/ws", "/tmp/ws", "R"), "R");
+        assert_eq!(
+            replace_whole_path("/tmp/ws/sub:/tmp/ws-old/bin:/data/tmp/ws/x", "/tmp/ws", "R"),
+            "R/sub:/tmp/ws-old/bin:/data/tmp/ws/x"
+        );
+        assert_eq!(replace_whole_path("-I /tmp/ws/a", "/tmp/ws", "R"), "-I R/a");
+    }
 }

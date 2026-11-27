@@ -210,6 +210,40 @@ result = repr([
 }
 
 #[test]
+fn fetched_package_resource_discovery_treats_lproj_files_as_localized_resources() {
+    let workspace = TempDir::new().unwrap();
+    let package = workspace.path().join(".struo/xcode-packages/Lib");
+    for file in [
+        "Sources/Lib/Localization/en.lproj/Localizable.strings",
+        "Sources/Lib/Localization/de.lproj/Localizable.stringsdict",
+        "Sources/Lib/en.lproj/Code.swift",
+        "Sources/Lib/en.lproj/Nested/Deep.strings",
+        "Sources/Lib/Images.xcassets/fr.lproj/Contents.json",
+        "Sources/Lib/Lib.swift",
+    ] {
+        let path = package.join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "").unwrap();
+    }
+    let source = format!(
+        r#"{}
+info = {{"toolsVersion": {{"_version": "5.9"}}, "targets": [{{"type": "regular", "name": "Lib"}}]}}
+result = _xcode_swift_package_with_implicit_resources(".struo/xcode-packages/Lib", "{}", info)
+result = repr(sorted([resource["path"] for resource in result["targets"][0]["resources"]]))
+"#,
+        xcode_prelude_source(),
+        package.display()
+    );
+    let (_, result) = with_active_store(store_for(workspace.path(), ""), || {
+        eval_prelude_source_to_repr(source)
+    });
+    assert_eq!(
+        result.unwrap(),
+        r#"["Images.xcassets", "Localization/de.lproj/Localizable.stringsdict", "Localization/en.lproj/Localizable.strings"]"#
+    );
+}
+
+#[test]
 fn info_plist_templates_receive_build_entries_like_xcode() {
     let merge = |template_minimum: &str| {
         let template = format!(

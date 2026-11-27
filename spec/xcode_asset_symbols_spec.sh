@@ -23,16 +23,39 @@ Describe 'Xcode asset symbol setting'
   exercise_asset_symbols() {
     cp -R "$REPO_ROOT/fixtures/xcode_asset_symbols/." "$WORKSPACE/"
     app="$WORKSPACE/.struo/out/Assets/Assets.app"
-    STRUO_CHANGE_TRACKER=0 struo build Assets --format json > "$WORKSPACE/build.json" 2> "$WORKSPACE/build.err" || { cat "$WORKSPACE/build.err"; return 1; }
+    (close_shellspec_fds; STRUO_CHANGE_TRACKER=0 "$STRUO_BIN" -C "$WORKSPACE" build Assets --format json) > "$WORKSPACE/build.json" 2> "$WORKSPACE/build.err" || { cat "$WORKSPACE/build.err"; return 1; }
     [ -s "$WORKSPACE/.struo/out/Assets/Assets.app/Contents/Resources/Assets.car" ] || return 1
     [ ! -e "$WORKSPACE/.struo/out/Assets/GeneratedAssetSymbols.swift" ] || return 1
     check_asset_color || return 1
     sed -i '' 's/ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO/ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = YES/' "$WORKSPACE/Assets.xcodeproj/project.pbxproj"
     sed -i '' '/extension NSColor {/,/^}/d' "$WORKSPACE/main.swift"
-    STRUO_CHANGE_TRACKER=0 struo build Assets --format json > "$WORKSPACE/build.json" 2> "$WORKSPACE/build.err" || { cat "$WORKSPACE/build.err"; return 1; }
+    (close_shellspec_fds; STRUO_CHANGE_TRACKER=0 "$STRUO_BIN" -C "$WORKSPACE" build Assets --format json) > "$WORKSPACE/build.json" 2> "$WORKSPACE/build.err" || { cat "$WORKSPACE/build.err"; return 1; }
     [ -s "$WORKSPACE/.struo/out/Assets/GeneratedAssetSymbols.swift" ] || return 1
     check_asset_color || return 1
   }
+
+  build_after_agent_started_elsewhere() {
+    cp -R "$REPO_ROOT/fixtures/xcode_asset_symbols/." "$WORKSPACE/"
+    sed -i '' 's/ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO/ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = YES/' "$WORKSPACE/Assets.xcodeproj/project.pbxproj"
+    sed -i '' '/extension NSColor {/,/^}/d' "$WORKSPACE/main.swift"
+    elsewhere="$(mktemp -d)"
+    mkdir -p "$elsewhere/Other.xcassets" "$elsewhere/out"
+    printf '{"info":{"author":"xcode","version":1}}' > "$elsewhere/Other.xcassets/Contents.json"
+    (close_shellspec_fds; cd "$elsewhere" && xcrun actool Other.xcassets --compile out --platform macosx --minimum-deployment-target 14.0 > /dev/null 2>&1)
+    rm -rf "$elsewhere"
+    (close_shellspec_fds; STRUO_CHANGE_TRACKER=0 "$STRUO_BIN" -C "$WORKSPACE" build Assets --format json) > "$WORKSPACE/build.json" 2> "$WORKSPACE/build.err" || { cat "$WORKSPACE/build.err"; return 1; }
+    [ -s "$WORKSPACE/.struo/out/Assets/GeneratedAssetSymbols.swift" ] || return 1
+    [ -s "$WORKSPACE/.struo/out/Assets/Assets.app/Contents/Resources/Assets.car" ] || return 1
+    app="$WORKSPACE/.struo/out/Assets/Assets.app"
+    check_asset_color
+  }
+
+  It 'writes asset outputs into the workspace when the actool agent started in another directory'
+    Skip if 'requires Xcode' asset_toolchain_unavailable
+    When call build_after_agent_started_elsewhere
+    The status should be success
+    The output should equal ''
+  End
 
   It 'disables conflicting accessors without losing runtime assets, and enables them when requested'
     Skip if 'requires Xcode' asset_toolchain_unavailable

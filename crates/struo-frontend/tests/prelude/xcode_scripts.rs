@@ -88,7 +88,7 @@ result = repr([action["inputs"], action["outputs"], action["env"]["SCRIPT_INPUT_
     );
     assert_eq!(
         eval_prelude_source_to_repr(source).unwrap(),
-        r#"[["App/script.sh", "App/input.txt", "App/absolute.txt", "App/inputs.xcfilelist", "App/outputs.xcfilelist"], ["App/Vendor/Plugin.app", ".struo/out/App/result.txt"], "1", "1", "1", "/workspace/App/outputs.xcfilelist", "/workspace/App/Vendor/Plugin.app", "App", True]"#
+        r#"[["App/script.sh", "App/input.txt", "App/absolute.txt", "App/inputs.xcfilelist", "App/outputs.xcfilelist"], ["App/Vendor/Plugin.app", ".struo/out/App/result.txt"], "1", "1", "1", "{{struo.execution_root}}/App/outputs.xcfilelist", "{{struo.execution_root}}/App/Vendor/Plugin.app", "App", True]"#
     );
 }
 
@@ -254,7 +254,7 @@ def workspace_root():
 phase = {{"isa": "PBXShellScriptBuildPhase", "shellScript": "upload", "inputPaths": ["${{DWARF_DSYM_FOLDER_PATH}}/${{DWARF_DSYM_FILE_NAME}}/Contents/Resources/DWARF/${{TARGET_NAME}}", "$(SRCROOT)/App.app/Info.plist", "$(SRCROOT)/App.app.dSYM.txt"]}}
 phases = _xcode_shell_script_phases({{"label": {{"package": "", "id": "Seed"}}, "attr": {{"project": "App.xcodeproj"}}}}, {{"phase": phase}}, {{"buildPhases": ["phase"]}}, {{"FULL_PRODUCT_NAME": "App.app", "TARGET_NAME": "App"{format}}}, "", "App")
 action = json_decode(phases["actions"][0])
-result = repr([sorted(action["inputs"]), action["env"]["SCRIPT_INPUT_FILE_0"].removeprefix("/workspace/")])
+result = repr([sorted(action["inputs"]), action["env"]["SCRIPT_INPUT_FILE_0"].removeprefix("{{{{struo.execution_root}}}}/")])
 "#,
             xcode_prelude_source()
         );
@@ -269,10 +269,14 @@ result = repr([sorted(action["inputs"]), action["env"]["SCRIPT_INPUT_FILE_0"].re
 #[test]
 fn native_scripts_resolve_dsym_defaults_and_overrides() {
     for (settings, folder, filename) in [
-        ("", "/workspace/.struo/out/App", "App.app.dSYM"),
+        (
+            "",
+            "{{struo.execution_root}}/.struo/out/App",
+            "App.app.dSYM",
+        ),
         (
             r#", "DWARF_DSYM_FOLDER_PATH": "$(TARGET_BUILD_DIR)/Symbols", "DWARF_DSYM_FILE_NAME": "Custom.dSYM""#,
-            "/workspace/.struo/out/App/Symbols",
+            "{{struo.execution_root}}/.struo/out/App/Symbols",
             "Custom.dSYM",
         ),
     ] {

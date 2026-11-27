@@ -58,6 +58,7 @@ import inference and should not be authored manually.
 | `swift_flags` | list&lt;string&gt; | no | `[]` | Extra Swift compiler flags |
 | `clang_flags` | list&lt;string&gt; | no | `[]` | Extra Clang compiler flags |
 | `per_source_clang_flags` | map&lt;string,string&gt; | no | `{}` | [JavaScript Object Notation](https://www.json.org/json-en.html)-encoded Clang flags keyed by source path |
+| `per_source_language` | map&lt;string,string&gt; | no | `{}` | Clang language (`c`, `objective-c`, `c++`, or `objective-c++`) keyed by source path, overriding the language the file extension implies. Xcode adapters use this for files whose explicit file type differs from their extension |
 | `defines` | list&lt;string&gt; | no | `[]` | Compatibility conditions passed to both Swift and Clang |
 | `swift_defines` | list&lt;string&gt; | no | `[]` | Swift conditional compilation conditions |
 | `clang_defines` | list&lt;string&gt; | no | `[]` | C-family preprocessor definitions |

@@ -1,0 +1,39 @@
+// !$*UTF8*$!
+{
+ archiveVersion = 1;
+ objectVersion = 56;
+ objects = {
+  ROOT = {isa = PBXProject; mainGroup = GROUP; buildConfigurationList = PROJECT_CONFIGS; targets = (KIT, APP); };
+  GROUP = {isa = PBXGroup; sourceTree = "<group>"; children = (KIT_GROUP, APP_GROUP); };
+  KIT_GROUP = {isa = PBXGroup; path = Kit; sourceTree = "<group>"; children = (UMBRELLA_FILE, COUNTER_GROUP, SWIFT_FILE); };
+  COUNTER_GROUP = {isa = PBXGroup; path = Counter; sourceTree = "<group>"; children = (COUNTER_HEADER_FILE, COUNTER_FILE); };
+  APP_GROUP = {isa = PBXGroup; path = App; sourceTree = "<group>"; children = (APP_MAIN); };
+  APP_MAIN = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+  APP_SOURCE = {isa = PBXBuildFile; fileRef = APP_MAIN; };
+  APP_SOURCES = {isa = PBXSourcesBuildPhase; files = (APP_SOURCE); };
+  KIT_PRODUCT = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = Kit.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+  APP_KIT = {isa = PBXBuildFile; fileRef = KIT_PRODUCT; };
+  APP_FRAMEWORKS = {isa = PBXFrameworksBuildPhase; files = (APP_KIT); };
+  APP_EMBED = {isa = PBXCopyFilesBuildPhase; dstSubfolderSpec = 10; files = (APP_KIT_EMBED); };
+  APP_KIT_EMBED = {isa = PBXBuildFile; fileRef = KIT_PRODUCT; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+  APP_DEP = {isa = PBXTargetDependency; target = KIT; };
+  APP_CONFIGS = {isa = XCConfigurationList; buildConfigurations = (APP_DEBUG); defaultConfigurationName = Debug; };
+  APP_DEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = dev.struo.KitApp; PRODUCT_NAME = KitApp; LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks"; }; };
+  APP = {isa = PBXNativeTarget; name = KitApp; productName = KitApp; productType = "com.apple.product-type.application"; buildConfigurationList = APP_CONFIGS; buildPhases = (APP_SOURCES, APP_FRAMEWORKS, APP_EMBED); dependencies = (APP_DEP); };
+  UMBRELLA_FILE = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Kit.h; sourceTree = "<group>"; };
+  COUNTER_HEADER_FILE = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Counter.h; sourceTree = "<group>"; };
+  COUNTER_FILE = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = Counter.m; sourceTree = "<group>"; };
+  SWIFT_FILE = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Kit.swift; sourceTree = "<group>"; };
+  KIT_HEADERS = {isa = PBXHeadersBuildPhase; files = (KIT_UMBRELLA); };
+  KIT_UMBRELLA = {isa = PBXBuildFile; fileRef = UMBRELLA_FILE; settings = {ATTRIBUTES = (Private, ); }; };
+  KIT_SOURCES = {isa = PBXSourcesBuildPhase; files = (KIT_COUNTER, KIT_SWIFT); };
+  KIT_COUNTER = {isa = PBXBuildFile; fileRef = COUNTER_FILE; };
+  KIT_SWIFT = {isa = PBXBuildFile; fileRef = SWIFT_FILE; };
+  PROJECT_CONFIGS = {isa = XCConfigurationList; buildConfigurations = (PROJECT_DEBUG); defaultConfigurationName = Debug; };
+  PROJECT_DEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 13.0; SWIFT_VERSION = 5.0; CODE_SIGNING_ALLOWED = NO; }; };
+  KIT_CONFIGS = {isa = XCConfigurationList; buildConfigurations = (KIT_DEBUG); defaultConfigurationName = Debug; };
+  KIT_DEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {DEFINES_MODULE = YES; DYLIB_INSTALL_NAME_BASE = "@rpath"; SKIP_INSTALL = YES; CLANG_ENABLE_MODULES = YES; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = dev.struo.Kit; PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)"; }; };
+  KIT = {isa = PBXNativeTarget; name = Kit; productName = Kit; productType = "com.apple.product-type.framework"; productReference = KIT_PRODUCT; buildConfigurationList = KIT_CONFIGS; buildPhases = (KIT_HEADERS, KIT_SOURCES); dependencies = (); };
+ };
+ rootObject = ROOT;
+}

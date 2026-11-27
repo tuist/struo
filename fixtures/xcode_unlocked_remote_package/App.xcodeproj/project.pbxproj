@@ -1,0 +1,20 @@
+// !$*UTF8*$!
+{
+ archiveVersion = 1;
+ objectVersion = 56;
+ objects = {
+  ROOT = {isa = PBXProject; mainGroup = GROUP; buildConfigurationList = CONFIGS; packageReferences = (GREETING_PACKAGE); targets = (APP); };
+  GROUP = {isa = PBXGroup; sourceTree = "<group>"; children = (MAIN); };
+  MAIN = {isa = PBXFileReference; path = main.swift; sourceTree = "<group>"; };
+  SOURCE = {isa = PBXBuildFile; fileRef = MAIN; };
+  GREETING_FRAMEWORK = {isa = PBXBuildFile; productRef = GREETING_PRODUCT; };
+  SOURCES = {isa = PBXSourcesBuildPhase; files = (SOURCE); };
+  FRAMEWORKS = {isa = PBXFrameworksBuildPhase; files = (GREETING_FRAMEWORK); };
+  GREETING_PACKAGE = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://struo.invalid/Greeting"; requirement = {kind = upToNextMajorVersion; minimumVersion = 1.0.0; }; };
+  GREETING_PRODUCT = {isa = XCSwiftPackageProductDependency; package = GREETING_PACKAGE; productName = Greeting; };
+  CONFIGS = {isa = XCConfigurationList; buildConfigurations = (DEBUG); defaultConfigurationName = Debug; };
+  DEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 13.0; SWIFT_VERSION = 5.0; PRODUCT_NAME = App; PRODUCT_BUNDLE_IDENTIFIER = dev.struo.unlocked; GENERATE_INFOPLIST_FILE = YES; CODE_SIGNING_ALLOWED = NO; }; };
+  APP = {isa = PBXNativeTarget; name = App; productType = "com.apple.product-type.application"; buildConfigurationList = CONFIGS; buildPhases = (SOURCES, FRAMEWORKS); dependencies = (); packageProductDependencies = (GREETING_PRODUCT); };
+ };
+ rootObject = ROOT;
+}
