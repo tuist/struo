@@ -29,6 +29,11 @@ mix_env = "prod"
 name = "consumer"
 kind = "file_action"
 deps = ["unavailable"]
+
+[[target]]
+name = "package_consumer"
+kind = "file_action"
+deps = ["hex-jason"]
 TOML
     cat > "$WORKSPACE/actions.star" <<'STAR'
 def _build(ctx):
@@ -55,6 +60,15 @@ STAR
     The stderr should include 'mix_dependency_sources_missing'
     The stderr should include 'mix deps.get --check-locked'
     The stderr should include 'unavailable'
+  End
+
+  It 'reports the failed resolver when a dependency it would have emitted is missing'
+    prepare_missing_dependency_workspace
+    When call struo build package_consumer --format json
+    The status should equal 2
+    The stderr should include 'mix_dependency_sources_missing'
+    The stderr should include 'depends on missing target `hex-jason`'
+    The stderr should not include 'remove it from `deps`'
   End
 
   It 'identifies a failed repository checkout without printing credentials or Git output'

@@ -291,7 +291,10 @@ run`, and `struo test`.
 
 Target-valued entries under `[target.attrs]` use the same normalization rules.
 `struo query validate-workspace` checks that these references resolve to a
-declared target.
+declared target, and `struo build`, `struo run`, and `struo test` stop with
+the same `missing_dependency` diagnostic before building a target whose
+dependency does not resolve. When the package also declares a target with the
+missing name, the diagnostic suggests its `./` reference.
 
 ## Visibility
 

@@ -301,7 +301,7 @@ fn reachable_analysis_deps_walks_only_analysis_backed_direct_deps() {
         SandboxMode::default(),
     );
 
-    let reachable = session.reachable_analysis_deps(&graph[0]);
+    let reachable = session.reachable_analysis_deps(&graph[0]).unwrap();
 
     assert!(reachable.contains("DirectAnalysis"));
     assert!(reachable.contains("TransitiveAnalysis"));

@@ -237,6 +237,81 @@ fn validate_dependencies(
     }
 }
 
+/// Describes `target` depending on `dependency_id`, which no target in
+/// `known_ids` declares. Manifest labels without `./` resolve from the project
+/// root, so the repair names the package-relative spelling when it exists.
+pub fn missing_dependency_diagnostic<'a>(
+    target: &GraphTarget,
+    role: &str,
+    dependency_id: &str,
+    known_ids: impl IntoIterator<Item = &'a str>,
+) -> Diagnostic {
+    let attribute = if role == "deps" {
+        "deps".to_string()
+    } else {
+        format!("dependencies.{role}")
+    };
+    let name = dependency_id.rsplit('/').next().unwrap_or(dependency_id);
+    let in_package = crate::target_id(&target.label.package, dependency_id);
+    let package_prefix = format!("{}/", target.label.package);
+    let mut package_relative = false;
+    let mut same_name = Vec::new();
+    let mut same_package = Vec::new();
+    for id in known_ids {
+        if id == target.label.id {
+            continue;
+        }
+        if !target.label.package.is_empty() && id == in_package {
+            package_relative = true;
+        } else if id.rsplit('/').next() == Some(name) {
+            same_name.push(id.to_string());
+        } else if let Some(rest) = id
+            .strip_prefix(&package_prefix)
+            .filter(|rest| !rest.contains('/'))
+        {
+            same_package.push(format!("./{rest}"));
+        } else if target.label.package.is_empty() && !id.contains('/') {
+            same_package.push(id.to_string());
+        }
+    }
+    same_name.sort();
+    same_package.sort();
+    let mut diagnostic = Diagnostic::new(
+        "missing_dependency",
+        format!(
+            "target `{}` depends on missing target `{dependency_id}`",
+            target.label.id
+        ),
+    )
+    .with_target(&target.label.id)
+    .with_attribute(&attribute);
+    if package_relative {
+        diagnostic = diagnostic.with_repair(format!(
+            "Labels without `./` resolve from the project root; write `./{dependency_id}` for `{in_package}`"
+        ));
+    }
+    if !same_name.is_empty() {
+        diagnostic =
+            diagnostic.with_repair(format!("Targets named `{name}`: {}", shortlist(&same_name)));
+    } else if !package_relative && !same_package.is_empty() {
+        diagnostic = diagnostic.with_repair(format!(
+            "Targets in the same package: {}",
+            shortlist(&same_package)
+        ));
+    }
+    diagnostic.with_repair(format!(
+        "Declare target `{dependency_id}` or remove it from `{attribute}`"
+    ))
+}
+
+fn shortlist(ids: &[String]) -> String {
+    let shown = ids.iter().take(5).cloned().collect::<Vec<_>>().join(", ");
+    match ids.len() {
+        0..=5 => shown,
+        count => format!("{shown}, and {} more", count - 5),
+    }
+}
+
 fn validate_dependency_role(
     target: &GraphTarget,
     role: &str,
@@ -253,20 +328,12 @@ fn validate_dependency_role(
     };
     for dependency_id in dependencies {
         let Some(dependency) = targets.get(dependency_id.as_str()) else {
-            diagnostics.push(
-                Diagnostic::new(
-                    "missing_dependency",
-                    format!(
-                        "target `{}` depends on missing target `{dependency_id}`",
-                        target.label.id
-                    ),
-                )
-                .with_target(&target.label.id)
-                .with_attribute(&attribute)
-                .with_repair(format!(
-                    "Declare target `{dependency_id}` or remove it from `{attribute}`"
-                )),
-            );
+            diagnostics.push(missing_dependency_diagnostic(
+                target,
+                role,
+                dependency_id,
+                targets.keys().copied(),
+            ));
             continue;
         };
         if !role_declared && role != "deps" {
@@ -653,6 +720,68 @@ application_id = "dev.struo.app"
         assert!(diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "missing_source"));
+    }
+
+    #[test]
+    fn missing_dependency_repairs_name_the_label_to_write() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join("app")).unwrap();
+        std::fs::write(
+            tmp.path().join("app/struo.toml"),
+            r#"[[target]]
+name = "ws"
+kind = "zig_library"
+srcs = ["ws.zig"]
+[target.attrs]
+main = "ws.zig"
+
+[[target]]
+name = "math"
+kind = "zig_library"
+srcs = ["math.zig"]
+deps = ["math"]
+[target.attrs]
+main = "math.zig"
+
+[[target]]
+name = "tests"
+kind = "zig_library"
+srcs = ["test.zig"]
+deps = ["ws"]
+[target.attrs]
+main = "test.zig"
+"#,
+        )
+        .unwrap();
+
+        let diagnostics = validate_workspace(tmp.path()).unwrap();
+        let repairs = |target: &str| {
+            diagnostics
+                .iter()
+                .find(|diagnostic| {
+                    diagnostic.code == "missing_dependency"
+                        && diagnostic.target.as_deref() == Some(target)
+                })
+                .unwrap_or_else(|| panic!("{target}: {diagnostics:?}"))
+                .repairs
+                .clone()
+        };
+
+        assert_eq!(
+            repairs("app/tests"),
+            vec![
+                "Labels without `./` resolve from the project root; write `./ws` for `app/ws`"
+                    .to_string(),
+                "Declare target `ws` or remove it from `deps`".to_string(),
+            ]
+        );
+        assert_eq!(
+            repairs("app/math"),
+            vec![
+                "Targets in the same package: ./tests, ./ws".to_string(),
+                "Declare target `math` or remove it from `deps`".to_string(),
+            ]
+        );
     }
 
     #[test]

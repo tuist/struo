@@ -1237,4 +1237,41 @@ ZIG
     The status should be failure
     The stderr should include 'module `ws` in ws/build.zig has a computed root source file'
   End
+
+  test_bare_dependency_in_subpackage() {
+    mkdir -p "$WORKSPACE/app/src"
+    printf '%s\n' 'pub const answer: u32 = 42;' > "$WORKSPACE/app/src/ws.zig"
+    printf '%s\n' 'test "t" { try @import("std").testing.expect(@import("ws").answer == 42); }' > "$WORKSPACE/app/src/test.zig"
+    cat > "$WORKSPACE/app/struo.toml" <<TOML
+[[target]]
+name = "ws"
+kind = "zig_library"
+srcs = ["src/ws.zig"]
+
+[target.attrs]
+main = "src/ws.zig"
+
+[[target]]
+name = "tests"
+kind = "zig_test"
+srcs = ["src/test.zig"]
+deps = ["ws"]
+
+[target.attrs]
+main = "src/test.zig"
+strip = true
+zig = "$SPEC_ZIG"
+TOML
+    struo test app/tests
+  }
+
+  It 'fails a build whose dependency names no target and suggests the package-relative label'
+    Skip if 'Zig toolchain unavailable' real_zig_unavailable
+
+    When call test_bare_dependency_in_subpackage
+    The status should be failure
+    The stderr should include 'target `app/tests` depends on missing target `ws`'
+    The stderr should include 'write `./ws`'
+    The path "$WORKSPACE/.struo/out/app/tests/tests" should not be exist
+  End
 End

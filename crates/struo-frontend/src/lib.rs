@@ -87,4 +87,6 @@ pub use workspace::{
     load_cache_provider, load_cache_provider_override, load_file, load_infrastructure_config,
     load_local_cache_max_size, load_workspace, load_workspace_with_configuration,
 };
-pub use workspace_validator::{validate_workspace, validate_workspace_graph};
+pub use workspace_validator::{
+    missing_dependency_diagnostic, validate_workspace, validate_workspace_graph,
+};

@@ -571,36 +571,38 @@ impl BuildSession {
                 .collect::<Vec<_>>()
                 .join(", ");
             let missing = format!("no target matches `{target_id}`; use one of these valid target selectors: {nearby}. Run `struo query targets` to list the available targets");
-            // A target a resolver would have emitted is missing because the
-            // resolver failed, and that failure is what the caller can act on.
-            // Only a resolver whose package contains the requested id could
-            // have emitted it; any other failure is unrelated to a typo.
-            let Some(diagnostic) = self
-                .targets
-                .values()
-                .filter(|target| {
-                    let package = &target.label.package;
-                    self.analyzer.target_kind_has_resolver(&target.kind)
-                        && (package.is_empty()
-                            || target_id == package
-                            || target_id.starts_with(&format!("{package}/")))
-                })
-                .flat_map(|target| &target.diagnostics)
-                .min_by(|left, right| left.target.cmp(&right.target))
-            else {
-                anyhow::bail!(missing);
-            };
-            return Err(
-                anyhow::Error::new(struo_frontend::analysis::AnalysisFailure {
-                    diagnostic: diagnostic.clone(),
-                })
-                .context(format!(
-                    "{missing}; the graph is incomplete because a target failed to load"
-                )),
-            );
+            return Err(self.resolver_failure_or(target_id, anyhow::anyhow!(missing)));
         };
         ensure_graph_target_valid(target)?;
         Ok(target)
+    }
+
+    /// A target a resolver would have emitted is missing because the resolver
+    /// failed, and that failure is what the caller can act on. Only a resolver
+    /// whose package contains `target_id` could have emitted it; any other
+    /// failure is unrelated, so `missing` is returned instead.
+    fn resolver_failure_or(&self, target_id: &str, missing: anyhow::Error) -> anyhow::Error {
+        let Some(diagnostic) = self
+            .targets
+            .values()
+            .filter(|target| {
+                let package = &target.label.package;
+                self.analyzer.target_kind_has_resolver(&target.kind)
+                    && (package.is_empty()
+                        || target_id == package
+                        || target_id.starts_with(&format!("{package}/")))
+            })
+            .flat_map(|target| &target.diagnostics)
+            .min_by(|left, right| left.target.cmp(&right.target))
+        else {
+            return missing;
+        };
+        anyhow::Error::new(struo_frontend::analysis::AnalysisFailure {
+            diagnostic: diagnostic.clone(),
+        })
+        .context(format!(
+            "{missing}; the graph is incomplete because a target failed to load"
+        ))
     }
 
     /// Build a target and the impl-backed portion of its dependency
@@ -624,7 +626,7 @@ impl BuildSession {
             return Ok(None);
         }
 
-        let reachable = self.reachable_analysis_targets(target);
+        let reachable = self.reachable_analysis_targets(target)?;
         tracing::debug!(
             target = %target.label.id,
             reachable = reachable.len(),
@@ -815,11 +817,38 @@ impl BuildSession {
         .await
     }
 
-    fn reachable_analysis_targets(&self, target: &GraphTarget) -> HashSet<String> {
+    fn reachable_analysis_targets(&self, target: &GraphTarget) -> Result<HashSet<String>> {
         self.reachable_analysis_targets_from([target.label.id.clone()])
     }
 
-    fn reachable_analysis_deps(&self, target: &GraphTarget) -> HashSet<String> {
+    /// Fails when `target` depends on an id no graph target declares, instead
+    /// of building it as if the dependency were absent.
+    fn ensure_dependencies_declared(&self, target: &GraphTarget) -> Result<()> {
+        let roles = std::iter::once(("deps", &target.deps)).chain(
+            target
+                .dependency_edges
+                .iter()
+                .map(|(role, deps)| (role.as_str(), deps)),
+        );
+        for (role, deps) in roles {
+            if let Some(missing) = deps.iter().find(|id| !self.targets.contains_key(*id)) {
+                let diagnostic = struo_frontend::missing_dependency_diagnostic(
+                    target,
+                    role,
+                    missing,
+                    self.targets.keys().map(String::as_str),
+                );
+                return Err(self.resolver_failure_or(
+                    missing,
+                    anyhow::Error::new(struo_frontend::analysis::AnalysisFailure { diagnostic }),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn reachable_analysis_deps(&self, target: &GraphTarget) -> Result<HashSet<String>> {
+        self.ensure_dependencies_declared(target)?;
         let roots = target.dependency_ids().filter_map(|dep_id| {
             let dep = self.targets.get(dep_id)?;
             self.analyzer
@@ -832,7 +861,7 @@ impl BuildSession {
     fn reachable_analysis_targets_from(
         &self,
         roots: impl IntoIterator<Item = String>,
-    ) -> HashSet<String> {
+    ) -> Result<HashSet<String>> {
         let mut reachable = HashSet::new();
         let mut stack = roots.into_iter().collect::<Vec<_>>();
         while let Some(target_id) = stack.pop() {
@@ -846,6 +875,7 @@ impl BuildSession {
             let Some(target) = target else {
                 continue;
             };
+            self.ensure_dependencies_declared(&target)?;
             for dep_id in target.dependency_ids() {
                 let Some(dep) = self.targets.get(dep_id) else {
                     continue;
@@ -855,14 +885,14 @@ impl BuildSession {
                 }
             }
         }
-        reachable
+        Ok(reachable)
     }
 
     async fn build_direct_analysis_deps(
         &self,
         target: &GraphTarget,
     ) -> Result<Vec<(String, BuildOutcome)>> {
-        let reachable = self.reachable_analysis_deps(target);
+        let reachable = self.reachable_analysis_deps(target)?;
         if reachable.is_empty() {
             return Ok(Vec::new());
         }
