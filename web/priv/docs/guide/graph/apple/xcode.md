@@ -288,6 +288,22 @@ target reports a cache bypass, although individual compile actions can still
 hit the cache. Files that a product script creates or deletes are reflected in
 the final bundle.
 
+## Debug information
+
+Compiled objects and debug maps record source and object paths relative to the
+workspace root, and Swift modules leave out the compiler's search paths, the way
+rules_swift and apple_support configure them. Builds from different checkouts
+therefore produce identical outputs and share cache entries. A debugger
+attached to a Struo-built product resolves those paths from the workspace root.
+Because Swift modules leave out search paths, give LLDB the framework and
+module directories of the product when evaluating expressions, with
+`target.swift-framework-search-paths` and `target.swift-module-search-paths`.
+To debug from elsewhere, map the root in LLDB:
+
+```text
+settings set target.source-map . /path/to/workspace
+```
+
 ## Limitations
 
 - Struo compiles the project itself rather than delegating to `xcodebuild`. It

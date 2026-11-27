@@ -115,9 +115,16 @@ def _apple_reproducible_link_flags():
     # Matches swift-build's default LD_DETERMINISTIC_MODE. Without it, the
     # `-O0` the Swift driver forwards for `-Onone` makes ld write a random
     # LC_UUID, so every debug link produces a different binary.
+    # `-oso_prefix` strips the execution root from the object paths that debug
+    # maps record, as apple_support's `oso_prefix_is_pwd` does.
     if _apple_execution_os() == "macos":
-        return ["-Xlinker", "-reproducible"]
+        return ["-Xlinker", "-reproducible", "-Xlinker", "-oso_prefix", "-Xlinker", execution_path("") + "/"]
     return []
+
+def _apple_clang_debug_prefix_flags():
+    # The Clang counterpart of the Swift compile mapping in
+    # `_apple_swift_action`: debug info records execution-root-relative paths.
+    return ["-fdebug-prefix-map=" + execution_path("") + "=.", "-ffile-compilation-dir=."]
 
 def _apple_linker_dir(xcode_developer_dir, env):
     # A Swift toolchain installed next to Xcode rather than inside it ships a
@@ -2718,7 +2725,7 @@ def _apple_library_impl(ctx):
                     triple,
                     "-o",
                     obj,
-                ]
+                ] + _apple_clang_debug_prefix_flags()
                 if language == "objective-c" or language == "objective-c++":
                     argv.append("-fobjc-arc")
                 if emit_dsym:
@@ -5885,7 +5892,7 @@ def _apple_application_impl(ctx):
                 triple,
                 "-o",
                 obj,
-            ]
+            ] + _apple_clang_debug_prefix_flags()
             if not is_assembly:
                 argv.extend(["-fmodules", "-fmodule-name=" + module_name])
             if language == "objective-c" or language == "objective-c++":
@@ -6727,8 +6734,11 @@ def _apple_test_bundle_impl(ctx):
             swift_argv.extend(["-Xcc", "-D" + define])
         for flag in _apple_swift_link_flags(swift_flags):
             swift_argv.append(flag)
+    # Tests find fixtures and snapshots next to `#filePath`, which Xcode makes
+    # absolute. The execution root is substituted at launch, so the action key
+    # does not name the checkout.
     for src in swift_srcs:
-        swift_argv.append(_apple_workspace_absolute(src))
+        swift_argv.append(src if src.startswith("/") else execution_path(src))
     _apple_append_archives(swift_argv, dep_archives, alwayslink_archives)
 
     swift_inputs = list(swift_srcs)
@@ -6789,7 +6799,7 @@ def _apple_test_bundle_impl(ctx):
                 xctest_usr_lib_dir,
                 "-o",
                 obj,
-            ]
+            ] + _apple_clang_debug_prefix_flags()
             if not is_assembly:
                 argv.extend(["-fmodules", "-fmodule-name=" + module_name])
             if language == "objective-c" or language == "objective-c++":

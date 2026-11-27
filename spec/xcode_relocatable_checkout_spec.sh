@@ -12,23 +12,26 @@ Describe 'Xcode projects in different checkout paths'
   # the environment the build inherits differs only in the checkout path.
   build_checkout() {
     root="$WORKSPACE/$1"
+    fixture="${2:-xcode_script_phases}"
+    target="${3:-Script_App}"
     rm -rf "$WORKSPACE/xdg"
     mkdir -p "$root/checkout" "$WORKSPACE/xdg"
-    cp -R "$REPO_ROOT/fixtures/xcode_script_phases/." "$root/checkout/"
+    cp -R "$REPO_ROOT/fixtures/$fixture/." "$root/checkout/"
     (
       close_shellspec_fds
       export XDG_CACHE_HOME="$WORKSPACE/xdg/cache" XDG_STATE_HOME="$WORKSPACE/xdg/state" XDG_DATA_HOME="$WORKSPACE/xdg/data" XDG_CONFIG_HOME="$WORKSPACE/xdg/config" STRUO_CHANGE_TRACKER=0
       cd "$root/checkout" &&
         "$STRUO_BIN" --format json query graph-fingerprint | jq -r '.digest' > "$root/fingerprint" &&
-        "$STRUO_BIN" --format json build Script_App > /dev/null &&
+        "$STRUO_BIN" --format json build "$target" > /dev/null &&
         "$STRUO_BIN" --format json query evidence |
-          jq -r '[.[] | select(.kind == "action_result") | .action_digest] | unique | .[]' > "$root/actions"
+          jq -r '[.[] | select(.kind == "action_result") | .action_digest] | unique | .[]' > "$root/actions" &&
+        find .struo/out -type f \( -name '*.o' -o -name '*.swiftmodule' \) -not -path '*/ModuleCache/*' -exec shasum {} + | sort -k2 > "$root/compiled"
     ) 2> "$root/err" || { cat "$root/err"; return 1; }
   }
 
   checkouts_share_keys() {
-    build_checkout first || return
-    build_checkout second-path || return
+    build_checkout first "$@" || return
+    build_checkout second-path "$@" || return
     cmp -s "$WORKSPACE/first/fingerprint" "$WORKSPACE/second-path/fingerprint" || { echo 'graph fingerprints differ'; return 1; }
     [ -s "$WORKSPACE/first/actions" ] || { echo 'no actions recorded'; return 1; }
     diff "$WORKSPACE/first/actions" "$WORKSPACE/second-path/actions" > /dev/null || { echo "$(diff "$WORKSPACE/first/actions" "$WORKSPACE/second-path/actions" | grep -c '^<') action keys differ"; return 1; }
@@ -37,6 +40,23 @@ Describe 'Xcode projects in different checkout paths'
   It 'keys script phases and builds independently of the checkout path'
     Skip if 'requires Xcode' xcode_unavailable
     When call checkouts_share_keys
+    The status should be success
+    The output should equal ''
+  End
+
+  checkouts_compile_identically() {
+    build_checkout first xcode_test_configuration ReaderTests || return
+    build_checkout second-path xcode_test_configuration ReaderTests || return
+    [ -s "$WORKSPACE/first/compiled" ] || { echo 'no compiled outputs recorded'; return 1; }
+    diff "$WORKSPACE/first/compiled" "$WORKSPACE/second-path/compiled" > /dev/null || { echo "$(diff "$WORKSPACE/first/compiled" "$WORKSPACE/second-path/compiled" | grep -c '^<') compiled outputs differ"; return 1; }
+  }
+
+  # Debug info and the search paths a Swift module serializes name the
+  # checkout unless they are mapped. The test bundle that imports the app's
+  # module would then get a different key in every checkout.
+  It 'compiles objects and Swift modules identically in every checkout'
+    Skip if 'requires Xcode' xcode_unavailable
+    When call checkouts_compile_identically
     The status should be success
     The output should equal ''
   End

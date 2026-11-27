@@ -137,7 +137,7 @@ result = True
 }
 
 #[test]
-fn implicit_compilation_keeps_the_original_action() {
+fn implicit_compilation_maps_debug_paths_to_the_execution_root() {
     let (store, result) = evaluate(
         r#"
 _apple_swift_action({}, {}, {}, [], argv = ["swiftc", "Main.swift"], inputs = ["Main.swift"], outputs = ["Main"])
@@ -146,7 +146,21 @@ result = True
     );
     result.unwrap();
     assert_eq!(store.actions.len(), 1);
-    assert_eq!(store.actions[0].argv, ["swiftc", "Main.swift"]);
+    assert_eq!(
+        store.actions[0].argv,
+        [
+            "swiftc",
+            "Main.swift",
+            "-debug-prefix-map",
+            "{{struo.execution_root}}=.",
+            "-Xfrontend",
+            "-no-clang-module-breadcrumbs",
+            "-file-compilation-dir",
+            ".",
+            "-Xfrontend",
+            "-no-serialize-debugging-options",
+        ]
+    );
 }
 
 #[test]
@@ -167,10 +181,16 @@ result = True
             "-profile-generate",
             "-profile-coverage-mapping",
             "Product/Covered.swift",
-            "-coverage-prefix-map",
+            "-debug-prefix-map",
             "{{struo.execution_root}}=.",
+            "-Xfrontend",
+            "-no-clang-module-breadcrumbs",
             "-file-compilation-dir",
             ".",
+            "-Xfrontend",
+            "-no-serialize-debugging-options",
+            "-coverage-prefix-map",
+            "{{struo.execution_root}}=.",
         ]
     );
 }

@@ -71,8 +71,22 @@ def _apple_swift_action(ctx, attrs, swiftc, deps, **action):
         fail("dependency_check must be off or error")
     if attrs.get("dependency_check") == "error" and not attrs.get("explicit_modules"):
         fail("dependency_check = error requires explicit_modules = true")
+    # Like rules_swift, record paths relative to the execution root so objects
+    # and modules are identical across checkouts. A `.swiftmodule` would also
+    # serialize absolute search paths, which the prefix map does not rewrite,
+    # so they are left out, as rules_swift does. Debug info would also point at
+    # the Clang module cache, whose hash depends on the checkout; rules_swift
+    # drops those breadcrumbs too, and LLDB rebuilds the modules it needs.
+    argv = action["argv"] + ["-debug-prefix-map", execution_path("") + "=."]
+    if "-no-clang-module-breadcrumbs" not in argv:
+        argv = argv + ["-Xfrontend", "-no-clang-module-breadcrumbs"]
+    if "-file-compilation-dir" not in argv:
+        argv = argv + ["-file-compilation-dir", "."]
+    if "-serialize-debugging-options" not in argv and "-no-serialize-debugging-options" not in argv:
+        argv = argv + ["-Xfrontend", "-no-serialize-debugging-options"]
+    action["argv"] = argv
     if "-profile-coverage-mapping" in action["argv"]:
-        action["argv"] = action["argv"] + ["-coverage-prefix-map", execution_path("") + "=.", "-file-compilation-dir", "."]
+        action["argv"] = action["argv"] + ["-coverage-prefix-map", execution_path("") + "=."]
     action["inputs"] = _unique(action["inputs"] + _collect_transitive(deps, "transitive_plugin_resource_inputs", []))
     if not attrs.get("explicit_modules"):
         run_action(**action)
