@@ -38,7 +38,7 @@ Describe 'Dockerfile native project'
 
   lint_changing_package_sources() {
     cat > "$WORKSPACE/Dockerfile" <<'EOF_RECIPE'
-FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 RUN apt-get --update install --yes curl
 RUN go install github.com/go-delve/delve/cmd/dlv@latest
 RUN go install github.com/go-delve/delve/cmd/dlv@v1.25.0
@@ -184,7 +184,7 @@ Describe 'Dockerfile instruction actions'
     export PATH="/usr/bin:$PATH"
     export DOCKER_CONFIG="${DOCKER_CONFIG:-$SPEC_ORIGINAL_HOME/.docker}"
     cat > "$WORKSPACE/Dockerfile" <<'EOF_RECIPE'
-FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS base
+FROM alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS base
 WORKDIR /app
 COPY early.txt /app/early.txt
 RUN cat early.txt > built.txt
@@ -237,7 +237,7 @@ EOF_MANIFEST
     export PATH="/usr/bin:$PATH"
     export DOCKER_CONFIG="${DOCKER_CONFIG:-$SPEC_ORIGINAL_HOME/.docker}"
     cat > "$WORKSPACE/Dockerfile" <<'EOF_RECIPE'
-FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 RUN echo built > /built.txt
 COPY early.txt /early.txt
 EOF_RECIPE
