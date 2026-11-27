@@ -22,6 +22,7 @@ mod codecs;
 mod expansion;
 mod file_actions;
 mod host;
+mod ignore_files;
 mod observation;
 mod paths;
 mod test_actions;

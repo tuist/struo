@@ -317,8 +317,8 @@ pub fn module_authoring_contract() -> ModuleAuthoringContract {
                 "Selected execution binding dictionary or None outside analysis or without a binding. Contains provider and optional executor, environment, account, project, and generic properties. Properties are target-kind-owned JSON data and participate in analysis and action identity. Available during deferred action expansion; host_os() and host_arch() still describe the coordinator.",
             ),
             entry(
-                "glob(patterns, exclude = [])",
-                "Expand package source patterns into sorted workspace paths, omitting matches selected by package-relative exclude patterns.",
+                "glob(patterns, exclude = [], *, ignore_files = [])",
+                "Expand package source patterns into sorted workspace paths, omitting matches selected by package-relative exclude patterns and, with ignore_files such as [\".gitignore\"], matches those files exclude by Git's rules.",
             ),
             entry(
                 "walk_files(root, excluded_paths = [], excluded_names = [], include_empty_directories = False)",

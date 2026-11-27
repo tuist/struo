@@ -536,7 +536,14 @@ def _nx_task_impl(ctx, is_test = False):
     generated = [output for output in all_outputs if not output.startswith("!")]
     output_patterns = generated + [output + "/**/*" for output in generated]
     inputs = _unique(
-        glob(["**/*"], exclude = output_patterns + ["node_modules/**/*", ".git/**/*", ".nx/**/*", ".struo/**/*", "dist/**/*", "tmp/**/*"]) +
+        # Nx's file map skips what `.nxignore` and `.gitignore` exclude, such
+        # as fixtures a test writes into the source tree, and `.nxignore`
+        # rules win over `.gitignore` ones at every level.
+        glob(
+            ["**/*"],
+            exclude = output_patterns + ["node_modules/**/*", ".git/**/*", ".nx/**/*", ".struo/**/*", "dist/**/*", "tmp/**/*"],
+            ignore_files = [".nxignore", ".gitignore"],
+        ) +
         _file_globs([output[1:] for output in all_outputs if output.startswith("!")]) +
         _file_globs(_nx_attr(ctx, "config", ["nx.json", "package.json", "pnpm-lock.yaml", "yarn.lock", "package-lock.json"])) +
         _file_globs(_nx_attr(ctx, "dependencies", ["node_modules/**/*"])),

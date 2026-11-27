@@ -969,9 +969,15 @@ separate update workflow.
   digest as lowercase hexadecimal text.
 - `host_file_contains(path, needle)` checks host file text content and applies
   the same 16 mebibyte file limit.
-- `glob(patterns, exclude = [])` expands patterns under the active package,
-  omits matches selected by package-relative exclude patterns, and returns
-  sorted workspace-relative file paths.
+- `glob(patterns, exclude = [], *, ignore_files = [])` expands patterns under
+  the active package, omits matches selected by package-relative exclude
+  patterns, and returns sorted workspace-relative file paths. `ignore_files`
+  names ignore files, such as `.gitignore`, whose rules also remove matches the
+  way Git applies them: each file covers the directory it sits in, a nearer
+  file overrides a farther one, and nothing under an excluded directory is
+  included again. Only files inside the workspace count, never global or
+  per-clone excludes, so two checkouts agree. Editing one of those files
+  invalidates the analysis that used the glob.
 - `walk_files(root, excluded_paths = [], excluded_names = [], include_empty_directories = False)`
   walks a package-relative directory and returns sorted workspace-relative file
   and symbolic-link paths. Exact root-relative exclusions and file names prune

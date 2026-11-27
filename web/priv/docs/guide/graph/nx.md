@@ -116,7 +116,15 @@ coverage directory when coverage is off, is not an error.
 ## Inputs and environment
 
 Struo hashes the workspace sources and installed dependencies, excluding
-declared outputs and runtime caches such as `node_modules/.vite`. This is more
+declared outputs, runtime caches such as `node_modules/.vite`, and files that
+`.nxignore` or `.gitignore` exclude, as Nx's file map does. A test that writes
+gitignored fixtures into the source tree therefore stays cached. Ignored files
+are neither hashed nor sent to remote workers, so a task that reads one, such
+as `.env.local`, does not rerun when it changes; add it to the task's Nx
+`inputs` if it should. Unlike Nx, Struo reads only the ignore files inside the
+workspace, not `.git/info/exclude`, your global excludes file, or a
+`.gitignore` above the workspace root, so every checkout gets the same cache
+keys. This is more
 conservative than Nx's named inputs, so a change can rerun more tasks than Nx
 would.
 

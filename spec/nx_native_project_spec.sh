@@ -390,6 +390,50 @@ TOML
 hit'
   End
 
+  It 'keeps gitignored and nxignored files out of task inputs, as Nx does'
+    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    mkdir -p "$WORKSPACE/app/fixtures" "$WORKSPACE/app/notes"
+    printf x > "$WORKSPACE/app/index.ts"
+    printf '%s\n' 'fixtures/out/*' '!fixtures/out/keep.json' > "$WORKSPACE/app/.gitignore"
+    printf '%s\n' 'notes/' > "$WORKSPACE/app/.nxignore"
+    cat > "$WORKSPACE/graph.json" <<'JSON'
+{"graph": {"nodes": {"app": {"type": "app", "data": {"root": "app", "targets": {
+  "lint": {"executor": "nx:run-commands", "options": {"command": "true"}}
+}}}}, "dependencies": {}}}
+JSON
+    cat > "$WORKSPACE/struo.toml" <<'TOML'
+[[target]]
+name = "nx"
+kind = "nx_workspace"
+[target.attrs]
+graph_file = "graph.json"
+TOML
+
+    ignored_writes() {
+      build_cache app__lint || return
+      # A test byproduct and a note the ignore files exclude.
+      mkdir -p "$WORKSPACE/app/fixtures/out"
+      printf generated > "$WORKSPACE/app/fixtures/out/en.json"
+      printf note > "$WORKSPACE/app/notes/todo.md"
+      build_cache app__lint || return
+      # A file the ignore rules re-include, then a source file.
+      printf kept > "$WORKSPACE/app/fixtures/out/keep.json"
+      build_cache app__lint || return
+      printf y > "$WORKSPACE/app/index.ts"
+      build_cache app__lint || return
+      # Editing an ignore file changes what the task reads.
+      printf '%s\n' 'fixtures/other' > "$WORKSPACE/app/.gitignore"
+      build_cache app__lint
+    }
+    When call ignored_writes
+    The status should be success
+    The stdout should equal 'miss
+hit
+miss
+miss
+miss'
+  End
+
   It 'accepts plugin executors that return their result instead of yielding it, like ng-packagr'
     command -v node >/dev/null 2>&1 || Skip 'node is required'
     mkdir -p "$WORKSPACE/node_modules/@nx/devkit"

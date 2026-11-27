@@ -7,6 +7,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 
 use super::expansion::{pattern_matches, walk_package_entries};
+use super::ignore_files::{retain_unignored, split_ignore_files};
 use super::{
     cached_host_tree_digest, expand_globs_with_excludes, file_sha256_hex, host_arch_str,
     host_os_str, inherited_environment_sha256, read_bounded_host_file, sha256_hex,
@@ -137,6 +138,11 @@ pub(super) fn expand_observed_paths(
 ) -> Result<Vec<String>> {
     match kind {
         "glob" => expand_globs_with_excludes(workspace_root, package, patterns, excludes),
+        "glob_ignoring" => {
+            let (names, globs) = split_ignore_files(patterns);
+            let matches = expand_globs_with_excludes(workspace_root, package, &globs, excludes)?;
+            Ok(retain_unignored(workspace_root, matches, &names))
+        }
         "walk_files" | "walk_workspace_files" | "walk_symlinks" => {
             let root = patterns
                 .first()
@@ -222,6 +228,23 @@ pub fn expansion_could_differ(
 ) -> bool {
     if changed.is_empty() {
         return false;
+    }
+    let (ignore_files, globs) = split_ignore_files(patterns);
+    let patterns = globs.as_slice();
+    let climbs = patterns.iter().any(|pattern| pattern.contains(".."));
+    // An edit to an ignore file changes the answer for paths it never names:
+    // one in the package or above it covers every match.
+    if changed.iter().any(|path| {
+        let (directory, name) = path.rsplit_once('/').unwrap_or(("", path.as_str()));
+        ignore_files.iter().any(|ignore_file| ignore_file == name)
+            && (climbs
+                || package.is_empty()
+                || directory.is_empty()
+                || directory == package
+                || package.starts_with(&format!("{directory}/"))
+                || directory.starts_with(&format!("{package}/")))
+    }) {
+        return true;
     }
     // A pattern that climbs out of its package is expanded against the whole
     // workspace, so there is no prefix that bounds what it can select.
@@ -453,6 +476,7 @@ pub(super) fn observation_holds(
 pub(super) fn path_expansion_kind(kind: &str) -> &'static str {
     match kind {
         "glob" => "glob",
+        "glob_ignoring" => "glob_ignoring",
         "walk_files" => "walk_files",
         "walk_workspace_files" => "walk_workspace_files",
         "walk_symlinks" => "walk_symlinks",
@@ -488,6 +512,39 @@ mod tests {
 
         assert!(!changed.expansion_could_differ("glob", "", &patterns(&["crates/ignore/*.rs"])));
         assert!(changed.expansion_could_differ("glob", "", &patterns(&["crates/core/*.rs"])));
+    }
+
+    #[test]
+    fn an_ignore_file_edit_in_or_above_the_package_is_a_difference() {
+        let ignoring = patterns(&["ignore-file:.gitignore", "src/**/*.ts"]);
+
+        assert!(since(&["apps/web/.gitignore"]).expansion_could_differ(
+            "glob_ignoring",
+            "apps/web",
+            &ignoring
+        ));
+        assert!(since(&[".gitignore"]).expansion_could_differ(
+            "glob_ignoring",
+            "apps/web",
+            &ignoring
+        ));
+        assert!(
+            since(&["apps/web/src/gen/.gitignore"]).expansion_could_differ(
+                "glob_ignoring",
+                "apps/web",
+                &ignoring
+            )
+        );
+        assert!(!since(&["apps/api/.gitignore"]).expansion_could_differ(
+            "glob_ignoring",
+            "apps/web",
+            &ignoring
+        ));
+        assert!(!since(&["apps/web/.gitignore"]).expansion_could_differ(
+            "glob",
+            "apps/web",
+            &patterns(&["src/**/*.ts"])
+        ));
     }
 
     #[test]

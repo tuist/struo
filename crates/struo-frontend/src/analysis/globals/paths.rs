@@ -5,6 +5,7 @@ use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::Value;
 
+use super::ignore_files::IGNORE_FILE_TAG;
 use super::observation::{observed_paths, observed_paths_anchored};
 use crate::analysis::store::analysis_active;
 use crate::analysis::values::unpack_string_list;
@@ -13,10 +14,14 @@ use crate::analysis::values::unpack_string_list;
 pub(super) fn path_globals(builder: &mut GlobalsBuilder) {
     /// Expand a list of glob patterns against the active target's
     /// package directory. Returns sorted, deduplicated, workspace-
-    /// relative file paths. Schema parsing returns an empty list.
+    /// relative file paths. `ignore_files` names ignore files, such as
+    /// `.gitignore`, whose rules remove matches the way Git applies them;
+    /// only files inside the workspace count. Schema parsing returns an
+    /// empty list.
     fn glob<'v>(
         patterns: Value<'v>,
         exclude: Option<Value<'v>>,
+        #[starlark(require = named)] ignore_files: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<Value<'v>> {
         let heap = eval.heap();
@@ -28,7 +33,29 @@ pub(super) fn path_globals(builder: &mut GlobalsBuilder) {
             .map(|value| unpack_string_list(value, "exclude"))
             .transpose()?
             .unwrap_or_default();
-        let resolved = observed_paths("glob", &patterns, &excludes)?;
+        let ignore_files = ignore_files
+            .map(|value| unpack_string_list(value, "ignore_files"))
+            .transpose()?
+            .unwrap_or_default();
+        if ignore_files.is_empty() {
+            let resolved = observed_paths("glob", &patterns, &excludes)?;
+            return Ok(heap.alloc(resolved.as_ref().clone()));
+        }
+        if let Some(name) = ignore_files
+            .iter()
+            .find(|name| name.is_empty() || name.contains(['/', '\\']))
+        {
+            anyhow::bail!("ignore_files entries are file names, not paths: `{name}`");
+        }
+        // The ignore-file names travel with the patterns, so every record of
+        // this expansion, including target outcome reuse, knows to look for
+        // edits to them.
+        let tagged = ignore_files
+            .iter()
+            .map(|name| format!("{IGNORE_FILE_TAG}{name}"))
+            .chain(patterns)
+            .collect::<Vec<_>>();
+        let resolved = observed_paths("glob_ignoring", &tagged, &excludes)?;
         Ok(heap.alloc(resolved.as_ref().clone()))
     }
 
