@@ -38,6 +38,17 @@ endif()
 def _cmake_attr(ctx, key, default):
     return _configured_attr(ctx, key, default)
 
+# The declared environment plus the host PATH. On macOS, ZERO_AR_DATE makes
+# cctools ar, libtool and ld64 write zero member times, as rules_apple sets
+# it, so archives match byte for byte across builds and checkouts.
+def _cmake_action_env(ctx):
+    env = dict(_cmake_attr(ctx, "env", {}))
+    if not env.get("PATH"):
+        env["PATH"] = host_env("PATH")
+    if host_os() == "macos" and not env.get("ZERO_AR_DATE"):
+        env["ZERO_AR_DATE"] = "1"
+    return env
+
 def _cmake_package_path(ctx, path):
     if not path or path == ".":
         return ctx["label"]["package"] or "."
@@ -439,9 +450,7 @@ def _cmake_project_impl(ctx):
     headers = _unique(_cmake_path_attrs(ctx, "hdrs") + _cmake_globs(_cmake_attr(ctx, "header_globs", [])))
     inputs = _cmake_project_inputs(ctx, headers)
 
-    action_env = dict(_cmake_attr(ctx, "env", {}))
-    if not action_env.get("PATH"):
-        action_env["PATH"] = host_env("PATH")
+    action_env = _cmake_action_env(ctx)
     shared = [dep for dep in ctx["deps"] if dep.get("cmake_build_tree")]
     if shared and not export_tree:
         if len(shared) > 1:
@@ -631,9 +640,7 @@ def _cmake_test_impl(ctx):
     native_artifacts = [] if test_targets else [native_results]
     suite_name = "CMake test targets" if test_targets else "CTest suite"
     driver = ctx["scratch_dir"] + "/StruoCTest.cmake"
-    action_env = dict(_cmake_attr(ctx, "env", {}))
-    if not action_env.get("PATH"):
-        action_env["PATH"] = host_env("PATH")
+    action_env = _cmake_action_env(ctx)
     if not action_env.get("CMAKE_BUILD_PARALLEL_LEVEL"):
         action_env["CMAKE_BUILD_PARALLEL_LEVEL"] = str(jobs)
     path_args = [
