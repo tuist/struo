@@ -129,8 +129,10 @@ Use a dedicated data directory owned by one server process. Complete objects
 survive restarts; startup removes abandoned uploads. The disk budget includes
 staged uploads and charges each object at least 4 KiB, rounded to 4 KiB units.
 Replacing an object requires room for both the old and staged versions.
-Old objects are evicted by access time. Transfers stream through bounded
-buffers, with at most eight connections and ten-second network idle timeouts.
+Old objects are evicted by access time. HTTP/1.1 connections stay open for
+reuse unless the client requests closure. Transfers stream through bounded
+buffers, reserving 128 KiB of the server's memory budget per connection,
+including idle connections. Network idle timeouts are ten seconds.
 
 This command does not provision infrastructure. The managed Sprites cache
 currently installs its bundled Python service, not this executable.
@@ -196,8 +198,10 @@ outages, or insufficient worker transfer memory use coordinator transfers.
 - A `PUT` that becomes readable before its body completes turns a hit into a
   failure, because Struo rejects the partial object.
 - Content is stored uncompressed.
-- Remote reads use `HEAD` before `GET`. Result lookup also uses one `HEAD` per
-  referenced blob not already held locally.
+- Remote reads use `GET` directly and verify its declared length. Result
+  lookup uses one `HEAD` per referenced blob not already held locally so
+  records with evicted content are treated as misses. Uploads use `HEAD` to
+  avoid resending content already stored remotely.
 - Isolation is whatever the server's access control provides. Use a separate
   prefix with its own credentials for each trust boundary.
 

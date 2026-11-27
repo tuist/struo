@@ -91,7 +91,9 @@ fn wire(method: &str, path: &str, auth: &str, headers: &str) -> String {
     } else {
         format!("Authorization: {auth}\r\n")
     };
-    format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\n{auth}{headers}\r\n")
+    format!(
+        "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n{auth}{headers}\r\n"
+    )
 }
 
 struct Response {

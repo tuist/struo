@@ -104,6 +104,10 @@ the object storage layout above.
 `struo cache serve` implements these HTTP operations at the URL root with
 bearer authentication. It stores opaque keys and bytes; clients verify content
 digests when restoring blobs. It does not implement REAPI or execute actions.
+HTTP/1.1 connections support keep-alive. Each connection reserves 128 KiB
+from the server's memory budget and closes after ten seconds of network
+inactivity. `Connection: close` requests and rejected requests close immediately
+after the response.
 See [running the server](/guide/infrastructure/http-cache#run-struo-as-the-server)
 for credentials, TLS, disk budgets, and restart behavior.
 

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use bytes::Bytes;
-use futures::{StreamExt, TryStreamExt};
+use futures::{FutureExt, StreamExt, TryStreamExt};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::Semaphore;
 
@@ -309,27 +309,46 @@ impl RemoteCache {
             return Ok(());
         }
         let key = blob_key(digest);
-        let Some(size) = self.head_remote(&key).await? else {
-            return Err(Error::BlobNotFound(*digest));
-        };
-        let staging = self.budget.reserve_staging(staging_bytes(size)).await?;
-        let memory = self.budget.reserve_memory(DOWNLOAD_MEMORY_BYTES).await?;
-        let permit = Arc::clone(&self.transfers)
-            .acquire_owned()
-            .await
-            .expect("transfer semaphore remains open");
-        let Some(body) = self.store.get(&key).await? else {
-            return Err(Error::BlobNotFound(*digest));
-        };
-        if body.size != size {
-            return Err(self.error(
-                "get blob",
-                ErrorKind::Protocol,
-                "object size changed after HEAD".into(),
-            ));
+        let mut staged = None;
+        loop {
+            let memory = self.budget.reserve_memory(DOWNLOAD_MEMORY_BYTES).await?;
+            let permit = Arc::clone(&self.transfers)
+                .acquire_owned()
+                .await
+                .expect("transfer semaphore remains open");
+            let Some(body) = self.store.get(&key).await? else {
+                return Err(Error::BlobNotFound(*digest));
+            };
+            let staging = if let Some((size, reservation)) = staged.take() {
+                if body.size != size {
+                    return Err(self.error(
+                        "get blob",
+                        ErrorKind::Protocol,
+                        "object size changed while waiting for staging".into(),
+                    ));
+                }
+                reservation
+            } else if let Some(reservation) = self
+                .budget
+                .reserve_staging(staging_bytes(body.size))
+                .now_or_never()
+            {
+                reservation?
+            } else {
+                // Never wait for staging with an open response: its server may
+                // be blocking a transfer that holds the staging we need.
+                let size = body.size;
+                drop((body, permit, memory));
+                staged = Some((
+                    size,
+                    self.budget.reserve_staging(staging_bytes(size)).await?,
+                ));
+                continue;
+            };
+            return self
+                .store_blob(digest, body, (guard, permit, memory, staging))
+                .await;
         }
-        self.store_blob(digest, body, (guard, permit, memory, staging))
-            .await
     }
 
     async fn store_blob<G: Send + 'static>(
@@ -432,19 +451,9 @@ impl RemoteCache {
 
     async fn get_action_result_remote(&self, action: &Digest) -> Result<Option<ActionResult>> {
         let key = action_key(action);
-        let Some(size) = self.head_remote(&key).await? else {
-            return Ok(None);
-        };
-        if size > MAX_ACTION_RECORD_BYTES {
-            return Err(self.error(
-                "get action result",
-                ErrorKind::Protocol,
-                format!("action record {action} is {size} bytes"),
-            ));
-        }
         let _memory = self
             .budget
-            .reserve_memory(size.saturating_add(1).saturating_mul(2))
+            .reserve_memory((MAX_ACTION_RECORD_BYTES + 1) * 2)
             .await?;
         let _permit = self
             .transfers
@@ -454,11 +463,12 @@ impl RemoteCache {
         let Some(body) = self.store.get(&key).await? else {
             return Ok(None);
         };
-        if body.size != size {
+        let size = body.size;
+        if size > MAX_ACTION_RECORD_BYTES {
             return Err(self.error(
                 "get action result",
                 ErrorKind::Protocol,
-                "object size changed after HEAD".into(),
+                format!("action record {action} is {size} bytes"),
             ));
         }
         let mut bytes = Vec::with_capacity(usize::try_from(size + 1).unwrap_or_default());

@@ -2,15 +2,16 @@
 //!
 //! A [`TransferBudget`] holds two pools: memory that in-flight transfers and
 //! cache RPCs may buffer, and scratch disk that downloads may stage before
-//! they are verified. Every remote transfer reserves the most its buffers can
-//! hold from the relevant pool before it starts and releases it when it
-//! finishes, fails, or is cancelled. Providers cloned from one another share
-//! the same pools.
+//! they are verified. Every remote transfer reserves memory before it starts
+//! and staging before writing its body to disk. It releases reservations when
+//! it finishes, fails, or is cancelled. Providers cloned from one another
+//! share the same pools.
 //!
 //! A reservation is a requirement, not an estimate: the buffer limits a
 //! transfer runs with are the ones it reserved, and a transfer whose limits
-//! do not fit the whole pool fails with [`ErrorKind::Exhausted`] before it
-//! sends anything. Capacities round down to the accounting unit and requests
+//! do not fit the whole pool fails with [`ErrorKind::Exhausted`] before using
+//! that resource. A download may read response headers to learn its staging
+//! requirement. Capacities round down to the accounting unit and requests
 //! round up, so a budget never admits more than it was configured with.
 //!
 //! The pools account for the buffers this crate sizes for transfers and RPC

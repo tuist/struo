@@ -1,0 +1,18 @@
+{
+  "series": "Head Start",
+  "project": "Helix",
+  "repository": "https://github.com/helix-editor/helix",
+  "revision": "1a3fdfda6dfdda4567af6093a6249bb2bb422fc6",
+  "revision_date": "2026-11-20T20:15:14+09:00",
+  "root_target": "cargo_helix_term_bin_hx",
+  "edits": "helix-term/src/commands.rs helix-core/src/lib.rs",
+  "date": "2026-11-27T13:27:28Z",
+  "struo": "struo 2.24.4",
+  "native": "cargo 1.99.0 (5f94df478 2026-08-27)",
+  "native_build": "cargo build --locked --quiet -p helix-term --bin hx",
+  "setup": "Disables Helix's tree-sitter grammar download (HELIX_DISABLE_AUTO_GRAMMAR_BUILD) and sets debug = 0 in the dev profile, which Struo applies only when a profile names it. Both tools use the Rust toolchain mise selects for this repository.",
+  "machine": "Linux x86_64, 16 CPUs, 8 GiB",
+  "runs": 1,
+  "profiles": "loopback:0:0 rtt-50ms:50:0",
+  "history_commits": 20
+}

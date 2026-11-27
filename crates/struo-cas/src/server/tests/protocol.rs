@@ -161,3 +161,67 @@ async fn expect_continue_and_large_streams() {
         assert_eq!(result.status, 204);
     }
 }
+
+#[tokio::test]
+async fn persistent_connections_frame_uploads_heads_misses_and_pipelined_requests() {
+    let root = tempfile::tempdir().unwrap();
+    let server = Server::start(root.path(), 1024 * 1024).await;
+    let mut socket = TcpStream::connect(server.address).await.unwrap();
+    let keep = |method, path: &str, headers: &str| {
+        wire(method, path, AUTH, headers).replace("Connection: close", "Connection: keep-alive")
+    };
+    // Upload bytes and following headers can arrive in the same socket read.
+    let requests = format!(
+        "{}hello{}{}{}{}",
+        keep("PUT", &key(1), "Content-Length: 5\r\n"),
+        keep("HEAD", &key(1), ""),
+        keep("GET", &key(2), ""),
+        keep("GET", &key(1), ""),
+        keep("HEAD", &key(1), ""),
+    );
+    socket.write_all(requests.as_bytes()).await.unwrap();
+    for expected in [
+        "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\n",
+        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\nhello",
+        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\n",
+    ] {
+        let mut bytes = vec![0; expected.len()];
+        timeout(Duration::from_secs(5), socket.read_exact(&mut bytes))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(bytes, expected.as_bytes());
+    }
+    // Reuse after the first exchange, then explicitly close the connection.
+    socket
+        .write_all(wire("GET", &key(1), AUTH, "").as_bytes())
+        .await
+        .unwrap();
+    assert_eq!(response(&mut socket).await.body, b"hello");
+}
+
+#[tokio::test]
+async fn persistent_requests_reauthenticate_and_reject_unconsumed_bodies() {
+    let root = tempfile::tempdir().unwrap();
+    let server = Server::start(root.path(), 1024 * 1024).await;
+    for (auth, headers, status) in [
+        ("Bearer wrong", "", 401),
+        (AUTH, "Content-Length: 1\r\n", 400),
+    ] {
+        let mut socket = TcpStream::connect(server.address).await.unwrap();
+        let first =
+            wire("HEAD", &key(1), AUTH, "").replace("Connection: close", "Connection: keep-alive");
+        socket.write_all(first.as_bytes()).await.unwrap();
+        let expected =
+            b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
+        let mut bytes = vec![0; expected.len()];
+        socket.read_exact(&mut bytes).await.unwrap();
+        assert_eq!(bytes, expected);
+        let request = wire("GET", &key(1), auth, headers)
+            .replace("Connection: close", "Connection: keep-alive");
+        socket.write_all(request.as_bytes()).await.unwrap();
+        assert_eq!(response(&mut socket).await.status, status);
+    }
+}

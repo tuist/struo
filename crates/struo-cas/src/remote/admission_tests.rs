@@ -142,6 +142,46 @@ async fn inadequate_budgets_reject_before_get_decode_and_record_publication() {
     assert_eq!(store.puts.load(Ordering::SeqCst), 0);
 }
 
+#[tokio::test]
+async fn waiting_for_staging_releases_the_response_memory_and_transfer_slot() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::default());
+    let budget = TransferBudget::new(DOWNLOAD_MEMORY_BYTES, 128 * 1024);
+    let held = budget
+        .reserve_staging(budget.staging_bytes())
+        .await
+        .unwrap();
+    let cache = cache(root.path(), &store, budget.clone());
+    let reader = cache.clone();
+    let task = tokio::spawn(async move { reader.get_blob(&Digest::of_bytes(b"abc")).await });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while store.gets.load(Ordering::SeqCst) == 0
+            || budget.available().0 != budget.memory_bytes()
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!task.is_finished());
+    assert_eq!(cache.transfers.available_permits(), 2);
+    // Another transfer can make progress and release the staging we need.
+    let memory = budget.reserve_memory(DOWNLOAD_MEMORY_BYTES).await.unwrap();
+    drop((memory, held));
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
+        b"abc"
+    );
+    assert_eq!(
+        budget.available(),
+        (budget.memory_bytes(), budget.staging_bytes())
+    );
+}
+
 struct DropGate {
     entered: Option<tokio::sync::oneshot::Sender<()>>,
     release: std::sync::mpsc::Receiver<()>,

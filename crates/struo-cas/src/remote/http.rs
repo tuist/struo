@@ -388,6 +388,7 @@ mod tests {
     struct Server {
         objects: HashMap<String, Vec<u8>>,
         authorizations: Vec<Option<String>>,
+        requests: Vec<(axum::http::Method, String)>,
         forced: Option<u16>,
     }
 
@@ -403,6 +404,7 @@ mod tests {
         let forced = {
             let mut server = state.lock().unwrap();
             server.authorizations.push(authorization);
+            server.requests.push((method.clone(), path.clone()));
             server.forced
         };
         if let Some(code) = forced {
@@ -493,12 +495,28 @@ mod tests {
 
         let second =
             CacheProvider::remote(second_root.path(), remote(&url), RemoteAccess::ReadWrite);
+        state.lock().unwrap().requests.clear();
         let hit = second.lookup_action_result(&action).await.unwrap().unwrap();
         assert!(hit.blobs_available);
         assert_eq!(hit.result, result);
         let restored = second_root.path().join("restored");
         second.copy_blob_to_file(&output, &restored).await.unwrap();
         assert_eq!(std::fs::read(restored).unwrap(), large);
+        assert_eq!(second.get_blob(&stdout).await.unwrap(), b"log");
+        let requests = &state.lock().unwrap().requests;
+        assert_eq!(
+            requests.len(),
+            5,
+            "one record GET, two availability HEADs, two blob GETs"
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|(method, _)| *method == axum::http::Method::HEAD)
+                .count(),
+            2
+        );
+        assert_eq!(requests[0].0, axum::http::Method::GET);
     }
 
     #[tokio::test]

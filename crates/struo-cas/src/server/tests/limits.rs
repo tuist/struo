@@ -3,12 +3,22 @@ use super::*;
 #[tokio::test]
 async fn connection_limit_and_header_bound() {
     let root = tempfile::tempdir().unwrap();
-    let server = Server::start(root.path(), 1024 * 1024).await;
+    let server = Server::budgeted(
+        root.path(),
+        1024 * 1024,
+        TransferBudget::new(12 * CONNECTION_MEMORY, 1024 * 1024),
+    )
+    .await;
     let mut clients = Vec::new();
-    for _ in 0..8 {
+    for _ in 0..12 {
         let mut client = TcpStream::connect(server.address).await.unwrap();
         client.write_all(b"GET /").await.unwrap();
         clients.push(client);
+    }
+    for client in &mut clients {
+        assert!(timeout(Duration::from_millis(10), client.read(&mut [0; 1]))
+            .await
+            .is_err());
     }
     // Wait until every socket has consumed a connection slot.
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -61,6 +71,18 @@ async fn idle_connections_timeout_and_release_reservations() {
     let server = Server::budgeted(root.path(), 1024 * 1024, budget.clone()).await;
     let mut client = TcpStream::connect(server.address).await.unwrap();
     client.write_all(b"GET /").await.unwrap();
+    tokio::time::sleep(Duration::from_secs(11)).await;
+    assert_eq!(response(&mut client).await.status, 408);
+    assert_eq!(budget.available(), (2 * CHUNK as u64, 4096));
+
+    let mut client = TcpStream::connect(server.address).await.unwrap();
+    let request = wire("HEAD", &key(1), AUTH, "").replace("Connection: close\r\n", "");
+    client.write_all(request.as_bytes()).await.unwrap();
+    let expected = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
+    let mut bytes = vec![0; expected.len()];
+    client.read_exact(&mut bytes).await.unwrap();
+    assert_eq!(bytes, expected);
+    assert_eq!(budget.available().0, 0);
     tokio::time::sleep(Duration::from_secs(11)).await;
     assert_eq!(response(&mut client).await.status, 408);
     assert_eq!(budget.available(), (2 * CHUNK as u64, 4096));

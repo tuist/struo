@@ -1,0 +1,211 @@
+{
+  "profiles": [
+    {
+      "name": "loopback",
+      "rtt_ms": 0,
+      "mbit": 0
+    },
+    {
+      "name": "rtt-50ms",
+      "rtt_ms": 50,
+      "mbit": 0
+    }
+  ],
+  "scenarios": {
+    "fresh": {
+      "native": {
+        "median_seconds": 21.19,
+        "seconds": [
+          21.19
+        ]
+      },
+      "struo-loopback": {
+        "median_seconds": 3.85,
+        "seconds": [
+          3.85
+        ],
+        "cache_requests": 2801,
+        "connections": 2801,
+        "failed_requests": 0,
+        "request_ms": {
+          "p50": 0.73,
+          "p95": 9.24,
+          "p99": 24.89
+        },
+        "downloaded_mib": 871.1,
+        "uploaded_mib": 0,
+        "compiled_targets": 0
+      },
+      "struo-rtt-50ms": {
+        "median_seconds": 24.32,
+        "seconds": [
+          24.32
+        ],
+        "cache_requests": 2801,
+        "connections": 2801,
+        "failed_requests": 0,
+        "request_ms": {
+          "p50": 50.54,
+          "p95": 53.4,
+          "p99": 58.91
+        },
+        "downloaded_mib": 871.1,
+        "uploaded_mib": 0,
+        "compiled_targets": 0
+      }
+    },
+    "edit-helix-term": {
+      "native": {
+        "median_seconds": 16.94,
+        "seconds": [
+          16.94
+        ]
+      },
+      "struo-loopback": {
+        "median_seconds": 7.85,
+        "seconds": [
+          7.85
+        ],
+        "cache_requests": 2861,
+        "connections": 2861,
+        "failed_requests": 0,
+        "request_ms": {
+          "p50": 0.41,
+          "p95": 4.37,
+          "p99": 10.3
+        },
+        "downloaded_mib": 664.6,
+        "uploaded_mib": 107,
+        "compiled_targets": 2
+      },
+      "struo-rtt-50ms": {
+        "median_seconds": 33.68,
+        "seconds": [
+          33.68
+        ],
+        "cache_requests": 2875,
+        "connections": 2875,
+        "failed_requests": 0,
+        "request_ms": {
+          "p50": 50.75,
+          "p95": 53.01,
+          "p99": 56.96
+        },
+        "downloaded_mib": 664.6,
+        "uploaded_mib": 107,
+        "compiled_targets": 2
+      }
+    },
+    "edit-helix-core": {
+      "native": {
+        "median_seconds": 21.28,
+        "seconds": [
+          21.28
+        ]
+      },
+      "struo-loopback": {
+        "median_seconds": 13.14,
+        "seconds": [
+          13.14
+        ],
+        "cache_requests": 2859,
+        "connections": 2859,
+        "failed_requests": 0,
+        "request_ms": {
+          "p50": 0.45,
+          "p95": 3.73,
+          "p99": 13.04
+        },
+        "downloaded_mib": 602.1,
+        "uploaded_mib": 14,
+        "compiled_targets": 8
+      },
+      "struo-rtt-50ms": {
+        "median_seconds": 36.54,
+        "seconds": [
+          36.54
+        ],
+        "cache_requests": 2866,
+        "connections": 2866,
+        "failed_requests": 0,
+        "request_ms": {
+          "p50": 50.96,
+          "p95": 53.37,
+          "p99": 58.86
+        },
+        "downloaded_mib": 602.1,
+        "uploaded_mib": 14,
+        "compiled_targets": 8
+      }
+    },
+    "cold": {
+      "struo-loopback": {
+        "median_seconds": 40.32,
+        "seconds": [
+          40.32
+        ],
+        "cache_requests": 0,
+        "connections": 0,
+        "failed_requests": 0,
+        "request_ms": {
+          "p50": null,
+          "p95": null,
+          "p99": null
+        },
+        "downloaded_mib": 0,
+        "uploaded_mib": 0,
+        "compiled_targets": 232
+      }
+    },
+    "incremental-edit-helix-term": {
+      "native": {
+        "median_seconds": 2.68,
+        "seconds": [
+          2.68
+        ]
+      },
+      "struo-loopback": {
+        "median_seconds": 8.29,
+        "seconds": [
+          8.29
+        ],
+        "cache_requests": 72,
+        "connections": 72,
+        "failed_requests": 0,
+        "request_ms": {
+          "p50": 0.66,
+          "p95": 1.56,
+          "p99": 106.23
+        },
+        "downloaded_mib": 0,
+        "uploaded_mib": 107,
+        "compiled_targets": 2
+      }
+    },
+    "incremental-edit-helix-core": {
+      "native": {
+        "median_seconds": 3.06,
+        "seconds": [
+          3.06
+        ]
+      },
+      "struo-loopback": {
+        "median_seconds": 12.97,
+        "seconds": [
+          12.97
+        ],
+        "cache_requests": 134,
+        "connections": 134,
+        "failed_requests": 0,
+        "request_ms": {
+          "p50": 0.47,
+          "p95": 1.5,
+          "p99": 5.24
+        },
+        "downloaded_mib": 0,
+        "uploaded_mib": 14,
+        "compiled_targets": 8
+      }
+    }
+  }
+}

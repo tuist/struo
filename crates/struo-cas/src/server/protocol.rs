@@ -19,6 +19,7 @@ pub(super) struct Request {
     pub key: String,
     pub length: u64,
     pub expect: bool,
+    pub keep_alive: bool,
 }
 
 pub(super) fn valid_key(key: &str) -> bool {
@@ -39,23 +40,23 @@ pub(super) async fn read(
     buffer: &mut [u8],
     auth: &[u8],
     capacity: u64,
-) -> Result<(Request, usize, usize), u16> {
+    mut end: usize,
+) -> Result<Option<(Request, usize, usize)>, u16> {
     timeout(IDLE, async {
-        let mut end = 0;
         loop {
             let mut headers = [httparse::EMPTY_HEADER; 100];
             let mut parsed = httparse::Request::new(&mut headers);
             match parsed.parse(&buffer[..end]) {
                 Ok(httparse::Status::Complete(start)) => {
                     return validate(&parsed, &buffer[..start], auth, capacity)
-                        .map(|request| (request, start, end));
+                        .map(|request| Some((request, start, end)));
                 }
                 Ok(httparse::Status::Partial) if end < buffer.len() => {}
                 _ => return Err(400),
             }
             let read = socket.read(&mut buffer[end..]).await.map_err(|_| 400u16)?;
             if read == 0 {
-                return Err(400);
+                return if end == 0 { Ok(None) } else { Err(400) };
             }
             end += read;
         }
@@ -119,11 +120,20 @@ fn validate(
         None if method == Method::Put => return Err(411),
         None => 0,
     };
+    if method != Method::Put && length != 0 {
+        return Err(400);
+    }
     Ok(Request {
         method,
         key: key.to_owned(),
         length,
         expect: values("expect").any(|value| value.eq_ignore_ascii_case(b"100-continue")),
+        keep_alive: parsed.version == Some(1)
+            && !values("connection").any(|value| {
+                value
+                    .split(|byte| *byte == b',')
+                    .any(|token| token.trim_ascii().eq_ignore_ascii_case(b"close"))
+            }),
     })
 }
 
@@ -139,7 +149,12 @@ fn untrimmed_value<'a>(header: &httparse::Header<'_>, raw: &'a [u8]) -> &'a [u8]
     &tail[..length]
 }
 
-pub(super) async fn reply(socket: &mut TcpStream, status: u16, length: u64) -> io::Result<()> {
+pub(super) async fn reply(
+    socket: &mut TcpStream,
+    status: u16,
+    length: u64,
+    keep_alive: bool,
+) -> io::Result<()> {
     let reason = match status {
         200 => "OK",
         204 => "No Content",
@@ -154,8 +169,7 @@ pub(super) async fn reply(socket: &mut TcpStream, status: u16, length: u64) -> i
         507 => "Insufficient Storage",
         _ => "Internal Server Error",
     };
-    let header = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n"
-    );
+    let connection = if keep_alive { "keep-alive" } else { "close" };
+    let header = format!("HTTP/1.1 {status} {reason}\r\nContent-Length: {length}\r\nConnection: {connection}\r\n\r\n");
     timeout(IDLE, socket.write_all(header.as_bytes())).await?
 }
