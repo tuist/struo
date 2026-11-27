@@ -36,6 +36,27 @@ Describe 'Dockerfile native project'
     done
   }
 
+  lint_changing_package_sources() {
+    cat > "$WORKSPACE/Dockerfile" <<'EOF_RECIPE'
+FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+RUN apt-get --update install --yes curl
+RUN go install github.com/go-delve/delve/cmd/dlv@latest
+RUN go install github.com/go-delve/delve/cmd/dlv@v1.25.0
+RUN apt update && apt install --yes curl
+RUN apt-get install --yes rsync && rsync --update -a /a /b
+RUN apt-get -qq update
+RUN ["npm", "install", "-g", "pnpm@latest"]
+EOF_RECIPE
+    struo --format json lint image |
+      jq -c '[.findings[] | select(.rule_id == "mutable_package_repository") | .location.line]'
+  }
+
+  It 'reports package sources that can change under the newer apt syntax and @latest installs'
+    When call lint_changing_package_sources
+    The status should be success
+    The stdout should equal '[2,3,5,7,8]'
+  End
+
   It 'discovers one image per Dockerfile.<name> and <name>.Dockerfile, with its own .dockerignore'
     When call discover_named_dockerfiles
     The status should be success

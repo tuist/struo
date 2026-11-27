@@ -414,6 +414,21 @@ def _dockerfile_require_pinned_bases(ctx, instructions, required_stages):
             role = "base images" if entry["role"] == "base" else "images copied from"
             _dockerfile_fail("dockerfile_base_image_not_pinned", "cacheable", ctx["label"]["id"] + ": Dockerfile line " + str(entry["instruction"]["line"]) + ": cacheable = true requires " + role + " pinned by digest, found " + entry["base"] + "; use name@sha256:<digest>", "Pin the image on line " + str(entry["instruction"]["line"]) + " as name@sha256:<digest>, or set cacheable = false")
 
+def _dockerfile_reads_changing_packages(argument):
+    if "apk add" in argument:
+        return True
+    for command in argument.replace("&&", ";").replace("||", ";").replace("|", ";").split(";"):
+        words = [word.strip("\"'[],") for word in command.split()]
+        for index, word in enumerate(words):
+            if word.endswith("@latest"):
+                return True
+            if word.split("/")[-1] in ("apt", "apt-get"):
+                options = words[index + 1:]
+                subcommands = [option for option in options if not option.startswith("-")]
+                if "--update" in options or (subcommands and subcommands[0] in ("update", "upgrade", "full-upgrade", "dist-upgrade")):
+                    return True
+    return False
+
 def _dockerfile_findings(ctx, instructions):
     findings = []
     for instruction in instructions:
@@ -430,7 +445,7 @@ def _dockerfile_findings(ctx, instructions):
         argument = instruction["argument"]
         if ("curl " in argument or "wget " in argument) and "|" in argument:
             findings.append(_dockerfile_finding(ctx, instruction, "unverified_network_pipe", "Downloaded content is piped into another command without a visible checksum check.", "Inspect the pipeline and verify downloaded bytes against a pinned checksum before consuming them."))
-        if "apt-get update" in argument or "apt-get upgrade" in argument or "apk add" in argument:
+        if _dockerfile_reads_changing_packages(argument):
             findings.append(_dockerfile_finding(ctx, instruction, "mutable_package_repository", "Package installation may depend on changing repository contents.", "Check whether repositories use immutable snapshots and packages are pinned. A snapshot configured in the base image can make this a false positive."))
         if "--mount=type=secret" in argument or "--mount=type=ssh" in argument:
             findings.append(_dockerfile_finding(ctx, instruction, "untracked_mount_contents", "Secret or authentication mount contents are not included in the action cache key.", "Confirm the mount only authenticates access to immutable inputs; otherwise disable caching or declare a non-secret version input."))
