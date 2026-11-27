@@ -134,8 +134,8 @@ coverage directory when coverage is off, is not an error.
 ## Inputs and environment
 
 Struo hashes the workspace sources and installed dependencies, excluding
-declared outputs, runtime caches such as `node_modules/.vite` and TypeScript
-`.tsbuildinfo` files inside `node_modules`, and files that
+declared outputs, install records and tool caches inside `node_modules`,
+and files that
 `.nxignore` or `.gitignore` exclude, as Nx's file map does. A test that writes
 gitignored fixtures into the source tree therefore stays cached. Ignored files
 are neither hashed nor sent to remote workers, so a task that reads one, such
@@ -143,7 +143,15 @@ as `.env.local`, does not rerun when it changes; add it to the task's Nx
 `inputs` if it should. Unlike Nx, Struo reads only the ignore files inside the
 workspace, not `.git/info/exclude`, your global excludes file, or a
 `.gitignore` above the workspace root, so every checkout gets the same cache
-keys. This is more
+keys.
+
+Inside `node_modules`, install records and tool caches are not inputs: pnpm's
+`.modules.yaml` and `.pnpm-workspace-state` files, which hold the checkout
+path, npm's `.package-lock.json`, Yarn's `.yarn-state.yml`, and caches such as
+`.vite`, `.vitest`, and `.cache`. TypeScript `.tsbuildinfo` files there are not
+inputs either. Nx identifies installed packages by their lockfile version and
+does not hash these files. Package stores such as `.pnpm`, `.bun`, and `.deno`,
+and generated code such as `.prisma`, stay inputs. This is more
 conservative than Nx's named inputs, so a change can rerun more tasks than Nx
 would.
 

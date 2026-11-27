@@ -13,6 +13,12 @@ Describe 'nx native project'
     return 1
   }
 
+  # `Skip` is shellspec syntax only at the start of a line; after `||` or `&&`
+  # the shell runs it as a command that does not exist.
+  missing_command() { ! command -v "$1" >/dev/null 2>&1; }
+  not_linux() { [ "$(uname -s)" != Linux ]; }
+  fixture_install_failed() { ! install_fixture; }
+
   copy_fixture() {
     cp -R "$REPO_ROOT/fixtures/$1/." "$WORKSPACE/"
   }
@@ -53,9 +59,9 @@ Describe 'nx native project'
   }
 
   It 'derives Nx tasks with no struo.toml present'
-    nx_toolchain_unavailable && Skip 'node and npm are required'
+    Skip if 'node and npm are required' nx_toolchain_unavailable
     copy_fixture nx_hello
-    install_fixture || Skip 'npm install failed; skipping (offline?)'
+    Skip if 'npm install failed; skipping (offline?)' fixture_install_failed
 
     When call target_ids
     The status should be success
@@ -67,7 +73,7 @@ Describe 'nx native project'
   End
 
   It 'runs package-local executables and restores their declared outputs from cache'
-    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    Skip if 'node is required' missing_command node
     mkdir -p "$WORKSPACE/packages/app/node_modules/.bin" "$WORKSPACE/node_modules/.bin"
     printf '#!/bin/sh\nprintf workspace\n' > "$WORKSPACE/node_modules/.bin/nx-probe"
     printf '#!/bin/sh\nprintf package > result.txt\n' > "$WORKSPACE/packages/app/node_modules/.bin/nx-probe"
@@ -96,7 +102,7 @@ TOML
   End
 
   It 'caches absent Nx outputs and restores existing output trees without hiding failures'
-    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    Skip if 'node is required' missing_command node
     mkdir -p "$WORKSPACE/packages/app"
     printf absent > "$WORKSPACE/packages/app/mode"
     cat > "$WORKSPACE/packages/app/probe.js" <<'JS'
@@ -139,8 +145,8 @@ TOML
   }
 
   It "keeps the caller's PATH and HOME out of task cache keys and still finds the package manager"
-    command -v node >/dev/null 2>&1 || Skip 'node is required'
-    command -v npm >/dev/null 2>&1 || Skip 'npm is required'
+    Skip if 'node is required' missing_command node
+    Skip if 'npm is required' missing_command npm
     printf '%s\n' '{"name":"probe","private":true,"scripts":{"build":"node build.js"}}' > "$WORKSPACE/package.json"
     printf '%s\n' "require('node:fs').writeFileSync('result.txt', 'built')" > "$WORKSPACE/build.js"
     cat > "$WORKSPACE/struo.toml" <<'TOML'
@@ -175,7 +181,7 @@ hit'
   }
 
   It 'invalidates consumers when generated dependency contents change without source changes'
-    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    Skip if 'node is required' missing_command node
     cat > "$WORKSPACE/struo.toml" <<'TOML'
 [[target]]
 name = "generate"
@@ -211,7 +217,7 @@ TOML
   End
 
   It 'does not skip failing test prerequisites of builds'
-    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    Skip if 'node is required' missing_command node
     cat > "$WORKSPACE/struo.toml" <<'TOML'
 [[target]]
 name = "check"
@@ -243,9 +249,9 @@ TOML
   End
 
   It 'runs plugin executors with native JSONC workspace configuration'
-    nx_toolchain_unavailable && Skip 'node and npm are required'
+    Skip if 'node and npm are required' nx_toolchain_unavailable
     printf '%s\n' '{"private":true,"devDependencies":{"nx":"^23.0.0","@nx/devkit":"^23.0.0"}}' > "$WORKSPACE/package.json"
-    install_fixture || Skip 'npm install failed; skipping (offline?)'
+    Skip if 'npm install failed; skipping (offline?)' fixture_install_failed
     printf '%s\n' '{/* native Nx accepts comments */ "parallel":1,}' > "$WORKSPACE/nx.json"
     cat > "$WORKSPACE/struo.toml" <<'TOML'
 [[target]]
@@ -266,7 +272,7 @@ TOML
   End
 
   It 'loads the graph from the binary Nx declares when node_modules/.bin holds shell shims'
-    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    Skip if 'node is required' missing_command node
     nx="$WORKSPACE/node_modules/nx"
     mkdir -p "$nx/dist/bin" "$nx/dist/src/project-graph" "$nx/dist/src/utils" "$WORKSPACE/node_modules/.bin"
     printf '%s\n' 'exports.loadRootEnvFiles = () => {};' > "$nx/dist/src/utils/dotenv.js"
@@ -289,8 +295,8 @@ JS
   End
 
   It 'loads many plugin tasks over a large external package graph within a bounded memory budget'
-    Skip if 'ulimit -v is enforced on Linux' [ "$(uname -s)" != Linux ]
-    Skip if 'node is required' ! command -v node >/dev/null 2>&1
+    Skip if 'ulimit -v is enforced on Linux' not_linux
+    Skip if 'node is required' missing_command node
     node -e '
       const projects = {};
       for (let p = 0; p < 10; p++) {
@@ -361,7 +367,7 @@ TOML
   End
 
   It 'runs test tasks that are not named test, such as test:lib, when test_targets names them'
-    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    Skip if 'node is required' missing_command node
     mkdir -p "$WORKSPACE/libs/core"
     printf x > "$WORKSPACE/libs/core/index.ts"
     cat > "$WORKSPACE/graph.json" <<'JSON'
@@ -437,7 +443,7 @@ TOML
   build_cache() { struo --format json build "$1" | jq -r .cache; }
 
   It 'keeps outputs declared with a trailing slash out of other tasks inputs'
-    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    Skip if 'node is required' missing_command node
     mkdir -p "$WORKSPACE/app"
     printf x > "$WORKSPACE/app/index.ts"
     cat > "$WORKSPACE/graph.json" <<'JSON'
@@ -465,7 +471,7 @@ hit'
   End
 
   It 'keeps TypeScript build info that tools write into node_modules out of task inputs'
-    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    Skip if 'node is required' missing_command node
     mkdir -p "$WORKSPACE/app" "$WORKSPACE/node_modules/vitest/dist"
     printf x > "$WORKSPACE/app/index.ts"
     printf '%s\n' 'module.exports = 1' > "$WORKSPACE/node_modules/vitest/dist/index.js"
@@ -497,8 +503,56 @@ hit
 miss'
   End
 
+  It 'keeps install records and tool caches in node_modules out of task inputs, but not package stores'
+    Skip if 'node is required' missing_command node
+    mkdir -p "$WORKSPACE/app" "$WORKSPACE/node_modules/.bin" "$WORKSPACE/node_modules/.pnpm/a@1/node_modules/a"
+    printf x > "$WORKSPACE/app/index.ts"
+    printf old > "$WORKSPACE/node_modules/.bin/tool"
+    printf old > "$WORKSPACE/node_modules/.pnpm/a@1/node_modules/a/index.js"
+    cat > "$WORKSPACE/graph.json" <<'JSON'
+{"graph": {"nodes": {"app": {"type": "app", "data": {"root": "app", "targets": {
+  "lint": {"executor": "nx:run-commands", "options": {"command": "true"}}
+}}}}, "dependencies": {}}}
+JSON
+    cat > "$WORKSPACE/struo.toml" <<'TOML'
+[[target]]
+name = "nx"
+kind = "nx_workspace"
+[target.attrs]
+graph_file = "graph.json"
+TOML
+
+    install_state() {
+      build_cache app__lint || return
+      # pnpm records the checkout path and install time; Vitest keeps a cache.
+      printf 'virtualStoreDir: %s\n' "$WORKSPACE" > "$WORKSPACE/node_modules/.modules.yaml"
+      mkdir -p "$WORKSPACE/node_modules/.vitest-cache" "$WORKSPACE/app/node_modules/.cache"
+      printf 1 > "$WORKSPACE/node_modules/.vitest-cache/results"
+      printf 1 > "$WORKSPACE/app/node_modules/.cache/eslint"
+      build_cache app__lint || return
+      printf new > "$WORKSPACE/node_modules/.bin/tool"
+      build_cache app__lint || return
+      printf new > "$WORKSPACE/node_modules/.pnpm/a@1/node_modules/a/index.js"
+      build_cache app__lint || return
+      # Bun keeps package files in .bun; prisma generate writes .prisma.
+      mkdir -p "$WORKSPACE/node_modules/.bun/b@1/node_modules/b" "$WORKSPACE/node_modules/.prisma/client"
+      printf new > "$WORKSPACE/node_modules/.bun/b@1/node_modules/b/index.js"
+      build_cache app__lint || return
+      printf new > "$WORKSPACE/node_modules/.prisma/client/index.js"
+      build_cache app__lint
+    }
+    When call install_state
+    The status should be success
+    The stdout should equal 'miss
+hit
+miss
+miss
+miss
+miss'
+  End
+
   It 'keeps gitignored and nxignored files out of task inputs, as Nx does'
-    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    Skip if 'node is required' missing_command node
     mkdir -p "$WORKSPACE/app/fixtures" "$WORKSPACE/app/notes"
     printf x > "$WORKSPACE/app/index.ts"
     printf '%s\n' 'fixtures/out/*' '!fixtures/out/keep.json' > "$WORKSPACE/app/.gitignore"
@@ -542,7 +596,7 @@ miss'
   End
 
   It 'accepts plugin executors that return their result instead of yielding it, like ng-packagr'
-    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    Skip if 'node is required' missing_command node
     mkdir -p "$WORKSPACE/node_modules/@nx/devkit"
     printf '%s\n' '{"name":"@nx/devkit","main":"index.js"}' > "$WORKSPACE/node_modules/@nx/devkit/package.json"
     cat > "$WORKSPACE/node_modules/@nx/devkit/index.js" <<'JS'
@@ -574,7 +628,7 @@ TOML
   End
 
   It 'lets plugin executors fork Node.js workers in an ES module workspace'
-    command -v node >/dev/null 2>&1 || Skip 'node is required'
+    Skip if 'node is required' missing_command node
     mkdir -p "$WORKSPACE/node_modules/@nx/devkit"
     printf '%s\n' '{"type":"module"}' > "$WORKSPACE/package.json"
     printf '%s\n' '{"name":"@nx/devkit","main":"index.js"}' > "$WORKSPACE/node_modules/@nx/devkit/package.json"
@@ -619,11 +673,11 @@ TOML
   }
 
   It 'retains external package dependencies for Nx 17 compiler actions and cache restoration'
-    nx_toolchain_unavailable && Skip 'node and npm are required'
+    Skip if 'node and npm are required' nx_toolchain_unavailable
     cat > "$WORKSPACE/package.json" <<'JSON'
 {"name":"nx17-probe","private":true,"dependencies":{"tslib":"2.4.1"},"devDependencies":{"nx":"17.1.3","@nx/js":"17.1.3","typescript":"5.2.2"}}
 JSON
-    install_fixture || Skip 'npm install failed; skipping (offline?)'
+    Skip if 'npm install failed; skipping (offline?)' fixture_install_failed
     printf '%s\n' '{"plugins":["./dotenv-plugin.cjs"]}' > "$WORKSPACE/nx.json"
     printf '%s\n' 'STRUO_NX_GRAPH_BASE=loaded' 'STRUO_NX_GRAPH_VALUE=${STRUO_NX_GRAPH_BASE}-local' > "$WORKSPACE/.local.env"
     printf '%s\n' 'STRUO_NX_GRAPH_VALUE=wrong' > "$WORKSPACE/.env.local"

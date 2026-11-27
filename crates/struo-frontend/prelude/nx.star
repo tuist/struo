@@ -517,6 +517,24 @@ def nx_restore_outputs(ctx):
             identifier = "nx-restore-" + str(index),
         )
 
+# Install records and tool caches that package managers and tools write
+# directly inside node_modules. Other dot entries can hold package contents,
+# such as Bun's `.bun` and Deno's `.deno` stores or Prisma's generated
+# `.prisma` client, so they stay inputs.
+_NX_NODE_MODULES_STATE = [
+    ".cache", ".vite", ".vitest", ".vitest-cache", ".ignored",
+    ".modules.yaml", ".package-lock.json", ".yarn-state.yml", ".yarn-integrity",
+]
+
+def _nx_node_modules_state(path):
+    parts = path.split("/")
+    for index in range(len(parts) - 1):
+        if parts[index] == "node_modules":
+            entry = parts[index + 1]
+            if entry in _NX_NODE_MODULES_STATE or entry.startswith(".pnpm-workspace-state"):
+                return True
+    return "/node_modules/" in "/" + path and path.endswith(".tsbuildinfo")
+
 def _nx_task_impl(ctx, is_test = False):
     project = _nx_attr(ctx, "project", "")
     task = _nx_attr(ctx, "task", "")
@@ -560,15 +578,11 @@ def _nx_task_impl(ctx, is_test = False):
         _file_globs(_nx_attr(ctx, "config", ["nx.json", "package.json", "pnpm-lock.yaml", "yarn.lock", "package-lock.json"])) +
         _file_globs(_nx_attr(ctx, "dependencies", ["node_modules/**/*"])),
     )
-    # Tools write caches into installed packages while tasks run, such as
-    # Vite's prebundles and the incremental build info of Vitest's typecheck.
-    # Nx identifies packages by their lockfile version and never sees them.
-    inputs = [
-        path
-        for path in inputs
-        if "/node_modules/.vite/" not in "/" + path + "/" and
-           not ("/node_modules/" in "/" + path and path.endswith(".tsbuildinfo"))
-    ]
+    # Nx identifies installed packages by their lockfile version, so state
+    # that package managers and tools write into node_modules never reaches
+    # its hashes: Vite's prebundles, Vitest's typecheck build info, and pnpm's
+    # install records, which hold the checkout path and install time.
+    inputs = [path for path in inputs if not _nx_node_modules_state(path)]
     dependency_artifacts = _unique([path for dep in ctx["deps"] for path in dep.get("artifact_inputs", [])])
     inputs = _unique(inputs + dependency_artifacts)
 
