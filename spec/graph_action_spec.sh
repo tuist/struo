@@ -235,6 +235,117 @@ EOF
     The output should equal ''
   End
 
+  build_uncached_sandboxed_directories() {
+    create_declared_action_workspace
+    cat > "$WORKSPACE/modules/demo.star" <<'EOF'
+def _demo_impl(ctx):
+    tree = declare_output("tree")
+    run_action(
+        argv = [host_which("sh"), "-c", "mkdir \"$1\" && head -c 4194304 /dev/urandom > \"$1/payload\"", "sh", tree],
+        outputs = [tree],
+        clean_paths = [tree],
+        sandbox = "copied-inputs",
+        cacheable = False,
+        intermediate = True,
+    )
+    copy = declare_output("copy")
+    run_action(
+        argv = [host_which("sh"), "-c", "mkdir \"$2\" && cp \"$1/payload\" \"$2/payload\"", "sh", tree, copy],
+        inputs = [tree],
+        outputs = [copy],
+        clean_paths = [copy],
+        sandbox = "copied-inputs",
+        cacheable = False,
+        intermediate = True,
+        depends_on_prior_actions = False,
+    )
+    return {}
+
+demo_action = target_kind(
+    attrs = [attr("message", "string")],
+    capabilities = [capability("build", ["default"])],
+    impl = _demo_impl,
+)
+EOF
+    out="$WORKSPACE/.struo/out/tools/demo/Task"
+    struo --format json build tools/demo/Task | jq -r '.status' || return
+    cmp "$out/tree/payload" "$out/copy/payload" || return
+    du -sk "$XDG_CACHE_HOME/struo/cas" | awk '{ print ($1 < 1024 ? "small cache" : "cache holds " $1 " KiB") }'
+  }
+
+  It 'keeps intermediate outputs of uncached sandboxed actions out of the cache'
+    When call build_uncached_sandboxed_directories
+    The status should be success
+    The line 1 of stdout should equal 'completed'
+    The line 2 of stdout should equal 'small cache'
+  End
+
+  reuse_consumer_of_restorable_directory() {
+    create_declared_action_workspace
+    cat > "$WORKSPACE/modules/demo.star" <<'EOF'
+def _demo_impl(ctx):
+    tree = declare_output("tree")
+    run_action(
+        argv = [host_which("sh"), "-c", "mkdir \"$1\" && printf stable > \"$1/payload\"", "sh", tree],
+        outputs = [tree],
+        clean_paths = [tree],
+        sandbox = "copied-inputs",
+        cacheable = False,
+        identifier = "producer",
+    )
+    copy = declare_output("copy.txt")
+    run_action(
+        argv = [host_which("sh"), "-c", "cp \"$1/payload\" \"$2\"", "sh", tree, copy],
+        inputs = [tree],
+        outputs = [copy],
+        sandbox = "copied-inputs",
+        identifier = "consumer",
+    )
+    return {}
+
+demo_action = target_kind(
+    attrs = [attr("message", "string")],
+    capabilities = [capability("build", ["default"])],
+    impl = _demo_impl,
+)
+EOF
+    for _ in 1 2; do
+      struo --format json build tools/demo/Task >/dev/null || return
+    done
+    latest_log="$(ls -t "$(struo_log_dir)"/*.log | head -1)"
+    jq -r 'select(.fields.identifier == "consumer") | .fields.cache' "$latest_log"
+  }
+
+  It 'keeps other outputs of uncached sandboxed actions restorable, so cacheable consumers hit'
+    When call reuse_consumer_of_restorable_directory
+    The status should be success
+    The stdout should equal 'hit'
+  End
+
+  It 'names a declared output an uncached sandboxed action did not produce'
+    create_declared_action_workspace
+    cat > "$WORKSPACE/modules/demo.star" <<'EOF'
+def _demo_impl(ctx):
+    run_action(
+        argv = [host_which("sh"), "-c", "true"],
+        outputs = [declare_output("missing")],
+        sandbox = "copied-inputs",
+        cacheable = False,
+        intermediate = True,
+    )
+    return {}
+
+demo_action = target_kind(
+    attrs = [attr("message", "string")],
+    capabilities = [capability("build", ["default"])],
+    impl = _demo_impl,
+)
+EOF
+    When call struo --format json build tools/demo/Task
+    The status should be failure
+    The stderr should include 'declared output `.struo/out/tools/demo/Task/missing` was not produced'
+  End
+
   It 'keeps later graph actions cached when they skip prior action digests'
     create_split_action_workspace
     struo --format json build tools/split/Task >/dev/null

@@ -40,6 +40,8 @@ pub(super) struct SandboxPolicy<'a> {
     pub copy_inputs: bool,
     /// Audit the execroot against the declaration once the child exits.
     pub validate_contract: bool,
+    /// Whether outputs are stored in the cache before they are copied back.
+    pub capture: super::OutputCapture,
     /// The action's admission, held by the sandbox's blocking work.
     pub lease: Option<&'a ExecutionPermit>,
 }
@@ -111,7 +113,9 @@ pub(super) async fn execute_sandboxed_command(
         }
         return Ok(result);
     }
-    if action.accepts_exit_code(result.exit_code) {
+    if action.accepts_exit_code(result.exit_code) && policy.capture == super::OutputCapture::Leave {
+        copy_sandbox_outputs(policy.outputs, sandbox.dir, workspace_root, policy.lease).await?;
+    } else if action.accepts_exit_code(result.exit_code) {
         let output_paths = policy.outputs.to_vec();
         let output_symlink_mode = policy.output_symlink_mode;
         let capture_root = execroot.clone();
@@ -506,25 +510,55 @@ async fn copy_sandbox_outputs(
     let execroot = sandbox.root().join("execroot");
     let label = execroot.display().to_string();
     let workspace = workspace_root.to_path_buf();
+    let failure = label.clone();
     spawn_admitted(lease, move || {
-        let copied = output_paths.iter().try_for_each(|output| {
-            let source = output.resolve(&execroot);
-            copy_sandbox_output_blocking(&source, &output.resolve(&workspace))
-        });
+        let copied = copy_outputs_blocking(&output_paths, &execroot, &workspace, &label);
         sandbox.remove_now();
         copied
     })
     .await
     .map_err(|source| Error::FileAction {
         action: "copy_sandbox_outputs",
-        path: label.clone(),
+        path: failure,
         source: std::io::Error::other(source.to_string()),
     })?
-    .map_err(|source| Error::FileAction {
-        action: "copy_sandbox_outputs",
-        path: label,
-        source,
-    })
+}
+
+/// Copy every declared output out of the execroot, after checking that the
+/// command produced all of them, so a missing output names itself and leaves
+/// the workspace untouched.
+fn copy_outputs_blocking(
+    outputs: &[WorkspacePath],
+    execroot: &Path,
+    workspace: &Path,
+    label: &str,
+) -> Result<()> {
+    for output in outputs {
+        match std::fs::symlink_metadata(output.resolve(execroot)) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(Error::MissingOutput {
+                    path: output.as_str().to_string(),
+                });
+            }
+            Err(source) => {
+                return Err(Error::ReadOutput {
+                    path: output.as_str().to_string(),
+                    source,
+                });
+            }
+        }
+    }
+    outputs
+        .iter()
+        .try_for_each(|output| {
+            copy_sandbox_output_blocking(&output.resolve(execroot), &output.resolve(workspace))
+        })
+        .map_err(|source| Error::FileAction {
+            action: "copy_sandbox_outputs",
+            path: label.to_string(),
+            source,
+        })
 }
 
 /// Give the directories above each staged input the permissions they have in

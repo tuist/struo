@@ -26,6 +26,7 @@ pub(super) async fn execute_declared(
                 context.workspace,
                 context.cache,
                 declared.inherit_parent_env,
+                declared.intermediate,
                 Some(lease.clone()),
                 Some((context.producers, context.identifier)),
             )),
@@ -61,7 +62,16 @@ pub(super) async fn run_uncached_action(
     cache: &CacheProvider,
     inherit_parent_env: bool,
 ) -> Result<ActionResult> {
-    run_uncached_action_admitted(action, workspace, cache, inherit_parent_env, None, None).await
+    run_uncached_action_admitted(
+        action,
+        workspace,
+        cache,
+        inherit_parent_env,
+        false,
+        None,
+        None,
+    )
+    .await
 }
 
 pub(super) async fn run_uncached_action_admitted(
@@ -69,6 +79,7 @@ pub(super) async fn run_uncached_action_admitted(
     workspace: &Path,
     cache: &CacheProvider,
     inherit_parent_env: bool,
+    intermediate: bool,
     lease: Option<struo_core::ExecutionPermit>,
     producers: Option<(&Producers, &str)>,
 ) -> Result<ActionResult> {
@@ -97,6 +108,14 @@ pub(super) async fn run_uncached_action_admitted(
                     } else {
                         "inherit_parent_env is available only when the action sandbox is off"
                     });
+                }
+                // Intermediate outputs are read only by later actions of the
+                // same target, so they need no restorable copy in the cache.
+                if intermediate
+                    && struo_core::Executor::resolve(action)? == struo_core::Executor::Local
+                {
+                    return run_sandboxed(action, outputs, workspace, cache, lease, producers)
+                        .await;
                 }
                 return run_core_admitted(action, workspace, cache, lease).await;
             }
@@ -161,6 +180,35 @@ pub(super) async fn run_uncached_action_admitted(
             run_core_admitted(action, workspace, cache, lease).await
         }
     }
+}
+
+/// Run a local sandboxed command with intermediate outputs and record them the
+/// way unsandboxed uncached commands do, instead of storing them in the cache.
+async fn run_sandboxed(
+    action: &Action,
+    outputs: &[WorkspacePath],
+    workspace: &Path,
+    cache: &CacheProvider,
+    lease: Option<struo_core::ExecutionPermit>,
+    producers: Option<(&Producers, &str)>,
+) -> Result<ActionResult> {
+    let mut result = match struo_core::run_uncached_admitted_leaving_outputs(
+        action,
+        workspace,
+        cache,
+        lease.clone(),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => return Err(render_execution_error(error, cache).await),
+    };
+    if result.exit_code == 0 {
+        result.outputs =
+            capture_uncached_outputs_admitted(outputs, workspace, cache, lease.as_ref(), producers)
+                .await?;
+    }
+    Ok(result)
 }
 
 async fn run_core_admitted(

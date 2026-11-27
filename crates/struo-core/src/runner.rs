@@ -118,6 +118,7 @@ impl Runner {
                 create_dirs,
                 post_setup_inputs,
             },
+            execute::OutputCapture::Store,
         )
         .await
     }
@@ -310,6 +311,37 @@ pub async fn run_uncached_admitted(
         false,
         observer,
         Some(lease),
+    )
+    .await
+}
+
+/// Execute a caller-admitted local command without reading or writing the
+/// action cache and without storing its outputs. Sandboxed outputs are copied
+/// back to the workspace, and the result lists none, so the caller records them
+/// itself. Other executors fail closed.
+pub async fn run_uncached_admitted_leaving_outputs(
+    action: &Action,
+    workspace_root: &Path,
+    cache: &CacheProvider,
+    lease: Option<crate::ExecutionPermit>,
+) -> Result<ActionResult> {
+    let executor = Executor::resolve(action)?;
+    if lease
+        .as_ref()
+        .is_some_and(|lease| lease.executor() != Some(executor))
+    {
+        return Err(executor.unsupported("execution permit does not match the resolved executor"));
+    }
+    execute::run_admitted_with_setup(
+        action,
+        workspace_root,
+        cache,
+        false,
+        false,
+        None,
+        lease,
+        crate::remote::CommandFilesystemSetup::default(),
+        execute::OutputCapture::Leave,
     )
     .await
 }

@@ -177,7 +177,8 @@ pub(super) fn action_globals(builder: &mut GlobalsBuilder) {
     /// digest; `identifier`: optional label for diagnostics;
     /// `intermediate`: optional bool, default false, for outputs only later
     /// actions of the same target read, so a cache hit doesn't restore them
-    /// to disk unless one of those actions has to run;
+    /// to disk unless one of those actions has to run, and an uncacheable
+    /// sandboxed run records directories as fingerprints, not cache contents;
     /// `input_discovery`: optional dict with `depfile`, a path the command
     /// writes in Make dependency syntax naming the files it read, which Struo
     /// removes before the command runs and does not cache, `record`,

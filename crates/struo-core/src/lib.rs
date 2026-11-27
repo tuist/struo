@@ -102,8 +102,8 @@ pub use resources::{
 };
 pub use runner::{
     materialize_outputs, materialize_outputs_admitted, run, run_uncached, run_uncached_admitted,
-    run_uncached_contract, run_uncached_observed, run_with_cache, run_with_cache_streaming,
-    CacheState, Outcome, RunOpts, Runner,
+    run_uncached_admitted_leaving_outputs, run_uncached_contract, run_uncached_observed,
+    run_with_cache, run_with_cache_streaming, CacheState, Outcome, RunOpts, Runner,
 };
 pub use store::WorkspaceStore;
 pub use stream::{ActionOutputObserver, ActionOutputStream};

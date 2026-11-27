@@ -84,8 +84,18 @@ pub(crate) async fn run_admitted(
         observer,
         lease,
         remote::CommandFilesystemSetup::default(),
+        OutputCapture::Store,
     )
     .await
+}
+
+/// Whether a command's declared outputs are stored in the cache after it runs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OutputCapture {
+    /// Store each output as a blob and list its digest in the result.
+    Store,
+    /// Leave outputs in the workspace and list none; the caller records them.
+    Leave,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -98,6 +108,7 @@ pub(crate) async fn run_admitted_with_setup(
     observer: Option<&dyn ActionOutputObserver>,
     lease: Option<ExecutionPermit>,
     setup: remote::CommandFilesystemSetup<'_>,
+    capture: OutputCapture,
 ) -> Result<ActionResult> {
     let work = Box::pin(run_scoped(
         action,
@@ -108,6 +119,7 @@ pub(crate) async fn run_admitted_with_setup(
         observer,
         lease.clone(),
         setup,
+        capture,
     ));
     match lease {
         Some(lease) => crate::with_execution_permit(lease, work).await,
@@ -125,6 +137,7 @@ async fn run_scoped(
     observer: Option<&dyn ActionOutputObserver>,
     lease: Option<ExecutionPermit>,
     setup: remote::CommandFilesystemSetup<'_>,
+    capture: OutputCapture,
 ) -> Result<ActionResult> {
     if let Action::RunCommand {
         outputs,
@@ -141,11 +154,12 @@ async fn run_scoped(
             observer,
             lease.clone(),
             setup,
+            capture,
         ))
         .await?;
         action.normalize_result(&mut result)?;
         let completed = result.exit_code == 0;
-        if completed && !validate_contract && !outputs_captured {
+        if completed && !validate_contract && !outputs_captured && capture == OutputCapture::Store {
             result.outputs = outputs::capture_admitted(
                 outputs,
                 workspace_root,
@@ -443,6 +457,7 @@ async fn execute_command(
     observer: Option<&dyn ActionOutputObserver>,
     lease: Option<ExecutionPermit>,
     setup: remote::CommandFilesystemSetup<'_>,
+    capture: OutputCapture,
 ) -> Result<(ActionResult, bool)> {
     let Action::RunCommand {
         argv,
@@ -488,6 +503,9 @@ async fn execute_command(
                 prepare_path(path, mode, workspace_root, lease.as_ref()).await?;
             }
         }
+    }
+    if executor != Executor::Local && capture == OutputCapture::Leave {
+        return Err(executor.unsupported("leaving outputs uncaptured"));
     }
     if executor != Executor::Local && validate_contract {
         return Err(executor.unsupported("filesystem contract auditing"));
@@ -548,6 +566,7 @@ async fn execute_command(
                     output_symlink_mode: *output_symlink_mode,
                     copy_inputs: *sandbox == SandboxMode::CopiedInputs,
                     validate_contract,
+                    capture,
                     lease: lease.as_ref(),
                 },
                 workspace_root,

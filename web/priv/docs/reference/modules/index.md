@@ -1235,11 +1235,12 @@ and includes its identity in the action's cache key.
 - `cacheable`: `True` by default. Set `False` for interactive or local
   side-effect actions. Uncacheable commands that run directly in the workspace
   (`sandbox = "off"`, without network denial) record directory and symlink outputs
-  as fingerprints, not restorable contents.
+  as fingerprints, not restorable contents. So do uncacheable local commands
+  with an input sandbox or network denial when the action sets `intermediate`.
   Keep these outputs unchanged until their consumers finish. If an output needs
   restoration after cleanup or replacement, Struo refuses rather than installing
-  its fingerprint as file contents. Make the producer cacheable or use an input
-  sandbox when consumers need restorable outputs.
+  its fingerprint as file contents. Make the producer cacheable, or use an input
+  sandbox without `intermediate`, when consumers need restorable outputs.
   Consumers of these fingerprint-only outputs execute afresh, even when their
   own `cacheable` setting is `True`, because older cached results may contain
   fingerprint text instead of the original contents. This also applies to
@@ -1273,7 +1274,10 @@ and includes its identity in the action's cache key.
   later actions of the same target read, such as a step that feeds the next
   one. When the action is a cache hit, its outputs stay in the cache instead of
   being written to disk at the end of the target, and are restored only when a
-  later action that reads them has to run.
+  later action that reads them has to run. When an uncacheable action with an
+  input sandbox sets it, Struo records directory and symlink outputs as
+  fingerprints instead of storing their contents in the cache, as described
+  under `cacheable`.
 - `input_discovery`: optional keyword-only dict for a command that reports
   which files it read, as compilers do with a depfile. Its keys:
   - `depfile`: a workspace path the command writes in Make dependency syntax.
