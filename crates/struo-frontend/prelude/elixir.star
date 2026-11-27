@@ -1912,7 +1912,8 @@ resolve = fn mix_env ->
           "mix_env" => dependency.opts |> Keyword.get(:env, :prod) |> Atom.to_string(),
           "path_dependency" => dependency.opts[:path] != nil,
           "skip_compile" => dependency.opts[:compile] == false,
-          "top_level" => dependency.top_level == true
+          "top_level" => dependency.top_level == true,
+          "umbrella_app" => dependency.opts[:from_umbrella] == true
         }
       end)
 
@@ -2152,9 +2153,15 @@ def _mix_dependencies_resolver(ctx):
     resolved = _mix_read_locked_graph(ctx)
     lock = resolved.get("lock") or {}
     all_dependencies = resolved.get("dependencies") or []
-    if ctx["attrs"].get("_mix_umbrella"):
-        all_dependencies = [dependency for dependency in all_dependencies if not dependency.get("path_dependency")]
     path_dependency_targets = ctx["attrs"].get("path_dependencies") or {}
+    umbrella_apps = {}
+    if ctx["attrs"].get("_mix_umbrella"):
+        # Umbrella apps keep their own targets, which Mix builds in the
+        # environment of the run that loads them.
+        for dependency in all_dependencies:
+            if dependency.get("umbrella_app"):
+                umbrella_apps[dependency["app"]] = _elixir_workspace_source_root(ctx["label"]["package"], dependency.get("destination") or "") + "/mix_application_" + (ctx["attrs"].get("mix_env") or "prod")
+        all_dependencies = [dependency for dependency in all_dependencies if not dependency.get("umbrella_app")]
     active_path_dependencies = {}
     generated_path_dependencies = {}
     path_dependency_destinations = {}
@@ -2189,7 +2196,7 @@ def _mix_dependencies_resolver(ctx):
     root_config_target = ctx["attrs"].get("config_target") or "host"
     target_prefix = ctx["attrs"].get("target_prefix") or "mix"
     targets = []
-    targets_by_app = {}
+    targets_by_app = dict(umbrella_apps)
     identities = {}
     for app in active_path_dependencies.keys():
         targets_by_app[app] = path_dependency_targets.get(app) or ("./" + _mix_target_name(target_prefix, app))
@@ -2291,7 +2298,7 @@ def _mix_dependencies_resolver(ctx):
                 "srcs_exclude": _mix_package_build_trees(source_root),
             },
         })
-    roots = _mix_resolved_roots(ctx, all_dependencies, targets_by_app, identities)
+    roots = _mix_resolved_roots(ctx, all_dependencies, {app: target for app, target in targets_by_app.items() if app not in umbrella_apps}, identities)
     return {
         "targets": targets,
         "roots": roots,
@@ -3051,6 +3058,8 @@ def _mix_project_run_spec(ctx):
     }
 
 def _mix_project_impl(ctx):
+    if _elixir_attr(ctx, "_mix_unlocked", False):
+        _diagnostic_fail("mix_lockfile_missing", "lockfile", ctx["label"]["id"] + ": Mix project declares external dependencies but has no mix.lock", "Run `mix deps.get` in the project directory, or build the project that uses it as a path dependency")
     toolchain = _elixir_mix_toolchain()
     paths = _mix_project_paths(ctx)
     apps = _elixir_collect_apps(ctx["deps"])
@@ -3486,6 +3495,14 @@ def _mix_umbrella_owner(ctx, metadata, has_external_dependencies):
         fail(ctx["label"]["id"] + ": Mix lockfile `" + lockfile + "` is outside the project but no umbrella mix.exs sits beside it; run Struo from the repository that contains the umbrella")
     return owner
 
+def _mix_has_enclosing_lock(ctx):
+    parts = (ctx["label"]["package"] or "").split("/")
+    for depth in range(len(parts) - 1, -1, -1):
+        directory = workspace_root() + "".join(["/" + part for part in parts[:depth] if part])
+        if host_file_exists(directory + "/mix.exs") and host_file_exists(directory + "/mix.lock"):
+            return True
+    return False
+
 def _mix_umbrella_package_target(owner, environment, app):
     return ("" if owner == "." else owner + "/") + _mix_target_name("mix-" + environment, app)
 
@@ -3555,6 +3572,22 @@ def _mix_workspace_resolver(ctx):
             config = [(config_dir + "/" if config_dir else "") + "**/*.exs"]
     config_entry = "config/config.exs" if (ctx.get("files") or {}).get("config/config.exs") != None else ""
     has_lock = (ctx.get("files") or {}).get(lockfile) != None
+    # A nested project whose packages only an enclosing project locks builds
+    # as that project's path dependency. Like Mix, it fails when built on its
+    # own, without keeping the enclosing graph from loading.
+    if umbrella == None and not has_lock and _mix_has_enclosing_lock(ctx) and any([
+        dependency.get("active") and dependency.get("path") == None
+        for environment_metadata in metadata.values()
+        for dependency in environment_metadata["deps"]
+    ]):
+        return {"targets": [{
+            "name": "mix_application_" + _mix_workspace_environment(ctx),
+            "kind": "mix_project",
+            "attrs": {
+                "app_name": metadata["dev"]["app"],
+                "_mix_unlocked": True,
+            },
+        }]}
     targets = []
     applications = {}
     dependency_targets = {}
@@ -3578,15 +3611,21 @@ def _mix_workspace_resolver(ctx):
         if umbrella != None:
             # Like Mix, an umbrella child compiles against the packages its
             # root locked and fetched, plus its sibling applications.
-            if external_dependencies and not host_file_exists(workspace_root() + "/" + _package_relative(ctx, lockfile)):
+            umbrella_locked = host_file_exists(workspace_root() + "/" + _package_relative(ctx, lockfile))
+            if external_dependencies and not umbrella_locked:
                 _diagnostic_fail("mix_dependency_sources_missing", "lockfile", ctx["label"]["id"] + ": the umbrella lockfile `" + _package_relative(ctx, lockfile) + "` does not exist", "Run `mix deps.get --check-locked` in the umbrella root, then retry")
             application_target = "mix_application_" + environment
+            # Siblings sit beside the child in the umbrella's apps directory.
+            # Any other path dependency resolves its packages from the root's
+            # lockfile, so the root builds it with them.
             application_deps = [
                 _mix_umbrella_package_target(umbrella, environment, dependency["app"])
                 for dependency in external_dependencies
                 if not dependency.get("skip_compile")
             ] + [
                 _mix_workspace_path_target(ctx, dependency, dependency["env"])
+                if not umbrella_locked or _parent_dir(_elixir_workspace_source_root(ctx["label"]["package"], dependency["path"])) == _parent_dir(ctx["label"]["package"]) else
+                _mix_umbrella_package_target(umbrella, environment, dependency["app"])
                 for dependency in path_dependencies
             ]
             applications[environment] = application_target
@@ -3610,7 +3649,9 @@ def _mix_workspace_resolver(ctx):
             })
             continue
         if external_dependencies and not has_lock:
-            fail(ctx["label"]["id"] + ": Mix project declares external dependencies but has no mix.lock; run `mix deps.get` before loading the Struo graph")
+            # A structured diagnostic, unlike fail, leaves the rest of the
+            # workspace loadable.
+            _diagnostic_fail("mix_lockfile_missing", "lockfile", ctx["label"]["id"] + ": Mix project declares external dependencies but has no mix.lock", "Run `mix deps.get` in the project directory before loading the Struo graph")
 
         dependency_target = ""
         application_deps = []
@@ -3804,6 +3845,7 @@ _ELIXIR_TEST_ATTRS = [
 ]
 
 _MIX_PROJECT_ATTRS = [
+    attr("_mix_unlocked", "bool", default = "false", docs = "Resolver-owned marker for a nested project whose external dependencies only an enclosing project locks; building it on its own fails as it does in Mix.", configurable = False),
     attr("app_name", "string", docs = "Mix application name. Defaults to the target name with `-` and `.` rewritten as `_`.", configurable = False),
     attr("mix_env", "string", default = "prod", docs = "Mix environment used to load configuration and run the compiler pipeline.", configurable = False),
     attr("manifest", "string", default = "mix.exs", docs = "Package-relative Mix project manifest included in the compile action key.", configurable = False),
@@ -3853,7 +3895,7 @@ _MIX_WORKSPACE_ATTRS = [
 ]
 
 _MIX_DEPENDENCIES_ATTRS = [
-    attr("_mix_umbrella", "bool", default = "false", docs = "Resolver-owned marker for the dependency set an umbrella root shares with its children, which leaves the children and their path dependencies to their own targets.", configurable = False),
+    attr("_mix_umbrella", "bool", default = "false", docs = "Resolver-owned marker for the dependency set an umbrella root shares with its children, which leaves the children to their own targets and builds their other path dependencies from the root's lockfile.", configurable = False),
     attr("_mix_path_only", "bool", default = "false", docs = "Resolver-owned marker allowing an absent lockfile only when every active dependency is workspace-local.", configurable = False),
     attr("_mix_resolve_envs", "list<string>", default = "[]", docs = "Resolver-owned Mix environments of the same project resolved together with mix_env in one Mix invocation.", configurable = False),
     attr("manifest", "string", default = "mix.exs", docs = "Package-relative Mix project manifest used to select the active dependency graph.", configurable = False),

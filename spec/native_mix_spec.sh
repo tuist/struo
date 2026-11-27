@@ -629,6 +629,44 @@ PY
     native_struo test > "$SPEC_ROOT/test.json" 2> "$SPEC_ROOT/test.err" || { cat "$SPEC_ROOT/test.err" >&2; return 1; }
   }
 
+  # Mix resolves a child's path dependency from the umbrella: its packages
+  # come from the root's lockfile and deps, never from a lockfile of its own.
+  exercise_umbrella_path_dependency() {
+    prepare_umbrella
+    mkdir -p "$WORKSPACE/app/libs/shared/lib"
+    cat > "$WORKSPACE/app/libs/shared/mix.exs" <<'EX'
+defmodule Shared.MixProject do
+  use Mix.Project
+  def project, do: [app: :shared, version: "0.1.0", deps: [{:locked_greeting, "0.1.0"}, {:helper, path: "../../apps/helper", env: :test}]]
+end
+EX
+    printf 'defmodule Shared do\n  def greet, do: LockedGreeting.message("Shared " <> Helper.name())\nend\n' > "$WORKSPACE/app/libs/shared/lib/shared.ex"
+    sed -i.bak 's|{:helper, in_umbrella: true}|{:helper, in_umbrella: true}, {:shared, path: "../../libs/shared"}|' "$WORKSPACE/app/apps/greeter/mix.exs"
+    cat > "$WORKSPACE/app/apps/greeter/test/shared_test.exs" <<'EX'
+defmodule SharedTest do
+  use ExUnit.Case
+  test "uses the path dependency built from the umbrella's lock" do
+    assert Shared.greet() == "Hello, Shared Umbrella!"
+  end
+end
+EX
+    native_struo test > "$SPEC_ROOT/test.json" 2> "$SPEC_ROOT/test.err" || { cat "$SPEC_ROOT/test.err" "$WORKSPACE/.struo/out/app/apps/greeter/mix_tests/test/elixir-test.log" >&2; return 1; }
+    "$SPEC_PYTHON3" - "$WORKSPACE/.struo/out/app/apps/greeter/mix_tests/test/test_results.json" <<'PY'
+import json, sys
+result = json.load(open(sys.argv[1]))
+assert result["status"] == "passed" and result["summary"]["passed"] == 3, result
+PY
+    native_struo query targets > /dev/null 2> "$SPEC_ROOT/targets.err" || { cat "$SPEC_ROOT/targets.err" >&2; return 1; }
+    selected="$(native_struo query affected-tests --changed-path libs/shared/lib/shared.ex 2> "$SPEC_ROOT/affected.err" | "$SPEC_PYTHON3" -c 'import json, sys; print(" ".join(test["id"] for test in json.load(sys.stdin)))')"
+    [ "$selected" = apps/greeter/mix_tests ] || { echo "a change to the path dependency selected '$selected'" >&2; cat "$SPEC_ROOT/affected.err" >&2; return 1; }
+  }
+
+  It 'builds an umbrella child path dependency from the root lockfile'
+    Skip if 'Mix toolchain unavailable on this host' mix_tools_unavailable
+    When call exercise_umbrella_path_dependency
+    The status should be success
+  End
+
   It 'builds an umbrella whose children depend only on each other without a lockfile'
     Skip if 'Mix toolchain unavailable on this host' mix_tools_unavailable
     When call exercise_lockless_umbrella

@@ -142,7 +142,10 @@ them rather than assuming every target lives at the root.
 As in Mix, the umbrella root owns the locked dependencies. Struo resolves them
 once per environment from the root's `mix.lock`, and each child compiles
 against the packages it declares for the current target plus its
-`in_umbrella: true` siblings, built in the child's environment. Run
+`in_umbrella: true` siblings, built in the child's environment. A child's
+`path:` dependency outside the umbrella's apps resolves its own packages from
+the root's `mix.lock` too, so it needs no lockfile of its own; as in Mix,
+building such a project on its own fails until it has one. Run
 `mix deps.get --check-locked` once in the root; an umbrella whose children
 depend only on each other needs no lockfile. Commands run inside a child
 directory build and test that child, loading the root and the siblings it
