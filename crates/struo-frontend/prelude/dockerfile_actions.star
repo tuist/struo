@@ -450,7 +450,9 @@ def _dockerfile_declare_step(ctx, shared, entry, number, text, contexts, pull_ba
     snapshot = declare_output("instructions/" + number + "/image")
     metadata = declare_output("instructions/" + number + "/metadata.json")
     write_path(recipe, "\n".join(shared["global_args"]) + "\n" + text + "\n")
-    write_path(rules, shared["ignore_rules"] + "\n**/.struo\n")
+    # Steps without context files build against an empty directory, so the
+    # project's ignore rules cannot affect them and stay out of their keys.
+    write_path(rules, (shared["ignore_rules"] if copy_inputs else "") + "\n**/.struo\n")
     argv = _dockerfile_instruction_argv(ctx, shared["docker"], recipe, metadata, shared["platform"], shared["builder"])
     argv.extend(["--output", "type=oci,tar=false,dest=" + snapshot + (",rewrite-timestamp=true" if _dockerfile_attr(ctx, "reproducible_layers", False) else "")])
     if pull_base and shared["pull"]:

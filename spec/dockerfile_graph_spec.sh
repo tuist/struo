@@ -211,4 +211,41 @@ EOF_MANIFEST
     The stdout should include '"cache":"hit"'
     The stdout should include '"status":"completed"'
   End
+
+  dockerignore_edit_keeps_context_free_steps() {
+    export PATH="/usr/bin:$PATH"
+    export DOCKER_CONFIG="${DOCKER_CONFIG:-$SPEC_ORIGINAL_HOME/.docker}"
+    cat > "$WORKSPACE/Dockerfile" <<'EOF_RECIPE'
+FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+RUN echo built > /built.txt
+COPY early.txt /early.txt
+EOF_RECIPE
+    printf 'early\n' > "$WORKSPACE/early.txt"
+    printf 'README.md\n' > "$WORKSPACE/.dockerignore"
+    cat > "$WORKSPACE/struo.toml" <<EOF_MANIFEST
+[[target]]
+name = "cached_image"
+kind = "dockerfile_image"
+[target.attrs]
+builder = "$STRUO_DOCKER_TEST_BUILDER"
+platform = "$(docker buildx inspect "$STRUO_DOCKER_TEST_BUILDER" | awk -F': *' '/^Platforms:/ { split($2, p, ","); sub(/\*$/, "", p[1]); print p[1]; exit }')"
+cacheable = true
+pull = false
+network = "none"
+EOF_MANIFEST
+    struo --format json build cached_image >/dev/null || return
+    printf 'docs/\n' >> "$WORKSPACE/.dockerignore"
+    struo --format json build cached_image >/dev/null || return
+    latest_log="$(ls -t "$(struo_log_dir)"/*.log | head -1)"
+    jq -s -c '[.[] | select((.fields.identifier // "") | test("^cached_image:[0-9]+:")) | [.fields.identifier, .fields.cache]] | sort' "$latest_log"
+  }
+
+  It 'keeps instructions that read no context files cached when .dockerignore changes'
+    Skip if 'set STRUO_DOCKER_TEST_BUILDER to a container or remote builder' instruction_builder_unconfigured
+    When call dockerignore_edit_keeps_context_free_steps
+    The status should be success
+    The stdout should include '["cached_image:1:from","hit"]'
+    The stdout should include '["cached_image:2:run","hit"]'
+    The stdout should include '["cached_image:3:copy","miss"]'
+  End
 End

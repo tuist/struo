@@ -566,6 +566,54 @@ fn dockerfile_steps_without_context_files_build_against_an_empty_staged_director
 }
 
 #[test]
+fn dockerfile_ignore_rules_reach_only_steps_that_read_the_context() {
+    let workspace = TempDir::new().unwrap();
+    std::fs::write(
+        workspace.path().join("Dockerfile"),
+        "FROM scratch\nRUN true\nCOPY early.txt /e\n",
+    )
+    .unwrap();
+    std::fs::write(workspace.path().join("early.txt"), "early").unwrap();
+    std::fs::write(workspace.path().join(".dockerignore"), "docs/\n").unwrap();
+    let source = format!(
+        r#"{}
+def _dockerfile_toolchain(ctx, auto_builder = False):
+    return ("/tools/docker", "docker-test", "remote", "remote-builder")
+def host_which(name):
+    return "/tools/" + name
+def host_command(argv, merge_stderr = False, check = True):
+    return ""
+ctx = {{
+    "label": {{"package": "", "name": "image", "id": "image"}},
+    "attr": {{"platform": "linux/arm64", "pull": False, "cacheable": True}},
+    "srcs": [],
+    "build_dir": ".struo/out/image",
+    "scratch_dir": ".struo/tmp/image",
+    "capability": "build",
+}}
+result = repr(_dockerfile_image_impl(ctx))
+"#,
+        dockerfile_prelude_source()
+    );
+    let store = AnalysisStore::new(
+        workspace.path().to_path_buf(),
+        String::new(),
+        ".struo/out/image".into(),
+    );
+    let (store, result) = with_active_store(store, || eval_prelude_source_to_repr(source));
+    result.unwrap();
+    for step in ["1", "2"] {
+        let rules = written(
+            &store,
+            &format!("instructions/{step}/Dockerfile.dockerignore"),
+        );
+        assert!(!rules.contains("docs/"), "step {step}: {rules:?}");
+    }
+    let copy_rules = written(&store, "instructions/3/Dockerfile.dockerignore");
+    assert!(copy_rules.contains("docs/"), "{copy_rules:?}");
+}
+
+#[test]
 fn dockerfile_env_assignments_in_one_instruction_see_the_previous_environment() {
     let (store, _) = analyze(
         "FROM scratch\nENV K=old\nENV K=new V=$K\nARG R=$V\nRUN true\n",
