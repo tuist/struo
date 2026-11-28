@@ -10,7 +10,7 @@
   APP_MAIN = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostApp.swift; sourceTree = "<group>"; };
   APP_ENTITLEMENTS = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Host.entitlements; sourceTree = "<group>"; };
   TESTS_FILE = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostTests.swift; sourceTree = "<group>"; };
-  APP_PRODUCT = {isa = PBXFileReference; explicitFileType = wrapper.application; path = Host.app; sourceTree = BUILT_PRODUCTS_DIR; };
+  APP_PRODUCT = {isa = PBXFileReference; explicitFileType = wrapper.application; path = "Host App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
   TESTS_PRODUCT = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = HostTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
   APP_SOURCE = {isa = PBXBuildFile; fileRef = APP_MAIN; };
   APP_SOURCES = {isa = PBXSourcesBuildPhase; files = (APP_SOURCE); };
@@ -18,10 +18,10 @@
   TESTS_SOURCES = {isa = PBXSourcesBuildPhase; files = (TESTS_SOURCE); };
   TESTS_DEP = {isa = PBXTargetDependency; target = APP; };
   APP_CONFIGS = {isa = XCConfigurationList; buildConfigurations = (APP_DEBUG); defaultConfigurationName = Debug; };
-  APP_DEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {CODE_SIGN_ENTITLEMENTS = Host/Host.entitlements; ENABLE_TESTABILITY = YES; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = dev.struo.Host; PRODUCT_NAME = Host; }; };
+  APP_DEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {CODE_SIGN_ENTITLEMENTS = Host/Host.entitlements; ENABLE_TESTABILITY = YES; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = dev.struo.Host; PRODUCT_NAME = "Host App"; }; };
   TESTS_CONFIGS = {isa = XCConfigurationList; buildConfigurations = (TESTS_DEBUG); defaultConfigurationName = Debug; };
-  TESTS_DEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = dev.struo.HostTests; PRODUCT_NAME = HostTests; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Host.app/Contents/MacOS/Host"; }; };
-  APP = {isa = PBXNativeTarget; name = Host; productName = Host; productType = "com.apple.product-type.application"; productReference = APP_PRODUCT; buildConfigurationList = APP_CONFIGS; buildPhases = (APP_SOURCES); dependencies = (); };
+  TESTS_DEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = dev.struo.HostTests; PRODUCT_NAME = HostTests; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Host App.app/Contents/MacOS/Host App"; }; };
+  APP = {isa = PBXNativeTarget; name = Host; productName = "Host App"; productType = "com.apple.product-type.application"; productReference = APP_PRODUCT; buildConfigurationList = APP_CONFIGS; buildPhases = (APP_SOURCES); dependencies = (); };
   TESTS = {isa = PBXNativeTarget; name = HostTests; productName = HostTests; productType = "com.apple.product-type.bundle.unit-test"; productReference = TESTS_PRODUCT; buildConfigurationList = TESTS_CONFIGS; buildPhases = (TESTS_SOURCES); dependencies = (TESTS_DEP); };
   PROJECT_CONFIGS = {isa = XCConfigurationList; buildConfigurations = (PROJECT_DEBUG); defaultConfigurationName = Debug; };
   PROJECT_DEBUG = {isa = XCBuildConfiguration; name = Debug; buildSettings = {SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 14.0; SWIFT_VERSION = 5.0; CODE_SIGN_IDENTITY = "-"; }; };

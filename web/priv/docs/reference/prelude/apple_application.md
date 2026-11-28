@@ -185,6 +185,7 @@ can use it as the linker's bundle loader.
 | --- | --- |
 | Application bundle | `.struo/out/<target>/<product_name>.app` |
 | Executable | `.struo/out/<target>/<product_name>.app/<product_name>` |
+| Testable Swift module | `.struo/out/<target>/<module_name>.swiftmodule` when `enable_testing` is set |
 | Swift compatibility header | `.struo/out/<target>/<module_name>-Swift.h` for mixed Swift and Objective-C targets |
 | Property list | `.struo/out/<target>/<product_name>.app/Info.plist` |
 | Embedded frameworks | `.struo/out/<target>/<product_name>.app/Frameworks` when the target depends on frameworks |

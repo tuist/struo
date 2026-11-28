@@ -5464,8 +5464,8 @@ def _apple_application_impl(ctx):
         fail("apple_application " + ctx["label"]["id"] + " has no Swift sources (.swift)")
     private_header_files = _unique(private_header_files + _filter_by_extensions(generated_srcs, [".h", ".hh", ".hpp", ".hxx", ".inc", ".inl", ".ipp", ".tpp", ".def"]))
     emits_swift_module = enable_testing or len(objc_srcs) > 0
-    swiftmodule = declare_output(product_name + ".swiftmodule") if emits_swift_module else ""
-    swiftdoc = declare_output(product_name + ".swiftdoc") if emits_swift_module else ""
+    swiftmodule = declare_output(module_name + ".swiftmodule") if emits_swift_module else ""
+    swiftdoc = declare_output(module_name + ".swiftdoc") if emits_swift_module else ""
     swift_module_sidecars = _apple_swift_module_sidecars(swiftmodule) if emits_swift_module else []
     swift_objc_header = declare_output(module_name + "-Swift.h") if len(objc_srcs) > 0 else ""
 
