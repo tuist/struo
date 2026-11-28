@@ -240,7 +240,9 @@ async fn spawn_and_capture(
         })?;
     let stdout_pipe = group.take_stdout();
     let stderr_pipe = group.take_stderr();
-    let pipes = capture::capture_pipes(capture, cache, stdout_pipe, stderr_pipe);
+    // A remote upload can outlast the pipe drain deadline even after EOF.
+    let local_cache = cache.local_tier();
+    let pipes = capture::capture_pipes(capture, &local_cache, stdout_pipe, stderr_pipe);
     let (status, (stdout, stderr)) =
         Box::pin(supervise::supervise(group, program, timeout_ms, pipes)).await?;
     let exit_code = status.code().unwrap_or(-1);
@@ -250,6 +252,8 @@ async fn spawn_and_capture(
         duration_ms = started.elapsed().as_millis(),
         "local command finished"
     );
+    let digests: Vec<_> = [stdout, stderr].into_iter().flatten().collect();
+    cache.publish_blobs(&digests).await?;
     Ok(ActionResult {
         exit_code,
         stdout,

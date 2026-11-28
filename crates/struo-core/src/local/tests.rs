@@ -39,10 +39,89 @@ fn invocation<'a>(
 #[cfg(unix)]
 mod processes {
     use std::path::Path;
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
+
+    use bytes::Bytes;
+    use struo_cas::{remote::RemoteBody, RemoteAccess, RemoteStore};
 
     use super::super::supervise::DRAIN_GRACE;
     use super::*;
+
+    #[derive(Debug, Default)]
+    struct SlowStore(Mutex<BTreeMap<String, Bytes>>);
+
+    #[async_trait::async_trait]
+    impl RemoteStore for SlowStore {
+        fn provider(&self) -> &'static str {
+            "test"
+        }
+
+        async fn head(&self, key: &str) -> struo_cas::Result<Option<u64>> {
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .get(key)
+                .map(|bytes| bytes.len() as u64))
+        }
+
+        async fn get(&self, key: &str) -> struo_cas::Result<Option<RemoteBody>> {
+            Ok(self.0.lock().unwrap().get(key).map(|bytes| RemoteBody {
+                size: bytes.len() as u64,
+                reader: Box::pin(std::io::Cursor::new(bytes.clone())),
+            }))
+        }
+
+        async fn put_bytes(&self, key: &str, bytes: Bytes) -> struo_cas::Result<()> {
+            tokio::time::sleep(DRAIN_GRACE * 2 + Duration::from_millis(250)).await;
+            self.0.lock().unwrap().insert(key.to_owned(), bytes);
+            Ok(())
+        }
+
+        async fn put_file(&self, key: &str, path: &Path, _size: u64) -> struo_cas::Result<()> {
+            self.put_bytes(key, tokio::fs::read(path).await.unwrap().into())
+                .await
+        }
+
+        fn upload_memory(&self, size: u64) -> u64 {
+            size
+        }
+    }
+
+    #[tokio::test]
+    async fn slow_output_upload_does_not_hold_the_pipes_open() {
+        let workspace = TempDir::new().unwrap();
+        let store = Arc::new(SlowStore::default());
+        let cache = CacheProvider::remote(
+            workspace.path().join("local"),
+            store.clone(),
+            RemoteAccess::ReadWrite,
+        );
+        let argv = shell("printf 'out'; printf 'error' >&2; exit 7");
+        let result = execute_command(
+            invocation(&argv, &BTreeMap::new(), None, NetworkPolicy::Unrestricted),
+            workspace.path(),
+            &cache,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.exit_code, 7);
+
+        let fresh_cache = CacheProvider::remote(
+            workspace.path().join("fresh"),
+            store,
+            RemoteAccess::ReadOnly,
+        );
+        assert_eq!(
+            fresh_cache.get_blob(&result.stdout.unwrap()).await.unwrap(),
+            b"out"
+        );
+        assert_eq!(
+            fresh_cache.get_blob(&result.stderr.unwrap()).await.unwrap(),
+            b"error"
+        );
+    }
 
     fn alive(pid: &str) -> bool {
         let output = std::process::Command::new("ps")
